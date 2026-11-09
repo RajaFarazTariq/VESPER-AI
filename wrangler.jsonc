@@ -1,0 +1,48 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Name of the Worker. Your app will be served at https://<name>.<your-subdomain>.workers.dev
+  "name": "ai-assistant",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-11-01",
+
+  // The React UI is built into ./dist and served as static assets (free, unlimited requests).
+  // Only /api/* requests run the Worker code.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Cloudflare D1 (free plan: 5 GB storage, 5M rows read/day, 100k rows written/day).
+  // Create it with:  npx wrangler d1 create ai-assistant
+  // then paste the printed database_id below (or set the D1_DATABASE_ID variable in GitHub Actions).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ai-assistant",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Workers AI (free plan: 10,000 neurons/day; requests fail rather than bill when exhausted).
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
+
+  // Daily housekeeping: remove expired sessions, old rate-limit windows and old usage rows.
+  "triggers": {
+    "crons": ["17 3 * * *"]
+  },
+
+  // All configuration lives in the Cloudflare dashboard (Settings -> Variables and Secrets)
+  // so this file stays generic. keep_vars stops deployments from wiping dashboard variables.
+  "keep_vars": true,
+
+  "observability": {
+    "enabled": true
+  },
+  "upload_source_maps": true
+}

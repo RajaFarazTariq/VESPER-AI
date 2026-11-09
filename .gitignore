@@ -1,0 +1,22 @@
+# Dependencies & build output
+node_modules/
+dist/
+
+# Local secrets: NEVER commit these
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+
+# Wrangler local state (local D1 database, caches)
+.wrangler/
+
+# Tooling
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
