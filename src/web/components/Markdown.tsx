@@ -1,8 +1,15 @@
 import { Check, Copy } from "lucide-react";
-import { memo, useState, type ComponentProps, type ReactNode } from "react";
+import { lazy, memo, Suspense, useState, type ComponentProps, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import type { Pluggable } from "unified";
+import { normalizeMath } from "../../shared/math";
+
+// KaTeX (~80 KB gzipped) is only downloaded when a reply actually contains math.
+const MathMarkdown = lazy(() => import("./MathMarkdown"));
+/** normalizeMath() has already turned \[ … \] and \( … \) into $$ … $$. */
+const MATH_PATTERN = /\$\$/;
 
 export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
@@ -37,7 +44,7 @@ function textOf(node: ReactNode): string {
   return "";
 }
 
-const components: Components = {
+export const components: Components = {
   pre({ children, ...props }: ComponentProps<"pre">) {
     const child = Array.isArray(children) ? children[0] : children;
     const className =
@@ -74,12 +81,27 @@ const components: Components = {
   },
 };
 
+export const highlightPlugin: Pluggable = [rehypeHighlight, { detect: false, ignoreMissing: true }];
+
+function PlainMarkdown({ text }: { text: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[highlightPlugin]} components={components}>
+      {text}
+    </ReactMarkdown>
+  );
+}
+
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
+  const normalized = normalizeMath(text);
   return (
     <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]} components={components}>
-        {text}
-      </ReactMarkdown>
+      {MATH_PATTERN.test(normalized) ? (
+        <Suspense fallback={<PlainMarkdown text={normalized} />}>
+          <MathMarkdown text={normalized} />
+        </Suspense>
+      ) : (
+        <PlainMarkdown text={normalized} />
+      )}
     </div>
   );
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { normalizeMath } from "../src/shared/math";
 import { SseParser } from "../src/shared/sse";
 import type { MessageDto } from "../src/shared/types";
 import { deriveTitle } from "../src/worker/db/conversations";
@@ -162,5 +163,20 @@ describe("worker entry module", () => {
     expect(Object.keys(entry)).toEqual(["default"]);
     expect(typeof entry.default.fetch).toBe("function");
     expect(typeof entry.default.scheduled).toBe("function");
+  });
+});
+
+describe("normalizeMath", () => {
+  it("converts \\[ \\] and \\( \\) delimiters to $$ and leaves currency alone", () => {
+    const input = "First:\n\\[ 2{,}340 \\times 0.175 = 409.5 \\]\nSo \\(x = 2\\) and it costs $409.50 or $470.93.";
+    const out = normalizeMath(input);
+    expect(out).toContain("\n$$\n2{,}340 \\times 0.175 = 409.5\n$$\n");
+    expect(out).toContain("$$x = 2$$");
+    expect(out).toContain("$409.50 or $470.93");
+  });
+
+  it("does not touch code", () => {
+    const input = "Regex: `\\[a-z\\]` and\n```js\nconst r = /\\(x\\)/;\n```\n";
+    expect(normalizeMath(input)).toBe(input);
   });
 });

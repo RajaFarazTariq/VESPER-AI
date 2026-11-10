@@ -30,9 +30,13 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     lines.push(
       "",
       `Tools available: ${tools.join(", ")}.`,
-      "- Call a tool whenever it gives a more reliable answer (e.g. the calculator for any non-trivial arithmetic).",
+      "- Call a tool whenever it gives a more reliable answer.",
+      ...(tools.includes("calculator")
+        ? ["- Use the calculator for every calculation beyond simple whole-number arithmetic (percentages, decimals, money, multi-step sums). Don't do it in your head."]
+        : []),
       "- Never claim you used a tool, saved something or got a result unless a tool call actually returned it.",
       "- After using tools, answer the user in normal prose; don't paste raw tool output.",
+      "- For math notation, use LaTeX between $$ … $$ (single $ is reserved for currency).",
     );
   }
   if (input.memories) {

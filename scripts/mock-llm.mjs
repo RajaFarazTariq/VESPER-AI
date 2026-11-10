@@ -83,6 +83,7 @@ const server = createServer(async (req, res) => {
       `**Mock reply** from \`${provider}\` (model \`${body.model}\`).\n\n` +
       `You said: "${String(last).slice(0, 200)}"\n\n` +
       "Here is a code sample:\n\n```python\ndef greet(name: str) -> str:\n    return f\"Hello, {name}!\"\n```\n\n" +
+      "Math check: \\[ 2{,}340 \\times 0.175 = 409.5 \\] and inline \\(a^2 + b^2 = c^2\\), costing $409.50.\n\n" +
       "| Item | Value |\n|---|---|\n| Messages in context | " + (body.messages?.length ?? 0) + " |\n";
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
     for (const piece of reply.match(/\S+\s*|\s+/g) ?? []) {
