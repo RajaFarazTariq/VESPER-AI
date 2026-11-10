@@ -105,9 +105,12 @@ describe("tool-call streaming helpers", () => {
       { role: "assistant", content: null, tool_calls: [{ id: "c1", name: "calculator", arguments: '{"expression":"2+2"}' }] },
       { role: "tool", tool_call_id: "c1", name: "calculator", content: '{"result":4}' },
     ]);
-    expect(flat.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
-    expect(flat[2]!.content).toContain("Used tool calculator");
-    expect(flat[3]!.content).toContain('"result":4');
+    // The tool turn becomes a neutral note merged into the user turn; no "[Used tool …]" text for the model to imitate.
+    expect(flat.map((m) => m.role)).toEqual(["system", "user"]);
+    expect(flat[1]!.content).toContain("What is 2+2?");
+    expect(flat[1]!.content).toContain('- calculator({"expression":"2+2"}) returned: {"result":4}');
+    expect(flat[1]!.content).toContain("Do not repeat or quote this note");
+    expect(JSON.stringify(flat)).not.toContain("Used tool");
   });
 });
 
@@ -271,7 +274,42 @@ describe("runAgent", () => {
     const sent = workers.requests[0]!;
     expect(sent.tools).toBeUndefined();
     expect(sent.messages.some((m) => m.role === "tool")).toBe(false);
-    expect(JSON.stringify(sent.messages)).toContain("Result of tool calculator");
+    expect(JSON.stringify(sent.messages)).toContain("calculator({\\\"expression\\\":\\\"6*7\\\"}) returned");
+  });
+
+  it("hands a tool-using task from Groq to Gemini without sending Groq's tool history natively", async () => {
+    // Regression: Groq called the calculator, then hit its rate limit; Gemini rejected the foreign
+    // tool history (no thought signatures) and the old fallback text leaked into the answer.
+    const groq = new ScriptedProvider("groq", [
+      { calls: [call("calculator", { expression: "0.175*2340" })] },
+      { fail: new ProviderError("rate_limit", "429") },
+    ]);
+    const gemini = new ScriptedProvider("gemini", [
+      { calls: [call("calculator", { expression: "409.5 * 1.15" }, "g1")] },
+      { text: "17.5% of 2,340 is 409.50; with a 15% tip that's 470.93." },
+    ]);
+    const { result } = await agent([groq, gemini]);
+    expect(result.status).toBe("complete");
+    expect(result.text).toBe("17.5% of 2,340 is 409.50; with a 15% tip that's 470.93.");
+    expect(result.tools.map((t) => t.summary)).toEqual(["0.175*2340 = 409.5", "409.5 * 1.15 = 470.925"]);
+    // Gemini's first request: Groq's call arrives as a note, but tools are still offered.
+    const first = gemini.requests[0]!;
+    expect(first.tools?.length).toBeGreaterThan(0);
+    expect(first.messages.some((m) => m.role === "tool")).toBe(false);
+    expect(JSON.stringify(first.messages)).toContain("0.175*2340");
+    // Gemini's second request: while foreign calls are in the history, all tool history is sent as notes
+    // (no native function calls means no signatures for Gemini to validate).
+    const second = gemini.requests[1]!;
+    expect(second.messages.some((m) => m.role === "tool")).toBe(false);
+    expect(JSON.stringify(second.messages)).toContain("409.5 * 1.15");
+  });
+
+  it("sends a provider's own tool history natively", async () => {
+    const gemini = new ScriptedProvider("gemini", [{ calls: [call("calculator", { expression: "1+1" })] }, { text: "2" }]);
+    await agent([gemini]);
+    const second = gemini.requests[1]!;
+    expect(second.messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: "c_calculator" });
+    expect((second.messages.at(-2) as { tool_calls: { origin?: string }[] }).tool_calls[0]!.origin).toBe("gemini");
   });
 
   it("retries as plain chat when a model rejects function calling", async () => {

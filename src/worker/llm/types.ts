@@ -6,6 +6,13 @@ export interface ToolCall {
   name: string;
   arguments: string;
   extra?: Record<string, unknown>;
+  /** Provider that produced the call. Never sent over the wire. */
+  origin?: string;
+}
+
+/** True when the transcript contains tool calls produced by a different provider. */
+export function hasForeignToolCalls(messages: ChatMessage[], provider: string): boolean {
+  return messages.some((m) => m.role === "assistant" && m.tool_calls?.some((c) => c.origin !== undefined && c.origin !== provider));
 }
 
 export type ChatMessage =
@@ -34,22 +41,41 @@ export interface ProviderRequest {
   tools?: ToolSpec[];
 }
 
+export const TOOL_NOTE_HEADER =
+  "(Note from the app, not from the user: these tool results were already obtained earlier in this task. " +
+  "Use them and continue; call tools again if more steps are needed. Do not repeat or quote this note.)";
+
 /**
- * Rewrite a tool transcript as plain text, for providers/models without tool support
- * (e.g. when a fallback lands on one mid-task).
+ * Rewrite a tool transcript as plain messages: for providers/models without tool support, and when a
+ * fallback switches providers mid-task (e.g. Gemini rejects tool history it didn't create itself).
+ * Tool calls and their results become one neutral note in a user turn. The note is deliberately unlike
+ * any answer format, because models imitate whatever transcript format they're shown.
  */
 export function flattenToolMessages(messages: ChatMessage[]): ChatMessage[] {
+  const calls = new Map<string, ToolCall>();
+  for (const m of messages) {
+    if (m.role === "assistant") for (const c of m.tool_calls ?? []) calls.set(c.id, c);
+  }
   const out: ChatMessage[] = [];
+  let note: string[] | null = null;
+  const flushNote = () => {
+    if (note?.length) out.push({ role: "user", content: [TOOL_NOTE_HEADER, ...note].join("\n") });
+    note = null;
+  };
   for (const m of messages) {
     if (m.role === "assistant" && m.tool_calls?.length) {
-      const calls = m.tool_calls.map((c) => `[Used tool ${c.name} with ${c.arguments}]`).join("\n");
-      out.push({ role: "assistant", content: [m.content, calls].filter(Boolean).join("\n") });
+      flushNote();
+      if (m.content?.trim()) out.push({ role: "assistant", content: m.content });
+      note = [];
     } else if (m.role === "tool") {
-      out.push({ role: "user", content: `[Result of tool ${m.name}]: ${m.content}` });
+      const call = calls.get(m.tool_call_id);
+      (note ??= []).push(`- ${m.name}(${call?.arguments ?? "{}"}) returned: ${m.content}`);
     } else {
+      flushNote();
       out.push(m);
     }
   }
+  flushNote();
   // Merge consecutive same-role messages produced by the rewrite.
   const merged: ChatMessage[] = [];
   for (const m of out) {

@@ -2,6 +2,7 @@ import { AUTO_MODEL, PROVIDER_IDS, type ProviderId } from "../../shared/types";
 import type { ProviderHealth, ProviderStateStore } from "../db/provider-state";
 import {
   flattenToolMessages,
+  hasForeignToolCalls,
   ProviderError,
   toProviderError,
   type ChatMessage,
@@ -231,9 +232,11 @@ export async function executeRoute(input: {
     for (let attempt = 0; attempt <= MAX_RETRIES_PER_PROVIDER; attempt++) {
       let produced = false;
       try {
+        // Tool history from another provider (or for a provider without tools) is sent as a plain note.
+        const native = useTools && !hasForeignToolCalls(input.messages, provider.id);
         const stream = await provider.stream({
           model: target.model,
-          messages: useTools ? input.messages : flattenToolMessages(input.messages),
+          messages: native ? input.messages : flattenToolMessages(input.messages),
           maxTokens: input.maxTokens,
           signal: input.signal,
           ...(useTools ? { tools: input.tools } : {}),
@@ -241,7 +244,7 @@ export async function executeRoute(input: {
         for await (const chunk of stream) {
           if (chunk.type === "tool_calls") {
             produced = true;
-            result.toolCalls.push(...chunk.calls);
+            result.toolCalls.push(...chunk.calls.map((c) => ({ ...c, origin: target.provider })));
           } else if (chunk.type === "text") {
             produced = true;
             result.text += chunk.text;
