@@ -1,6 +1,6 @@
 # AI Assistant (free-tier, multi-provider)
 
-A private, ChatGPT-style AI assistant that runs entirely on **free tiers**: Cloudflare Workers + D1 for hosting
+A ChatGPT-style AI assistant for many users, managed by an administrator, that runs entirely on **free tiers**: Cloudflare Workers + D1 for hosting
 and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, Mistral, Cloudflare Workers AI) with
 **automatic fallback** when a free limit is reached. Optional **local models** through Ollama.
 
@@ -10,13 +10,16 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
 - 🔁 Automatic free-provider fallback with cooldowns, retries and clear error messages
 - 🎛️ Manual model picker with live model lists from every provider
 - 🗂️ Conversation history stored in a cloud database (rename, delete, deep links, regenerate, stop)
-- 🔐 GitHub sign-in restricted to an allowlist of usernames; no passwords stored
+- 👥 Anyone can create an account with **Google sign-in**; no passwords stored
+- 🛡️ **Admin panel** for the owner: users (block, delete, personal daily limits), sign-ups open/closed, default
+  daily message limit, instructions for the assistant, tools on/off for everyone, provider status
+- 🔑 GitHub sign-in kept as a backup login for administrators only
 - 🖥️ Optional local models (Ollama) called directly from your browser
 - 🌗 Light/dark/system themes and a responsive mobile layout
 - 💸 **No paid services, no credit card, no automatic billing**
 
-> Status: **Phase 5 (tools & agent loop) complete.** Web search, documents and integrations (GitHub, Gmail, Calendar,
-> Telegram) come in later phases. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> Status: **Phase 6.0 (multi-user accounts + admin panel) complete.** Web search, documents and integrations (GitHub,
+> Gmail, Calendar, Telegram) come in later phases. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
@@ -63,27 +66,31 @@ npm run dev                 # API on :8787, web app with hot reload on http://lo
 Minimum `.env` for local use **without any API keys** (uses the bundled mock LLM server):
 
 ```ini
-ALLOWED_GITHUB_USERS=your-github-username
+ADMIN_GITHUB_USERS=your-github-username
 DEV_LOGIN=true
 WORKERS_AI_ENABLED=false
 GROQ_API_KEY=mock
 GROQ_BASE_URL=http://127.0.0.1:8790/groq
 ```
 
-Then in a second terminal run `npm run mock:llm` and sign in with the "local development login" form. To use real
+Then in a second terminal run `npm run mock:llm` and sign in with the "local development login" form: your admin
+username gives you the admin panel, and any other name is a regular user. To use real
 models locally, put real keys in `.env` instead (and remove the `*_BASE_URL` lines).
 
 Local data (the SQLite file behind D1) lives in `.wrangler/` inside the project and is git-ignored.
 
 ## Deploying (free, from your own GitHub account)
 
-Follow **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. In short:
+Follow **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Every setting, secret and account this deployment uses (names
+and where they live, never the values) is listed in **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**, along with a
+setup log for each stage. In short:
 
 1. Push this project to your GitHub repository.
 2. Create a free Cloudflare account, a D1 database and an API token.
 3. Add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets and a `D1_DATABASE_ID` variable to the GitHub repo.
 4. Push to `main`. GitHub Actions tests, migrates the database and deploys.
-5. Create a GitHub OAuth app and add your keys as Cloudflare secrets.
+5. Create a Google OAuth client (sign-in for everyone) and a GitHub OAuth app (admin backup login), and add your
+   keys and admin email as Cloudflare secrets.
 
 After that, the app runs entirely in Cloudflare. You can delete the project from your computer.
 
@@ -94,8 +101,11 @@ Settings → Variables and Secrets** (type *Secret* for anything sensitive). Loc
 
 | Variable | Required | Description |
 |---|---|---|
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | yes | GitHub OAuth app used for sign-in |
-| `ALLOWED_GITHUB_USERS` | yes | Comma-separated GitHub usernames allowed in. Empty means nobody. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | yes | Google OAuth client: sign-in and sign-up for everyone |
+| `ADMIN_EMAILS` | yes | Comma-separated administrator emails (verified Google email) |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | recommended | GitHub OAuth app: backup sign-in for administrators only |
+| `ADMIN_GITHUB_USERS` | with GitHub | Comma-separated administrator GitHub usernames (the older name `ALLOWED_GITHUB_USERS` still works) |
+| `DEFAULT_DAILY_LIMIT` | no | Messages per user per day (default 30; also editable in the admin panel). Admins are unlimited. |
 | `GROQ_API_KEY` | one AI key | [console.groq.com/keys](https://console.groq.com/keys) |
 | `GEMINI_API_KEY` | recommended | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 | `OPENROUTER_API_KEY` | optional | [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
@@ -156,7 +166,11 @@ contacts your machine, and local chats still save to your history.
 
 ## Security
 
-- Sign-in is GitHub OAuth with a server-side username allowlist, re-checked on every request. Removing a name revokes access immediately.
+- Sign-in is Google OAuth (basic scopes only: id, name, photo, verified email). GitHub sign-in is accepted only for
+  administrators. The admin role comes from `ADMIN_EMAILS` / `ADMIN_GITHUB_USERS` and is re-checked on every request.
+  Blocking a user signs them out everywhere immediately.
+- Each user can only see their own conversations and memories; the admin panel shows accounts and usage counts, not chats.
+- Per-user daily message limits (admins unlimited) protect the shared free quotas.
 - Sessions are random 256-bit tokens in `HttpOnly`, `Secure`, `SameSite=Lax` cookies (`__Host-` prefix). Only their SHA-256 hash is stored.
 - CSRF protection: state-changing requests must be same-origin JSON. A strict Content-Security-Policy is applied to the web app.
 - Input validation (zod) on every endpoint, request size limits, and per-user and per-IP rate limits.
@@ -169,7 +183,12 @@ contacts your machine, and local chats still save to your history.
 - **"Every available free provider failed"**: all configured providers are rate-limited or out of daily quota.
   Rate limits clear in minutes; daily quotas reset the next day. Adding more free keys improves resilience.
 - **Error 1027 page**: the Cloudflare free daily request limit (100k) was reached. It resets at 00:00 UTC.
-- **"That GitHub account isn't allowed"**: add the username to `ALLOWED_GITHUB_USERS` in Cloudflare.
-- **GitHub sign-in fails right after redirect**: the OAuth app's callback URL must be exactly
-  `https://<your-app>.workers.dev/api/auth/github/callback`.
+- **"GitHub sign-in is only for the administrator"**: add the username to `ADMIN_GITHUB_USERS` in Cloudflare.
+  Everyone else signs in with Google.
+- **Google sign-in shows "Access blocked" / "app not verified"**: while the Google app is in *Testing* mode, only
+  emails listed under *Test users* in the Google console can sign in.
+- **Google or GitHub sign-in fails right after redirect**: the callback URL must be exactly
+  `https://<your-app>.workers.dev/api/auth/google/callback` (or `/github/callback`).
+- **"You've used all N messages for today"**: the daily limit. Raise it in Admin panel → App settings, or per user in
+  Admin panel → Users.
 - **Gemini 429 immediately**: newer/Pro models may have no free quota. Pick a Flash-Lite model or leave Auto on.

@@ -5,6 +5,8 @@ export type PlainMessage = { role: "system" | "user" | "assistant"; content: str
 export interface SystemPromptInput {
   appName: string;
   customInstructions: string;
+  /** Instructions the administrator set for every user (admin panel → App settings). */
+  adminInstructions?: string;
   /** Saved long-term memories (only when memory is enabled). */
   memories?: MemoryDto[];
   /** Names of tools offered this turn. */
@@ -55,6 +57,10 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     if (tools.includes("remember")) {
       lines.push("Use the remember tool when the user asks you to remember something; use forget with the [id] to remove one.");
     }
+  }
+  const admin = input.adminInstructions?.trim();
+  if (admin) {
+    lines.push("", `Instructions from the administrator of ${input.appName} (they apply to every conversation):`, admin);
   }
   const custom = input.customInstructions.trim();
   if (custom) {

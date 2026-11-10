@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app-env";
+import { getAppSettings } from "../db/app-settings";
+import { getConfig } from "../env";
 import { addMemory, deleteAllMemories, deleteMemory, listMemories, MAX_MEMORY_CHARS, MemoryLimitError } from "../db/memories";
 import { AppError, notFound } from "../lib/errors";
 import { parseJson } from "../lib/validation";
@@ -31,4 +33,8 @@ export const memoryRoutes = new Hono<AppEnv>()
 
   .delete("/", async (c) => c.json({ deleted: await deleteAllMemories(c.env.DB, c.get("user").id) }));
 
-export const toolRoutes = new Hono<AppEnv>().use(requireUser).get("/", (c) => c.json({ tools: toolInfo() }));
+/** Tools users can switch on/off in Settings; tools the admin disabled for everyone aren't listed. */
+export const toolRoutes = new Hono<AppEnv>().use(requireUser).get("/", async (c) => {
+  const { disabledTools } = await getAppSettings(c.env.DB, getConfig(c.env));
+  return c.json({ tools: toolInfo().filter((t) => !disabledTools.includes(t.name)) });
+});

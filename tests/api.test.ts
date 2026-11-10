@@ -82,9 +82,12 @@ describe("health and auth", () => {
     expect(json.error.code).toBe("unauthorized");
   });
 
-  it("dev login only works for allow-listed users, only on localhost, only when enabled", async () => {
-    const denied = await call("/api/auth/dev-login", { method: "POST", body: JSON.stringify({ login: "mallory" }) });
-    expect(denied.response.status).toBe(403);
+  it("dev login works for any name (admins by config), only on localhost, only when enabled", async () => {
+    const regular = await call("/api/auth/dev-login", { method: "POST", body: JSON.stringify({ login: "mallory" }) });
+    expect(regular.response.status).toBe(200);
+    expect(regular.json.user).toMatchObject({ login: "mallory", role: "user" });
+    const badName = await call("/api/auth/dev-login", { method: "POST", body: JSON.stringify({ login: "no spaces!" }) });
+    expect(badName.response.status).toBe(400);
 
     const disabled = await call("/api/auth/dev-login", {
       method: "POST",
@@ -108,14 +111,21 @@ describe("health and auth", () => {
     const cookie = await login("octocat");
     const me = await call("/api/auth/me", { cookie });
     expect(me.response.status).toBe(200);
-    expect(me.json.user.login).toBe("octocat");
+    expect(me.json.user).toMatchObject({ login: "octocat", role: "admin" });
     expect(me.json.settings.defaultModel).toBe("auto");
+    // Internal fields are not exposed.
+    expect(me.json.user.status).toBeUndefined();
+    expect(me.json.user.dailyLimit).toBeUndefined();
   });
 
-  it("revokes access as soon as a user is removed from the allowlist", async () => {
+  it("re-derives the admin role from configuration on every request", async () => {
     const cookie = await login("octocat");
-    const me = await call("/api/auth/me", { cookie, env: { ALLOWED_GITHUB_USERS: "someone-else" } });
-    expect(me.response.status).toBe(401);
+    const demoted = await call("/api/auth/me", { cookie, env: { ADMIN_GITHUB_USERS: "someone-else" } });
+    expect(demoted.response.status).toBe(200);
+    expect(demoted.json.user.role).toBe("user");
+    // Older deployments only have ALLOWED_GITHUB_USERS: it still counts as the admin list.
+    const legacy = await call("/api/auth/me", { cookie, env: { ADMIN_GITHUB_USERS: "", ALLOWED_GITHUB_USERS: "OctoCat" } });
+    expect(legacy.json.user.role).toBe("admin");
   });
 
   it("logout invalidates the session", async () => {
@@ -163,7 +173,7 @@ describe("GitHub OAuth", () => {
     return { state, cookie };
   }
 
-  it("signs in an allow-listed GitHub user", async () => {
+  it("signs in an administrator with GitHub", async () => {
     const { state, cookie } = await startLogin();
     const fetchSpy = mockFetch((url) => {
       if (url === "https://gh.test/login/oauth/access_token") return jsonResponse({ access_token: "gho_test" });
@@ -175,7 +185,7 @@ describe("GitHub OAuth", () => {
     expect(response.headers.get("location")).toBe("/");
     const session = /(?:^|,\s*)(sid=[^;]+)/.exec(response.headers.get("set-cookie") ?? "")![1]!;
     const me = await call("/api/auth/me", { cookie: session });
-    expect(me.json.user.login).toBe("OctoCat");
+    expect(me.json.user).toMatchObject({ login: "OctoCat", role: "admin" });
     const tokenCall = fetchSpy.mock.calls.find(([u]) => String(u).includes("access_token"))!;
     expect(JSON.parse(String(tokenCall[1]?.body))).toMatchObject({ client_id: "cid", client_secret: "csecret", code: "abc" });
   });
@@ -186,14 +196,16 @@ describe("GitHub OAuth", () => {
     expect(response.headers.get("location")).toBe("/?auth_error=invalid_state");
   });
 
-  it("rejects users who are not on the allowlist", async () => {
+  it("refuses GitHub sign-in for anyone who isn't an administrator, and creates no account", async () => {
     const { state, cookie } = await startLogin();
     mockFetch((url) =>
       url.endsWith("access_token") ? jsonResponse({ access_token: "t" }) : jsonResponse({ id: 7, login: "mallory", name: null, avatar_url: null }),
     );
     const { response } = await call(`/api/auth/github/callback?code=abc&state=${state}`, { cookie, env: GH });
-    expect(response.headers.get("location")).toBe("/?auth_error=not_allowed");
+    expect(response.headers.get("location")).toBe("/?auth_error=github_admin_only");
     expect(response.headers.get("set-cookie") ?? "").not.toMatch(/(?:^|,\s*)sid=/);
+    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM users").first<{ n: number }>();
+    expect(count?.n).toBe(0);
   });
 });
 

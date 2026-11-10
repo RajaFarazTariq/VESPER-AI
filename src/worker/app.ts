@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "./app-env";
 import { AppError } from "./lib/errors";
 import { requestContext, sameOriginGuard } from "./middleware/security";
+import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { chatRoutes } from "./routes/chat";
 import { conversationRoutes } from "./routes/conversations";
@@ -11,7 +12,7 @@ import { memoryRoutes, toolRoutes } from "./routes/memories";
 import { modelRoutes } from "./routes/models";
 import { settingsRoutes } from "./routes/settings";
 
-export const VERSION = "0.5.0";
+export const VERSION = "0.6.0";
 
 export const app = new Hono<AppEnv>();
 
@@ -34,6 +35,7 @@ app.route("/api/models", modelRoutes);
 app.route("/api/settings", settingsRoutes);
 app.route("/api/memories", memoryRoutes);
 app.route("/api/tools", toolRoutes);
+app.route("/api/admin", adminRoutes);
 
 app.notFound((c) => {
   if (new URL(c.req.url).pathname.startsWith("/api/")) {

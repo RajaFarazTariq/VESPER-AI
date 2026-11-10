@@ -1,5 +1,6 @@
+import type { AppConfig } from "../env";
 import { randomToken, sha256Hex } from "../lib/crypto";
-import { parseSettings, toUserDto, type SessionUser } from "./users";
+import { toSessionUser, USER_COLUMNS, type SessionUser, type UserRow } from "./users";
 
 /** Refresh last_seen/expiry at most this often, to keep D1 writes low. */
 const TOUCH_INTERVAL_MS = 60 * 60 * 1000;
@@ -23,16 +24,11 @@ export async function createSession(
   return { token, expiresAt };
 }
 
-interface SessionJoinRow {
-  session_id: string;
-  expires_at: number;
-  last_seen_at: number;
-  id: string;
-  login: string;
-  name: string | null;
-  avatar_url: string | null;
-  settings: string;
-}
+type SessionJoinRow = UserRow & { session_id: string; expires_at: number; last_seen_at: number };
+
+const USER_COLUMNS_U = USER_COLUMNS.split(", ")
+  .map((c) => `u.${c}`)
+  .join(", ");
 
 /**
  * Resolve a session token to its user. Sliding expiry: active sessions are extended,
@@ -41,14 +37,13 @@ interface SessionJoinRow {
 export async function getSessionUser(
   db: D1Database,
   token: string,
-  ttlMs: number,
+  config: AppConfig,
 ): Promise<{ user: SessionUser; refreshedExpiry: number | null } | null> {
   if (!token || token.length > 200) return null;
   const now = Date.now();
   const row = await db
     .prepare(
-      `SELECT s.id AS session_id, s.expires_at, s.last_seen_at,
-              u.id, u.login, u.name, u.avatar_url, u.settings
+      `SELECT s.id AS session_id, s.expires_at, s.last_seen_at, ${USER_COLUMNS_U}
        FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.id = ?1 AND s.expires_at > ?2`,
     )
@@ -58,15 +53,20 @@ export async function getSessionUser(
 
   let refreshedExpiry: number | null = null;
   if (now - row.last_seen_at > TOUCH_INTERVAL_MS) {
-    refreshedExpiry = now + ttlMs;
+    refreshedExpiry = now + config.sessionTtlMs;
     await db
       .prepare("UPDATE sessions SET last_seen_at = ?1, expires_at = ?2 WHERE id = ?3")
       .bind(now, refreshedExpiry, row.session_id)
       .run();
   }
-  return { user: { ...toUserDto(row), settings: parseSettings(row.settings) }, refreshedExpiry };
+  return { user: toSessionUser(row, config), refreshedExpiry };
 }
 
 export async function deleteSession(db: D1Database, token: string): Promise<void> {
   await db.prepare("DELETE FROM sessions WHERE id = ?1").bind(await sha256Hex(token)).run();
+}
+
+/** Sign a user out everywhere (used when an admin blocks them). */
+export async function deleteUserSessions(db: D1Database, userId: string): Promise<void> {
+  await db.prepare("DELETE FROM sessions WHERE user_id = ?1").bind(userId).run();
 }

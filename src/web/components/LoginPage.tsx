@@ -10,11 +10,30 @@ function GitHubMark() {
   );
 }
 
+function GoogleMark() {
+  return (
+    <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">
+      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
+      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
+    </svg>
+  );
+}
+
 const AUTH_ERRORS: Record<string, string> = {
-  not_allowed: "That GitHub account isn't allowed to use this assistant. Ask the owner to add your username to ALLOWED_GITHUB_USERS.",
   invalid_state: "The sign-in link expired or was already used. Please try again.",
+  blocked: "This account has been blocked by the administrator.",
+  signups_closed: "New sign-ups are closed at the moment. Existing accounts can still sign in.",
+  google_denied: "Google sign-in was cancelled.",
+  google_not_configured: "Google sign-in isn't configured on the server yet.",
+  google_exchange_failed: "Google rejected the sign-in. Please try again.",
+  google_profile_failed: "Couldn't read your Google profile. Please try again.",
+  google_email_unverified: "Your Google account's email address isn't verified, so it can't be used to sign in.",
+  google_unreachable: "Couldn't reach Google. Please try again in a moment.",
+  github_admin_only: "GitHub sign-in is only for the administrator. Please continue with Google.",
   github_denied: "GitHub sign-in was cancelled.",
-  github_not_configured: "GitHub sign-in isn't configured on the server yet (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET).",
+  github_not_configured: "GitHub sign-in isn't configured on the server yet.",
   github_exchange_failed: "GitHub rejected the sign-in. Check the OAuth app's client secret and callback URL.",
   github_profile_failed: "Couldn't read your GitHub profile. Please try again.",
   github_unreachable: "Couldn't reach GitHub. Please try again in a moment.",
@@ -31,7 +50,7 @@ export function LoginPage({ config, onSignedIn }: { config: PublicConfigDto; onS
       <div className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--bg)] p-8 shadow-sm">
         <img src="/favicon.svg" alt="" className="mx-auto h-12 w-12" />
         <h1 className="mt-4 text-center text-2xl font-semibold">{config.appName}</h1>
-        <p className="mt-2 text-center text-sm text-[var(--text-soft)]">Your private multi-model AI assistant, running on free tiers.</p>
+        <p className="mt-2 text-center text-sm text-[var(--text-soft)]">A multi-model AI assistant. Sign in or create an account to start chatting.</p>
 
         {authError ? (
           <p role="alert" className="mt-5 rounded-lg bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
@@ -39,19 +58,44 @@ export function LoginPage({ config, onSignedIn }: { config: PublicConfigDto; onS
           </p>
         ) : null}
 
-        {config.githubLogin ? (
+        {config.googleLogin ? (
           <a
-            href="/api/auth/github/login"
-            className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-[#24292f] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#32383f] dark:bg-white dark:text-[#24292f] dark:hover:bg-gray-200"
+            href="/api/auth/google/login"
+            className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-4 py-2.5 text-sm font-medium text-[#1f1f1f] hover:bg-gray-50"
           >
-            <GitHubMark /> Continue with GitHub
+            <GoogleMark /> Continue with Google
           </a>
-        ) : (
+        ) : null}
+
+        {config.githubLogin ? (
+          config.googleLogin ? (
+            <p className="mt-4 text-center text-xs text-[var(--text-soft)]">
+              Administrator?{" "}
+              <a href="/api/auth/github/login" className="inline-flex items-center gap-1 font-medium text-[var(--accent)] hover:underline">
+                Sign in with GitHub
+              </a>
+            </p>
+          ) : (
+            <a
+              href="/api/auth/github/login"
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-[#24292f] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#32383f] dark:bg-white dark:text-[#24292f] dark:hover:bg-gray-200"
+            >
+              <GitHubMark /> Continue with GitHub (administrator)
+            </a>
+          )
+        ) : null}
+
+        {!config.googleLogin && !config.githubLogin ? (
           <p className="mt-6 rounded-lg bg-[var(--bg-soft)] px-3 py-2 text-sm text-[var(--text-soft)]">
-            GitHub sign-in isn't configured yet. Set <code>GITHUB_CLIENT_ID</code>, <code>GITHUB_CLIENT_SECRET</code> and{" "}
-            <code>ALLOWED_GITHUB_USERS</code> on the server (see the README).
+            Sign-in isn't configured yet. Set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> (and optionally the GitHub
+            ones) on the server. See the README.
           </p>
-        )}
+        ) : null}
+
+        <p className="mt-6 text-center text-[11px] leading-relaxed text-[var(--text-soft)]">
+          Replies come from free third-party AI services, and some of them may use conversations to improve their models. Please don't share
+          passwords or other sensitive information.
+        </p>
 
         {config.devLogin ? (
           <form
@@ -76,7 +120,7 @@ export function LoginPage({ config, onSignedIn }: { config: PublicConfigDto; onS
                 id="dev-login"
                 value={devName}
                 onChange={(e) => setDevName(e.target.value)}
-                placeholder="allowed GitHub username"
+                placeholder="any username"
                 className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
               />
               <button type="submit" className="rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-[var(--accent-text)]">

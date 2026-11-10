@@ -11,11 +11,21 @@ export interface Env {
   AI?: Ai;
   ASSETS?: Fetcher;
 
-  // --- Authentication (required) ---
+  // --- Authentication ---
+  /** Google sign-in (anyone can create an account unless sign-ups are closed in the admin panel). */
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  /** GitHub sign-in: administrators only. */
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
-  /** Comma-separated GitHub usernames allowed to sign in. Empty = nobody. */
+  /** Comma-separated administrator emails (matched against the verified sign-in email). */
+  ADMIN_EMAILS?: string;
+  /** Comma-separated administrator GitHub usernames (the only accounts allowed to use GitHub sign-in). */
+  ADMIN_GITHUB_USERS?: string;
+  /** Older name for ADMIN_GITHUB_USERS, still honoured when ADMIN_GITHUB_USERS is not set. */
   ALLOWED_GITHUB_USERS?: string;
+  /** Messages per user per day unless the admin sets another value in the admin panel (default 30). */
+  DEFAULT_DAILY_LIMIT?: string;
 
   // --- Free AI providers (set at least one, or rely on Workers AI) ---
   GROQ_API_KEY?: string;
@@ -47,13 +57,21 @@ export interface Env {
   MISTRAL_BASE_URL?: string;
   GITHUB_OAUTH_BASE_URL?: string;
   GITHUB_API_BASE_URL?: string;
+  GOOGLE_OAUTH_BASE_URL?: string;
+  GOOGLE_TOKEN_URL?: string;
+  GOOGLE_USERINFO_URL?: string;
 }
 
 export interface AppConfig {
   appName: string;
   providerOrder: ProviderId[];
-  allowedGithubUsers: Set<string>;
+  /** Lower-case administrator GitHub usernames. */
+  adminGithubUsers: Set<string>;
+  /** Lower-case administrator emails. */
+  adminEmails: Set<string>;
   githubLoginEnabled: boolean;
+  googleLoginEnabled: boolean;
+  defaultDailyLimit: number;
   devLogin: boolean;
   maxContextChars: number;
   maxOutputTokens: number;
@@ -62,6 +80,9 @@ export interface AppConfig {
   workersAiEnabled: boolean;
   githubOAuthBaseUrl: string;
   githubApiBaseUrl: string;
+  googleOAuthBaseUrl: string;
+  googleTokenUrl: string;
+  googleUserinfoUrl: string;
 }
 
 export const DEFAULT_PROVIDER_ORDER: ProviderId[] = ["groq", "gemini", "openrouter", "mistral", "workers-ai"];
@@ -88,22 +109,28 @@ export function parseProviderOrder(value: string | undefined): ProviderId[] {
   return seen.size > 0 ? [...seen] : [...DEFAULT_PROVIDER_ORDER];
 }
 
+const csvSet = (value: string | undefined) =>
+  new Set(
+    (value ?? "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+
 const configCache = new WeakMap<object, AppConfig>();
 
 export function getConfig(env: Env): AppConfig {
   const cached = configCache.get(env);
   if (cached) return cached;
-  const allowed = new Set(
-    (env.ALLOWED_GITHUB_USERS ?? "")
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean),
-  );
+  const adminGithubUsers = csvSet(env.ADMIN_GITHUB_USERS);
   const config: AppConfig = {
     appName: env.APP_NAME?.trim() || "Assistant",
     providerOrder: parseProviderOrder(env.PROVIDER_ORDER),
-    allowedGithubUsers: allowed,
+    adminGithubUsers: adminGithubUsers.size > 0 ? adminGithubUsers : csvSet(env.ALLOWED_GITHUB_USERS),
+    adminEmails: csvSet(env.ADMIN_EMAILS),
     githubLoginEnabled: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
+    googleLoginEnabled: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
+    defaultDailyLimit: intVar(env.DEFAULT_DAILY_LIMIT, 30, 0, 100_000),
     devLogin: boolVar(env.DEV_LOGIN, false),
     maxContextChars: intVar(env.MAX_CONTEXT_CHARS, 16_000, 2_000, 400_000),
     maxOutputTokens: intVar(env.MAX_OUTPUT_TOKENS, 2_048, 128, 32_768),
@@ -112,6 +139,9 @@ export function getConfig(env: Env): AppConfig {
     workersAiEnabled: boolVar(env.WORKERS_AI_ENABLED, true) && Boolean(env.AI),
     githubOAuthBaseUrl: (env.GITHUB_OAUTH_BASE_URL || "https://github.com").replace(/\/+$/, ""),
     githubApiBaseUrl: (env.GITHUB_API_BASE_URL || "https://api.github.com").replace(/\/+$/, ""),
+    googleOAuthBaseUrl: (env.GOOGLE_OAUTH_BASE_URL || "https://accounts.google.com").replace(/\/+$/, ""),
+    googleTokenUrl: env.GOOGLE_TOKEN_URL || "https://oauth2.googleapis.com/token",
+    googleUserinfoUrl: env.GOOGLE_USERINFO_URL || "https://openidconnect.googleapis.com/v1/userinfo",
   };
   configCache.set(env, config);
   return config;

@@ -22,8 +22,16 @@ discovers models live and treats every limit as dynamic.
 **Consequence:** the backend is **TypeScript on Cloudflare Workers (Hono)** instead of Python/FastAPI. Python Workers
 exist but are less mature, and Python isn't required for anything in scope.
 
-**Authentication:** GitHub OAuth + username allowlist. Password hashing (PBKDF2 at OWASP strength) doesn't fit the
-free plan's 10 ms CPU budget, and GitHub is integration #1 anyway. No passwords are stored.
+**Authentication:** Google OAuth for everyone (open sign-up, switchable by the admin), GitHub OAuth for administrators
+only. Password hashing (PBKDF2 at OWASP strength) doesn't fit the free plan's 10 ms CPU budget, and email/password
+would need a mail service for verification. No passwords are stored. Roles: `admin` is derived on every request
+from `ADMIN_EMAILS` (verified email) or `ADMIN_GITHUB_USERS`; everyone else is a `user`.
+
+**Accounts and linking:** one `users` row per person, with `google_sub` and/or `github_login`. A Google sign-in
+links to an existing account with the same verified email, or (admin email only) to the single GitHub-only admin
+account, and vice versa, so the admin's two sign-in methods open the same chats. Google-only accounts store a
+negative placeholder in the legacy `github_id NOT NULL` column (the table isn't rebuilt; see the data-safety rule
+in HANDOFF.md).
 
 ## 3. System overview
 
@@ -32,8 +40,8 @@ Browser (React SPA, served as static assets; CSP via public/_headers)
    │  same-origin fetch + Server-Sent Events                 ┌──────────────────────────┐
    ▼                                                          │ Ollama on the user's PC  │◄── optional, browser-direct
 Cloudflare Worker (Hono)  /api/*                              └──────────────────────────┘
-   ├─ middleware: request log + id, CSRF origin guard, session auth (+allowlist), rate limits
-   ├─ routes: auth · chat (SSE) · conversations · models · settings · health
+   ├─ middleware: request log + id, CSRF origin guard, session auth (+blocked check), admin gate, rate limits
+   ├─ routes: auth (Google, GitHub) · chat (SSE) · conversations · models · settings · admin · health
    ├─ llm/
    │   ├─ registry     provider definitions (Groq, Gemini, OpenRouter, Mistral via one OpenAI-compatible adapter; Workers AI via binding)
    │   ├─ router       plan (auto / manual + fallback) → execute (retry, fallback, cooldown, usage)
@@ -99,7 +107,8 @@ from Ollama directly, then `/api/chat/local/complete` stores the reply. The serv
 
 | Threat | Control |
 |---|---|
-| Strangers using your quota | GitHub OAuth + allowlist checked at login **and every request** |
+| Strangers using your quota | Per-user daily message limit (default 30, admins unlimited), sign-ups switch, Google *Testing* mode allows only listed test users, block button (checked **every request**, sessions deleted) |
+| Non-admins reaching admin functions | `/api/admin/*` requires the admin role, derived from config on every request; admins can't be blocked or deleted through the API |
 | Session theft | 256-bit random token, `HttpOnly; Secure; SameSite=Lax; __Host-` cookie, only the hash stored, sliding 30-day expiry, logout deletes the row |
 | CSRF | Mutating requests must be same-origin (Origin / Sec-Fetch-Site) and `application/json` |
 | OAuth CSRF | Random `state` in a short-lived HttpOnly cookie, compared in constant time |
@@ -117,8 +126,11 @@ tools are blocked once untrusted content is in context.
 
 - `tests/units.test.ts`: SSE parser, error classification, cooldowns, context builder, config parsing, entry-module shape.
 - `tests/router.test.ts`: planning and fallback behaviour with fake providers.
-- `tests/api.test.ts`: full HTTP flows inside workerd with a real local D1: auth, OAuth callback, allowlist
-  revocation, CSRF, streaming + fallback + persistence, regenerate, validation, rate limiting, isolation between
+- `tests/migrations.test.ts`: data-safety guard: every migration is applied to a database full of user data and
+  must not lose a single row.
+- `tests/admin.test.ts`: multi-user flows: Google sign-up/sign-in, admin by email or GitHub, account linking,
+  sign-ups switch, blocking, daily limits, admin API permissions, bot instructions and tools for everyone.
+- `tests/api.test.ts`: full HTTP flows inside workerd with a real local D1: auth, OAuth callback, CSRF, streaming + fallback + persistence, regenerate, validation, rate limiting, isolation between
   users, settings, model lists, local-model endpoints.
 - Manual/automated E2E: `wrangler dev` + `scripts/mock-llm.mjs` + a headless browser run (login, streaming,
   reload persistence, regenerate, model picker, settings, rename, dark mode, stop, mobile drawer, sign-out).
@@ -140,6 +152,7 @@ tools are blocked once untrusted content is in context.
 |---|---|---|
 | ✅ 4 | Core chat, auth, history, multi-provider fallback, UI | Workers, D1, free LLM APIs |
 | ✅ 5 | Agent loop, tool registry, calculator, date/time, long-term memory, tool & memory settings | Provider tool-calling APIs |
+| ✅ 6.0 | Multi-user: Google sign-up/sign-in, admin role, admin panel (users, block, limits, sign-ups, bot instructions, tools, providers), per-user daily limits | Google OAuth (free) |
 | 6a | Web search + page reading with citations; file upload, PDF/DOCX parsing, RAG | Tavily free / DuckDuckGo, D1 blobs (R2 needs a card, so it's avoided), Workers AI embeddings + Vectorize free tier |
 | 6b | **GitHub** integration (repos, issues, PRs: read freely, write with approval) + the approval gate | GitHub REST API, incremental OAuth scopes |
 | 6c | **Gmail** (draft-first, send with approval), **Google Calendar** | Google APIs (free) via OAuth |

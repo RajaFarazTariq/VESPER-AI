@@ -11,7 +11,9 @@ export default defineConfig(async () => {
         miniflare: {
           bindings: {
             TEST_MIGRATIONS: migrations,
-            ALLOWED_GITHUB_USERS: "octocat,Second-User",
+            // octocat is the administrator; every other dev-login name is a regular user.
+            ADMIN_GITHUB_USERS: "octocat",
+            ADMIN_EMAILS: "boss@example.com",
             DEV_LOGIN: "true",
             WORKERS_AI_ENABLED: "false",
           },

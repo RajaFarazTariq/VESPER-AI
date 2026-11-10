@@ -14,7 +14,8 @@ import {
 } from "../db/conversations";
 import { listMemories } from "../db/memories";
 import { D1ProviderStateStore } from "../db/provider-state";
-import type { SessionUser } from "../db/users";
+import { getAppSettings } from "../db/app-settings";
+import { consumeDailyMessage, type SessionUser } from "../db/users";
 import { getConfig } from "../env";
 import { AppError, badRequest, notFound } from "../lib/errors";
 import { parseJson } from "../lib/validation";
@@ -58,6 +59,29 @@ const chatLimiter = rateLimit(
   (c) => c.get("user").id,
 );
 
+/** Admins are counted (for the usage view) but never limited; everyone else gets their personal limit or the default. */
+async function enforceDailyLimit(db: D1Database, user: SessionUser, defaultLimit: number): Promise<void> {
+  if (user.role === "admin") {
+    await consumeDailyMessage(db, user.id, Number.MAX_SAFE_INTEGER);
+    return;
+  }
+  const limit = user.dailyLimit ?? defaultLimit;
+  if (await consumeDailyMessage(db, user.id, limit)) return;
+  if (limit <= 0) {
+    throw new AppError(429, "daily_limit", "Sending messages is paused for your account. Please contact the administrator.");
+  }
+  const now = new Date();
+  const msLeft = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) - now.getTime();
+  const hours = Math.floor(msLeft / 3_600_000);
+  const minutes = Math.max(1, Math.ceil((msLeft % 3_600_000) / 60_000));
+  const wait = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+  throw new AppError(
+    429,
+    "daily_limit",
+    `You've used all ${limit} messages for today. Your limit resets at 00:00 UTC (in about ${wait}).`,
+  );
+}
+
 /**
  * Shared first half of a chat turn: find/create the conversation and store the user message
  * (or, for regenerate, drop the previous answer). Returns the prompt context.
@@ -68,6 +92,7 @@ async function prepareTurn(
   input: { conversationId?: string; message?: string; regenerate?: boolean },
   selection: string,
   tools: AgentTool[],
+  adminInstructions: string,
 ): Promise<{ conversation: ConversationDto; isNew: boolean; userMessage: MessageDto; context: ReturnType<typeof buildContext> }> {
   const db = c.env.DB;
   const config = getConfig(c.env);
@@ -103,6 +128,7 @@ async function prepareTurn(
   const system = buildSystemPrompt({
     appName: config.appName,
     customInstructions: user.settings.systemPrompt,
+    adminInstructions,
     ...(memories ? { memories } : {}),
     tools: tools.map((t) => t.name),
   });
@@ -139,8 +165,13 @@ export const chatRoutes = new Hono<AppEnv>()
       throw new AppError(status, planned.error.code, planned.error.message);
     }
 
-    const tools = enabledTools(user.settings);
-    const turn = await prepareTurn(c, user, body, selection, tools);
+    // Count the message against the daily limit only once the request is known to be valid,
+    // and before anything is written, so a refused message leaves no half-created chat.
+    const appSettings = await getAppSettings(c.env.DB, config);
+    await enforceDailyLimit(c.env.DB, user, appSettings.defaultDailyLimit);
+
+    const tools = enabledTools(user.settings, appSettings.disabledTools);
+    const turn = await prepareTurn(c, user, body, selection, tools, appSettings.botInstructions);
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
     const encoder = new TextEncoder();
@@ -239,7 +270,9 @@ export const chatRoutes = new Hono<AppEnv>()
     if (!selection.startsWith("ollama:") || !/^ollama:[\w.:\-/]{1,150}$/.test(selection)) {
       throw badRequest("Local chat requires an ollama:<model> selection.");
     }
-    const turn = await prepareTurn(c, user, body, selection, []);
+    // Local models run on the user's own computer, so they don't count against the daily limit.
+    const { botInstructions } = await getAppSettings(c.env.DB, getConfig(c.env));
+    const turn = await prepareTurn(c, user, body, selection, [], botInstructions);
     const response: LocalPrepareResponse = {
       conversation: turn.conversation,
       userMessage: turn.userMessage,

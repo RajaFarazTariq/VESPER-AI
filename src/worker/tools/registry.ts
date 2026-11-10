@@ -153,9 +153,9 @@ export const ALL_TOOLS: AgentTool[] = [calculator, datetime, remember, forget];
 export const toolInfo = (): ToolInfoDto[] =>
   ALL_TOOLS.map((t) => ({ name: t.name, label: t.label, description: t.description, risk: t.risk, requiresMemory: t.requiresMemory }));
 
-/** Tools available for this user's settings. */
-export function enabledTools(settings: UserSettings): AgentTool[] {
+/** Tools available for this user's settings, minus any the admin switched off for everyone. */
+export function enabledTools(settings: UserSettings, disabledForEveryone: readonly string[] = []): AgentTool[] {
   if (!settings.toolsEnabled) return [];
-  const disabled = new Set(settings.disabledTools);
+  const disabled = new Set([...settings.disabledTools, ...disabledForEveryone]);
   return ALL_TOOLS.filter((t) => !disabled.has(t.name) && (!t.requiresMemory || settings.memoryEnabled));
 }

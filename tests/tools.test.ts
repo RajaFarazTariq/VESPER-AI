@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, type ModelInfo, type ProviderId, type ToolEventDto } from "../src/shared/types";
 import { addMemory, listMemories, MAX_MEMORIES } from "../src/worker/db/memories";
 import type { ProviderHealth, ProviderStateStore } from "../src/worker/db/provider-state";
-import { upsertGithubUser } from "../src/worker/db/users";
+import { createUser } from "../src/worker/db/users";
 import { runAgent } from "../src/worker/llm/agent";
 import { buildSystemPrompt } from "../src/worker/llm/context";
 import { ToolCallAccumulator, toWireMessages } from "../src/worker/llm/providers/openai-compatible";
@@ -324,7 +324,7 @@ describe("runAgent", () => {
   });
 
   it("saves and forgets memories through tools, scoped to the user", async () => {
-    const user = await upsertGithubUser(env.DB, { githubId: 501, login: "mem-user", name: null, avatarUrl: null });
+    const user = await createUser(env.DB, { githubId: 501, githubLogin: "mem-user", login: "mem-user", name: null, avatarUrl: null });
     const groq = new ScriptedProvider("groq", [
       { calls: [call("remember", { fact: "Prefers dark mode." })] },
       { text: "Noted." },
@@ -344,7 +344,7 @@ describe("runAgent", () => {
   });
 
   it("caps the number of memories", async () => {
-    const user = await upsertGithubUser(env.DB, { githubId: 502, login: "cap-user", name: null, avatarUrl: null });
+    const user = await createUser(env.DB, { githubId: 502, githubLogin: "cap-user", login: "cap-user", name: null, avatarUrl: null });
     for (let i = 0; i < MAX_MEMORIES; i++) await addMemory(env.DB, user.id, `fact ${i}`, "user");
     await expect(addMemory(env.DB, user.id, "one too many", "user")).rejects.toThrow(/Memory is full/);
     // Exact duplicates are not stored twice.

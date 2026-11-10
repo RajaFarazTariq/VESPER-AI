@@ -66,6 +66,23 @@ the tests, creates the database tables, and deploys. When it finishes, the log s
 2. Register it, copy the **Client ID**, then **Generate a new client secret** and copy it.
 
 The app requests no GitHub permissions (scopes). It only reads your public profile to know who you are.
+GitHub sign-in is accepted **only for administrators** (`ADMIN_GITHUB_USERS`); everyone else uses Google.
+
+## Step 4b: Google sign-in (for everyone)
+
+Free; no billing account is needed. Google renames menus now and then, so look for the closest match.
+
+1. Open <https://console.cloud.google.com/> and create a new project (e.g. "VESPER AI"). Don't enable billing.
+2. Open **Google Auth Platform** (or **APIs & Services → OAuth consent screen**) → **Get started**: app name, your
+   support email, audience **External**, your contact email → **Create**.
+3. **Audience → Test users → Add users**: add your own Gmail and each tester's Gmail. While the app is in
+   **Testing**, only these addresses can sign in (up to 100).
+4. **Clients → Create client** → type **Web application**. Under *Authorized redirect URIs* add exactly
+   `https://ai-assistant.<subdomain>.workers.dev/api/auth/google/callback` → **Create**.
+5. Copy the **Client ID** and **Client secret**.
+
+The app asks only for `openid email profile` (name, photo, verified email). These basic scopes don't need Google's
+app review. To open sign-in to everyone later, press **Publish app** under *Audience*.
 
 ## Step 5: Free AI API keys
 
@@ -85,9 +102,12 @@ Get at least one; two or more make automatic fallback useful.
 
 | Name | Value |
 |---|---|
+| `GOOGLE_CLIENT_ID` | from Step 4b |
+| `GOOGLE_CLIENT_SECRET` | from Step 4b |
+| `ADMIN_EMAILS` | your Google email (comma-separate several admins) |
 | `GITHUB_CLIENT_ID` | from Step 4 |
 | `GITHUB_CLIENT_SECRET` | from Step 4 |
-| `ALLOWED_GITHUB_USERS` | your GitHub username (comma-separate several) |
+| `ADMIN_GITHUB_USERS` | your GitHub username (older setups: `ALLOWED_GITHUB_USERS` still works) |
 | `GROQ_API_KEY` | from Step 5 |
 | `GEMINI_API_KEY` | from Step 5 |
 | `OPENROUTER_API_KEY` | optional |
@@ -100,8 +120,9 @@ CLI alternative: `npx wrangler login` and then `npx wrangler secret put GROQ_API
 
 ## Step 7: Use it
 
-Open `https://ai-assistant.<subdomain>.workers.dev`, click **Continue with GitHub**, and chat. In **Settings →
-Providers** you can see which providers are configured, today's usage and any cooldowns.
+Open `https://ai-assistant.<subdomain>.workers.dev`, click **Continue with Google**, and chat. As an administrator you
+get the **shield icon** next to Settings: the admin panel (users, block, daily limits, sign-ups open/closed,
+instructions for the assistant, tools, and provider status with today's usage and cooldowns).
 
 ## Step 8: Remove the project from this computer (optional)
 
@@ -113,7 +134,8 @@ folder. To work on it again elsewhere: `git clone`, `npm install`, `cp .env.exam
 ## Updating
 
 Push to `main`. The Deploy workflow tests, migrates (new files in `migrations/`) and redeploys. If tests fail,
-nothing is deployed.
+nothing is deployed. The tests include a data-safety check (`tests/migrations.test.ts`) that fails if a database
+change would lose any user's chats, sessions or memories.
 
 ## Manual deploy (without GitHub Actions)
 

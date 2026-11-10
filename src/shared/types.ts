@@ -10,11 +10,42 @@ export const AUTO_MODEL = "auto";
 export type MessageRole = "user" | "assistant";
 export type MessageStatus = "complete" | "partial" | "error";
 
+export type UserRole = "admin" | "user";
+export type UserStatus = "active" | "blocked";
+
 export interface UserDto {
   id: string;
+  /** GitHub username, or the email address for Google-only accounts. */
   login: string;
   name: string | null;
   avatarUrl: string | null;
+  email: string | null;
+  role: UserRole;
+}
+
+/** A user as listed in the admin panel. */
+export interface AdminUserDto extends UserDto {
+  status: UserStatus;
+  /** Personal daily message limit; null = the app-wide default. */
+  dailyLimit: number | null;
+  todayMessages: number;
+  conversations: number;
+  github: boolean;
+  google: boolean;
+  createdAt: number;
+  lastLoginAt: number;
+}
+
+/** App-wide settings managed by the admin. */
+export interface AppSettingsDto {
+  /** When false, new accounts can't be created (existing users keep working). */
+  signupsOpen: boolean;
+  /** Messages per user per day (admins are unlimited). */
+  defaultDailyLimit: number;
+  /** Instructions added to every user's system prompt. */
+  botInstructions: string;
+  /** Tools switched off for everyone. */
+  disabledTools: string[];
 }
 
 export interface UserSettings {
@@ -122,6 +153,7 @@ export interface ModelsResponse {
 export interface PublicConfigDto {
   appName: string;
   githubLogin: boolean;
+  googleLogin: boolean;
   devLogin: boolean;
 }
 

@@ -1,12 +1,13 @@
-import { ExternalLink, Monitor, Moon, Plus, Sun, Trash2, X } from "lucide-react";
+import { Monitor, Moon, Plus, Sun, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MemoryDto, ModelsResponse, ToolInfoDto, UserSettings } from "../../shared/types";
 import { api, ApiError } from "../api/client";
-import { formatRelative, selectionLabel } from "../lib/format";
+import { selectionLabel } from "../lib/format";
 import { explainOllamaError, listOllamaModels } from "../lib/ollama";
 import { getThemePreference, setThemePreference, type ThemePreference } from "../lib/theme";
 
-type Tab = "general" | "tools" | "memory" | "providers" | "local" | "appearance";
+// Provider status moved to the admin panel (AdminDialog), since only the administrator manages keys.
+type Tab = "general" | "tools" | "memory" | "local" | "appearance";
 
 interface Props {
   settings: UserSettings;
@@ -82,7 +83,6 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
     ["general", "General"],
     ["tools", "Tools"],
     ["memory", "Memory"],
-    ["providers", "Providers"],
     ["local", "Local models"],
     ["appearance", "Appearance"],
   ];
@@ -195,8 +195,8 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
                 {tools === null ? <p className="text-sm text-[var(--text-soft)]">Loading…</p> : null}
               </div>
               <p className="text-xs text-[var(--text-soft)]">
-                Coming next: web search, documents and GitHub tools. Anything that acts outside your account (sending, creating, deleting) will always
-                ask for your approval first.
+                Tools switched off by the administrator aren't listed. Anything that acts outside your account (sending, creating, deleting) will
+                always ask for your approval first.
               </p>
             </div>
           ) : null}
@@ -289,50 +289,6 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
                   </ul>
                 )}
               </div>
-            </div>
-          ) : null}
-
-          {tab === "providers" ? (
-            <div className="space-y-3">
-              <p className="text-sm text-[var(--text-soft)]">
-                API keys are stored as encrypted secrets in your Cloudflare Worker (Settings → Variables and Secrets), never in the browser or the
-                repository. The app only uses free tiers and never switches to a paid model.
-              </p>
-              {(models?.providers ?? []).map((p) => (
-                <div key={p.id} className="rounded-xl border border-[var(--border)] p-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{p.label}</span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${
-                        p.configured ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-[var(--bg-soft)] text-[var(--text-soft)]"
-                      }`}
-                    >
-                      {p.configured ? "Configured" : "Not configured"}
-                    </span>
-                    {p.cooldownUntil ? (
-                      <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
-                        Cooling down · {formatRelative(p.cooldownUntil)}
-                      </span>
-                    ) : null}
-                    <a href={p.signupUrl} target="_blank" rel="noopener noreferrer" className="ml-auto inline-flex items-center gap-1 text-xs text-[var(--accent)]">
-                      {p.id === "workers-ai" ? "Free limits" : "Get a free key"} <ExternalLink size={12} />
-                    </a>
-                  </div>
-                  <p className="mt-2 text-sm">{p.freeTier}</p>
-                  <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-[var(--text-soft)]">
-                    {p.notes.map((n) => (
-                      <li key={n}>{n}</li>
-                    ))}
-                  </ul>
-                  {p.configured ? (
-                    <p className="mt-2 text-xs text-[var(--text-soft)]">
-                      Today (UTC): {p.today.requests} requests, {p.today.failures} failed · default model: {p.defaultModel ?? "n/a"}
-                      {p.lastError && p.cooldownUntil ? <span className="block text-[var(--danger)]">Last error: {p.lastError}</span> : null}
-                    </p>
-                  ) : null}
-                </div>
-              ))}
-              <p className="text-xs text-[var(--text-soft)]">Automatic order: {models?.order.join(" → ")} (change with the PROVIDER_ORDER variable).</p>
             </div>
           ) : null}
 
@@ -436,7 +392,7 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div>
       <div className="mb-1.5 text-sm font-medium">{label}</div>
@@ -446,7 +402,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) {
+export function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) {
   return (
     <label className="flex cursor-pointer items-start gap-3">
       <button

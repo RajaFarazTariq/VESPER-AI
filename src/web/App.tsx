@@ -2,6 +2,7 @@ import { ArrowDown, Menu, SquarePen } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ConversationDto, ModelsResponse, PublicConfigDto, UserDto, UserSettings } from "../shared/types";
 import { api, ApiError } from "./api/client";
+import { AdminDialog } from "./components/AdminDialog";
 import { Composer } from "./components/Composer";
 import { LoginPage } from "./components/LoginPage";
 import { MessageItem } from "./components/MessageItem";
@@ -94,6 +95,7 @@ function ChatApp({
   const [hasMore, setHasMore] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
   const [models, setModels] = useState<ModelsResponse | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
@@ -276,6 +278,10 @@ function ChatApp({
           setSettingsOpen(true);
           setSidebarOpen(false);
         }}
+        onOpenAdmin={() => {
+          setAdminOpen(true);
+          setSidebarOpen(false);
+        }}
         onLogout={async () => {
           await api.logout().catch(() => {});
           window.history.replaceState(null, "", "/");
@@ -376,6 +382,16 @@ function ChatApp({
             setSettingsOpen(false);
             toast("Settings saved.", "info");
           }}
+        />
+      ) : null}
+      {adminOpen && user.role === "admin" ? (
+        <AdminDialog
+          currentUserId={user.id}
+          models={models}
+          refreshingModels={refreshing}
+          onRefreshModels={() => void loadModels(true)}
+          onClose={() => setAdminOpen(false)}
+          onNotice={toast}
         />
       ) : null}
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />

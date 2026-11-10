@@ -17,6 +17,8 @@ export const modelRoutes = new Hono<AppEnv>()
     const providers = getProviders(c.env);
     const [health, usage] = await Promise.all([new D1ProviderStateStore(c.env.DB).getHealth(), getTodayUsage(c.env.DB)]);
     const now = Date.now();
+    // Provider error messages are for the administrator; users only need the model lists.
+    const isAdmin = c.get("user").role === "admin";
 
     // Show providers in routing order, then any not listed in PROVIDER_ORDER.
     const ordered = [
@@ -38,7 +40,7 @@ export const modelRoutes = new Hono<AppEnv>()
           defaultModel,
           models,
           cooldownUntil: state && state.cooldownUntil > now ? state.cooldownUntil : null,
-          lastError: state?.lastError ?? null,
+          lastError: isAdmin ? (state?.lastError ?? null) : null,
           today: usage.get(provider.id) ?? { requests: 0, failures: 0 },
           freeTier: provider.freeTier,
           notes: provider.notes,

@@ -1,6 +1,8 @@
 import { SseParser } from "../../shared/sse";
 import type {
+  AdminUserDto,
   ApiErrorBody,
+  AppSettingsDto,
   ChatStreamEvent,
   ConversationDto,
   LocalPrepareResponse,
@@ -81,6 +83,16 @@ export const api = {
   addMemory: (content: string) => request<{ memory: MemoryDto }>("/api/memories", { method: "POST", body: JSON.stringify({ content }) }),
   deleteMemory: (id: string) => request<{ ok: true }>(`/api/memories/${encodeURIComponent(id)}`, { method: "DELETE" }),
   deleteAllMemories: () => request<{ deleted: number }>("/api/memories", { method: "DELETE" }),
+
+  admin: {
+    users: () => request<{ users: AdminUserDto[] }>("/api/admin/users"),
+    updateUser: (id: string, patch: { status?: "active" | "blocked"; dailyLimit?: number | null }) =>
+      request<{ user: AdminUserDto }>(`/api/admin/users/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+    deleteUser: (id: string) => request<{ ok: true }>(`/api/admin/users/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    settings: () => request<{ settings: AppSettingsDto; tools: ToolInfoDto[] }>("/api/admin/settings"),
+    updateSettings: (patch: Partial<AppSettingsDto>) =>
+      request<{ settings: AppSettingsDto }>("/api/admin/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  },
 
   localPrepare: (body: { conversationId?: string; message?: string; regenerate?: boolean; model: string }) =>
     request<LocalPrepareResponse>("/api/chat/local/prepare", { method: "POST", body: JSON.stringify(body) }),

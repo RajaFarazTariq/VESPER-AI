@@ -1,4 +1,4 @@
-import { Check, LogOut, MessageSquare, Pencil, Settings, SquarePen, Trash2, X } from "lucide-react";
+import { Check, LogOut, MessageSquare, Pencil, Settings, ShieldCheck, SquarePen, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { ConversationDto, UserDto } from "../../shared/types";
 import { groupConversations } from "../lib/format";
@@ -17,6 +17,8 @@ interface Props {
   onDelete: (id: string) => void;
   onLoadMore: () => void;
   onOpenSettings: () => void;
+  /** Shown only for administrators. */
+  onOpenAdmin: () => void;
   onLogout: () => void;
 }
 
@@ -135,13 +137,18 @@ export function Sidebar(props: Props) {
 
         <div className="flex items-center gap-2 border-t border-[var(--border)] p-3">
           {props.user.avatarUrl ? (
-            <img src={props.user.avatarUrl} alt="" className="h-8 w-8 rounded-full" />
+            <img src={props.user.avatarUrl} alt="" className="h-8 w-8 rounded-full" referrerPolicy="no-referrer" />
           ) : (
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent)] text-sm font-semibold text-[var(--accent-text)]">
               {props.user.login.slice(0, 1).toUpperCase()}
             </div>
           )}
           <span className="min-w-0 flex-1 truncate text-sm">{props.user.name || props.user.login}</span>
+          {props.user.role === "admin" ? (
+            <button type="button" onClick={props.onOpenAdmin} className="rounded-md p-1.5 hover:bg-[var(--bg-hover)]" aria-label="Admin panel" title="Admin panel">
+              <ShieldCheck size={17} />
+            </button>
+          ) : null}
           <button type="button" onClick={props.onOpenSettings} className="rounded-md p-1.5 hover:bg-[var(--bg-hover)]" aria-label="Settings" title="Settings">
             <Settings size={17} />
           </button>

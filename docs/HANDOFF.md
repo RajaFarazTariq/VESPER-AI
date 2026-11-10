@@ -1,9 +1,11 @@
 # VESPER: handoff notes for a new working session
 
-Read this first when resuming work. Last updated: **2026-11-10**. No secrets are stored here.
+Read this first when resuming work. Last updated: **2026-11-11**. No secrets are stored here.
 
 ## 1. What this is
-**VESPER** is the owner's personal, ChatGPT-style AI assistant. It runs entirely on **free tiers** (strict zero-cost
+**VESPER** is the owner's ChatGPT-style AI assistant. Since v0.6.0 it's **multi-user**: anyone can sign up with
+Google and chat; the owner is the **admin** and manages everything (users, limits, features) from the admin panel.
+Currently in the **testing stage** with a few testers. It runs entirely on **free tiers** (strict zero-cost
 requirement: no paid services, no card on file, no paid fallback).
 
 | Item | Value |
@@ -11,15 +13,17 @@ requirement: no paid services, no card on file, no paid fallback).
 | Owner | Raja Faraz Tariq (GitHub **RajaFarazTariq**). Personal project, not office work |
 | Repo | https://github.com/RajaFarazTariq/VESPER-AI (private, branch `main`) |
 | Live app | https://ai-assistant.vesper-ai.workers.dev |
-| Health check | https://ai-assistant.vesper-ai.workers.dev/api/health (expects `version` 0.5.0+) |
+| Health check | https://ai-assistant.vesper-ai.workers.dev/api/health (expects `version` 0.6.0+) |
 | Cloudflare | Free plan. Worker name `ai-assistant`, workers.dev subdomain `vesper-ai` |
 | D1 database | `ai-assistant`, id `726f21f4-8ef4-40b5-86ea-3676f2545c84` (not secret) |
-| Sign-in | GitHub OAuth app "VESPER AI", callback `https://ai-assistant.vesper-ai.workers.dev/api/auth/github/callback` |
+| Sign-in (everyone) | Google OAuth client, callback `https://ai-assistant.vesper-ai.workers.dev/api/auth/google/callback` (Google app in *Testing* mode: only listed test users can sign in) |
+| Sign-in (admin backup) | GitHub OAuth app "VESPER AI", callback `https://ai-assistant.vesper-ai.workers.dev/api/auth/github/callback` |
 
 ## 2. How the owner wants to work
 - **The owner runs all git commands himself** (commit/push). Never push or commit on his behalf; give him the exact
-  commands. He has asked that each set of push commands include his GitHub token; ask him for it, because it is
-  deliberately not stored in this repo.
+  commands. The GitHub token is **not stored** anywhere on the PC (removed from the `origin` URL on 2026-11-11);
+  he keeps it elsewhere and pastes it into the push command himself, so give push commands with a `<TOKEN>`
+  placeholder (see docs/CONFIGURATION.md §6). Never ask him to paste it into the chat.
 - Wants **step-by-step, one step at a time** instructions for anything he does in a dashboard.
 - Explain in plain words; he's not deep in this stack.
 - Deploys happen automatically: a push to `main` triggers GitHub Actions → tests → D1 migrations → `wrangler deploy`.
@@ -36,13 +40,25 @@ requirement: no paid services, no card on file, no paid fallback).
 - **Tools** (`src/worker/tools/`): `calculator` (own safe parser), `current_datetime`, `remember`, `forget`.
   Risk levels: `read` / `write` (own data).
 - **Memory**: `memories` table, injected into the system prompt; managed in Settings → Memory.
-- **Auth**: GitHub OAuth + `ALLOWED_GITHUB_USERS` allowlist (rechecked every request). Opaque session tokens, stored as
-  hashes. `DEV_LOGIN=true` gives a username-only login, and only on localhost.
+- **Auth**: Google OAuth for everyone (open sign-up; admin can close sign-ups), GitHub OAuth for admins only. Admin role
+  = verified email in `ADMIN_EMAILS` or GitHub username in `ADMIN_GITHUB_USERS` (falls back to the old
+  `ALLOWED_GITHUB_USERS`), re-derived on every request. Google and GitHub link to the same account for the admin.
+  Blocked users are refused on every request. Opaque session tokens, stored as hashes. `DEV_LOGIN=true` gives a
+  username-only login (any name; admin names become admin), and only on localhost.
+- **Admin panel** (`src/web/components/AdminDialog.tsx`, API `src/worker/routes/admin.ts`): users (block/unblock,
+  per-user daily limit, delete), app settings stored in D1 `app_settings` (sign-ups open, default daily limit,
+  instructions added to every system prompt, tools disabled for everyone), provider status.
+- **Daily limit**: `user_usage_daily` counts messages per user per UTC day (atomic check-and-count before anything is
+  written). Default 30; admins unlimited; local Ollama chats don't count.
 - Full design: `docs/ARCHITECTURE.md`. Deployment guide: `docs/DEPLOYMENT.md`.
 
 ## 4. Configuration (names only; values live in Cloudflare → Worker → Settings → Variables and Secrets)
 Set: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `ALLOWED_GITHUB_USERS` (= RajaFarazTariq), `GROQ_API_KEY`,
 `GEMINI_API_KEY`, `APP_NAME` (= VESPER). Not set yet: `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`.
+Added 2026-11-11 for v0.6.0: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (secrets), `ADMIN_EMAILS` (text, the owner's
+Gmail). `ALLOWED_GITHUB_USERS` still keeps him admin on GitHub sign-in (optional rename to `ADMIN_GITHUB_USERS`).
+**Full register of every setting, secret, account and console, with a setup log per stage:
+[`docs/CONFIGURATION.md`](CONFIGURATION.md). Keep it updated whenever anything is added or changed.**
 GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` and variable `D1_DATABASE_ID`.
 `wrangler.jsonc` has `keep_vars: true`, so deploys don't wipe dashboard variables.
 
@@ -53,10 +69,11 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | 4 Core chat (streaming, history, auth, multi-provider fallback, UI) | ✅ live |
 | 5 Agent loop + tools + long-term memory + Tools/Memory settings | ✅ live (v0.5.0) |
 | Fix: tool task switching provider mid-way (Groq → Gemini) | ✅ pushed |
-| Math rendering (KaTeX → MathML, lazy-loaded) + stronger "use calculator" prompt | ✅ built & tested; **check that the owner pushed it** |
-| **Next: owner to choose 6b or 6a** | ⏳ |
+| Math rendering (KaTeX → MathML, lazy-loaded) + stronger "use calculator" prompt | ✅ live (verified 2026-11-11) |
+| **6.0 Multi-user + admin** (Google sign-in, admin panel, daily limits, block, sign-ups switch) | ✅ built & tested locally (v0.6.0); **owner: Google setup + push + live check** |
+| **Next after 6.0: 6a web search, then admin-managed RAG knowledge base, then 6b GitHub** | ⏳ (agreed order) |
 
-**Next options (recommended: 6b first, the owner's #1 integration):**
+**Options (the roadmap PDF puts knowledge/reliability before integrations, so 6a comes first):**
 - **6b GitHub**: read repos/files/issues/PRs; create issues, comments and PRs behind an **Approve/Reject gate**
   (pending-action table, resume endpoint, UI card). The gate gets reused by Gmail/Calendar/Telegram.
   Needs incremental OAuth scopes (the login currently requests none).
@@ -68,15 +85,21 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 100 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 120 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
-Local `.env` for keyless dev: `ALLOWED_GITHUB_USERS=<name>`, `DEV_LOGIN=true`, `WORKERS_AI_ENABLED=false`,
+Local `.env` for keyless dev: `ADMIN_GITHUB_USERS=<name>`, `DEV_LOGIN=true`, `WORKERS_AI_ENABLED=false`,
 `GROQ_API_KEY=mock`, `GROQ_BASE_URL=http://127.0.0.1:8790/groq` (Gemini likewise with `/gemini`).
 Browser checks were done with headless Edge via `playwright-core` installed in a temp folder, not in the project.
 
 ## 7. Gotchas learned the hard way
+- **Database changes must never delete user data.** Migrations may only ADD (columns, tables, indexes).
+  Never DROP or rebuild `users` or any table that others reference: D1 cascades the DROP into
+  sessions/conversations/messages/memories even with `PRAGMA defer_foreign_keys = on` (tested 2026-11-11).
+  `tests/migrations.test.ts` seeds data before each migration and fails if any row disappears; since the deploy
+  workflow runs tests first, such a change can't reach production. Wiping data on purpose is a separate,
+  explicit step the owner must ask for, never part of a migration.
 - **Worker entry module may only export handlers.** Keep the Hono app in `src/worker/app.ts`; `index.ts` exports only
   `default`. There's a regression test for this.
 - **Gemini rejects tool history it didn't create** (thought signatures in `extra_content`). Tool calls carry `origin`, and
