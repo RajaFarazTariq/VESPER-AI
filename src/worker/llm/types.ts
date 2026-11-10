@@ -1,13 +1,28 @@
 import type { ModelInfo, ProviderId } from "../../shared/types";
 
-export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
+/** A tool call requested by the model. `extra` keeps provider-specific fields (e.g. Gemini thought signatures). */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+  extra?: Record<string, unknown>;
+}
+
+export type ChatMessage =
+  | { role: "system" | "user"; content: string }
+  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
+  | { role: "tool"; tool_call_id: string; name: string; content: string };
+
+/** OpenAI-style function tool definition. */
+export interface ToolSpec {
+  type: "function";
+  function: { name: string; description: string; parameters: Record<string, unknown> };
 }
 
 export type StreamChunk =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
+  | { type: "tool_calls"; calls: ToolCall[] }
   | { type: "usage"; inputTokens: number | null; outputTokens: number | null };
 
 export interface ProviderRequest {
@@ -15,6 +30,35 @@ export interface ProviderRequest {
   messages: ChatMessage[];
   maxTokens: number;
   signal: AbortSignal;
+  /** Offered only to providers with supportsTools = true. */
+  tools?: ToolSpec[];
+}
+
+/**
+ * Rewrite a tool transcript as plain text, for providers/models without tool support
+ * (e.g. when a fallback lands on one mid-task).
+ */
+export function flattenToolMessages(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (const m of messages) {
+    if (m.role === "assistant" && m.tool_calls?.length) {
+      const calls = m.tool_calls.map((c) => `[Used tool ${c.name} with ${c.arguments}]`).join("\n");
+      out.push({ role: "assistant", content: [m.content, calls].filter(Boolean).join("\n") });
+    } else if (m.role === "tool") {
+      out.push({ role: "user", content: `[Result of tool ${m.name}]: ${m.content}` });
+    } else {
+      out.push(m);
+    }
+  }
+  // Merge consecutive same-role messages produced by the rewrite.
+  const merged: ChatMessage[] = [];
+  for (const m of out) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === m.role && last.role !== "system" && typeof last.content === "string" && typeof m.content === "string") {
+      last.content = `${last.content}\n\n${m.content}`;
+    } else merged.push({ ...m } as ChatMessage);
+  }
+  return merged;
 }
 
 export interface Provider {
@@ -23,6 +67,8 @@ export interface Provider {
   readonly freeTier: string;
   readonly notes: string[];
   readonly signupUrl: string;
+  /** Whether the provider accepts OpenAI-style `tools` (function calling). */
+  readonly supportsTools: boolean;
   isConfigured(): boolean;
   /** The model used for automatic routing (may consult the model list). */
   defaultModel(): Promise<string>;

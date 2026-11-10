@@ -26,6 +26,12 @@ export interface UserSettings {
   /** Optional local models through the browser (the cloud server never calls this URL). */
   ollamaEnabled: boolean;
   ollamaUrl: string;
+  /** Master switch for tool use (calculator, memory, …). */
+  toolsEnabled: boolean;
+  /** Names of individual tools the user switched off. */
+  disabledTools: string[];
+  /** Include saved memories in every conversation and allow the assistant to save new ones. */
+  memoryEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -34,7 +40,38 @@ export const DEFAULT_SETTINGS: UserSettings = {
   systemPrompt: "",
   ollamaEnabled: false,
   ollamaUrl: "http://localhost:11434",
+  toolsEnabled: true,
+  disabledTools: [],
+  memoryEnabled: true,
 };
+
+/** One tool call made while producing a reply. */
+export interface ToolEventDto {
+  id: string;
+  name: string;
+  label: string;
+  args: Record<string, unknown>;
+  status: "running" | "done" | "error";
+  /** Short human-readable outcome shown in the UI. */
+  summary: string | null;
+}
+
+/** A tool as listed in Settings. */
+export interface ToolInfoDto {
+  name: string;
+  label: string;
+  description: string;
+  /** "read": only looks things up. "write": changes data in your own account. */
+  risk: "read" | "write";
+  requiresMemory: boolean;
+}
+
+export interface MemoryDto {
+  id: string;
+  content: string;
+  source: "assistant" | "user";
+  createdAt: number;
+}
 
 export interface ConversationDto {
   id: string;
@@ -53,6 +90,7 @@ export interface MessageDto {
   model: string | null;
   status: MessageStatus;
   error: string | null;
+  tools: ToolEventDto[] | null;
   createdAt: number;
 }
 
@@ -95,6 +133,7 @@ export type ChatStreamEvent =
   | { type: "fallback"; from: { provider: ProviderId; model: string }; reason: string }
   | { type: "delta"; text: string }
   | { type: "reasoning"; text: string }
+  | { type: "tool"; tool: ToolEventDto }
   | { type: "done"; message: MessageDto }
   | { type: "error"; code: string; message: string; retryable: boolean; assistantMessage?: MessageDto };
 

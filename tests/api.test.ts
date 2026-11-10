@@ -401,3 +401,125 @@ describe("conversations and settings", () => {
     expect(gemini.configured).toBe(false);
   });
 });
+
+describe("phase 5: tools and memory over HTTP", () => {
+  const toolCallResponse = (name: string, args: object) =>
+    new Response(
+      `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name, arguments: JSON.stringify(args) } }] } }] })}\n\n` +
+        "data: [DONE]\n\n",
+      { headers: { "content-type": "text/event-stream" } },
+    );
+
+  it("streams tool activity, saves it with the reply, and offers only enabled tools", async () => {
+    const cookie = await login();
+    const bodies: any[] = [];
+    mockFetch((url, init) => {
+      const body = JSON.parse(String(init?.body));
+      bodies.push(body);
+      return bodies.length === 1 ? toolCallResponse("calculator", { expression: "17 * 23" }) : sseResponse(["17 × 23 = ", "**391**"]);
+    });
+    const { text } = await call("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: "What is 17*23?" }),
+      cookie,
+      env: { GROQ_API_KEY: "k", GROQ_BASE_URL: "https://groq.test/v1" },
+    });
+    const events = parseEvents(text);
+    const toolEvents = events.filter((e) => e.type === "tool") as Extract<ChatStreamEvent, { type: "tool" }>[];
+    expect(toolEvents.map((e) => e.tool.status)).toEqual(["running", "done"]);
+    expect(toolEvents[1]!.tool.summary).toBe("17 * 23 = 391");
+    const done = events.at(-1) as Extract<ChatStreamEvent, { type: "done" }>;
+    expect(done.message.content).toBe("17 × 23 = **391**");
+    expect(done.message.tools?.[0]).toMatchObject({ name: "calculator", status: "done" });
+
+    // The tool result went back to the model, and the system prompt mentions the tools.
+    expect(bodies[0].tools.map((t: any) => t.function.name)).toEqual(["calculator", "current_datetime", "remember", "forget"]);
+    expect(bodies[0].messages[0].content).toContain("Tools available");
+    expect(bodies[1].messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: "call_1" });
+
+    // Tool activity is persisted and reloads with the conversation.
+    const conversationId = (events[0] as Extract<ChatStreamEvent, { type: "conversation" }>).conversation.id;
+    const detail = await call(`/api/conversations/${conversationId}`, { cookie });
+    expect(detail.json.messages[1].tools[0]).toMatchObject({ name: "calculator", summary: "17 * 23 = 391" });
+    // Later turns only replay the final text, not the tool transcript.
+    bodies.length = 0;
+    mockFetch((_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return sseResponse(["ok"]);
+    });
+    await call("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ conversationId, message: "thanks" }),
+      cookie,
+      env: { GROQ_API_KEY: "k", GROQ_BASE_URL: "https://groq.test/v1" },
+    });
+    expect(bodies[0].messages.map((m: any) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+
+    // With tools switched off, none are offered.
+    await call("/api/settings", { method: "PUT", body: JSON.stringify({ toolsEnabled: false }), cookie });
+    bodies.length = 0;
+    await call("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: "hello" }),
+      cookie,
+      env: { GROQ_API_KEY: "k", GROQ_BASE_URL: "https://groq.test/v1" },
+    });
+    expect(bodies[0].tools).toBeUndefined();
+  });
+
+  it("manages memories through the API and injects them into prompts", async () => {
+    const cookie = await login();
+    const added = await call("/api/memories", { method: "POST", body: JSON.stringify({ content: "  Works in   PKT (UTC+5). " }), cookie });
+    expect(added.response.status).toBe(201);
+    expect(added.json.memory).toMatchObject({ content: "Works in PKT (UTC+5).", source: "user" });
+    expect((await call("/api/memories", { cookie })).json.memories).toHaveLength(1);
+
+    let system = "";
+    mockFetch((_url, init) => {
+      system = JSON.parse(String(init?.body)).messages[0].content;
+      return sseResponse(["ok"]);
+    });
+    await call("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: "What timezone am I in?" }),
+      cookie,
+      env: { GROQ_API_KEY: "k", GROQ_BASE_URL: "https://groq.test/v1" },
+    });
+    expect(system).toContain("Works in PKT (UTC+5).");
+
+    // Memory off: not injected.
+    await call("/api/settings", { method: "PUT", body: JSON.stringify({ memoryEnabled: false }), cookie });
+    await call("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: "And now?" }),
+      cookie,
+      env: { GROQ_API_KEY: "k", GROQ_BASE_URL: "https://groq.test/v1" },
+    });
+    expect(system).not.toContain("Works in PKT");
+
+    // Another user can't see or delete it.
+    const other = await login("second-user");
+    expect((await call("/api/memories", { cookie: other })).json.memories).toEqual([]);
+    expect((await call(`/api/memories/${added.json.memory.id}`, { method: "DELETE", cookie: other })).response.status).toBe(404);
+
+    expect((await call(`/api/memories/${added.json.memory.id}`, { method: "DELETE", cookie })).response.status).toBe(200);
+    expect((await call("/api/memories", { method: "POST", body: JSON.stringify({ content: "" }), cookie })).response.status).toBe(400);
+    await call("/api/memories", { method: "POST", body: JSON.stringify({ content: "a" }), cookie });
+    expect((await call("/api/memories", { method: "DELETE", cookie })).json.deleted).toBe(1);
+  });
+
+  it("lists tools and validates tool settings", async () => {
+    const cookie = await login();
+    const { json } = await call("/api/tools", { cookie });
+    expect(json.tools.map((t: any) => [t.name, t.risk])).toEqual([
+      ["calculator", "read"],
+      ["current_datetime", "read"],
+      ["remember", "write"],
+      ["forget", "write"],
+    ]);
+    const bad = await call("/api/settings", { method: "PUT", body: JSON.stringify({ disabledTools: "calculator" }), cookie });
+    expect(bad.response.status).toBe(400);
+    const ok = await call("/api/settings", { method: "PUT", body: JSON.stringify({ disabledTools: ["calculator"] }), cookie });
+    expect(ok.json.settings.disabledTools).toEqual(["calculator"]);
+  });
+});

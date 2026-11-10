@@ -130,6 +130,7 @@ describe("buildContext", () => {
     model: null,
     status,
     error: null,
+    tools: null,
     createdAt: 0,
   });
 

@@ -4,9 +4,11 @@ import {
   classifyHttpError,
   extractErrorMessage,
   ProviderError,
+  type ChatMessage,
   type Provider,
   type ProviderRequest,
   type StreamChunk,
+  type ToolCall,
 } from "../types";
 
 export interface OpenAiCompatibleOptions {
@@ -30,6 +32,10 @@ export interface OpenAiCompatibleOptions {
   allowModel?: (model: string) => boolean;
   /** Picks a default from the live list when `defaultModel` is null. */
   pickDefault?: (models: ModelInfo[]) => string | null;
+  /** Function calling support (default true). */
+  supportsTools?: boolean;
+  /** Include `name` on tool-result messages (Mistral expects it; OpenAI-style APIs don't). */
+  toolMessageName?: boolean;
 }
 
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:/@+-]{1,200}$/;
@@ -44,6 +50,7 @@ export class OpenAiCompatibleProvider implements Provider {
   readonly freeTier: string;
   readonly notes: string[];
   readonly signupUrl: string;
+  readonly supportsTools: boolean;
   private readonly baseUrl: string;
   private cachedModels: ModelInfo[] | null = null;
 
@@ -53,6 +60,7 @@ export class OpenAiCompatibleProvider implements Provider {
     this.freeTier = options.freeTier;
     this.notes = options.notes;
     this.signupUrl = options.signupUrl;
+    this.supportsTools = options.supportsTools ?? true;
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
   }
 
@@ -115,13 +123,18 @@ export class OpenAiCompatibleProvider implements Provider {
     if (!this.isAllowedModel(request.model)) {
       throw new ProviderError("bad_request", `${this.label}: model "${request.model}" is not allowed`);
     }
-    const body = {
+    const useTools = this.supportsTools && request.tools && request.tools.length > 0;
+    const body: Record<string, unknown> = {
       model: request.model,
-      messages: request.messages,
+      messages: toWireMessages(request.messages, Boolean(this.options.toolMessageName)),
       stream: true,
       max_tokens: request.maxTokens,
       ...this.options.extraBody,
     };
+    if (useTools) {
+      body.tools = request.tools;
+      body.tool_choice = "auto";
+    }
     const { response, controller, unlink } = await fetchWithTimeout(
       `${this.baseUrl}/chat/completions`,
       { method: "POST", headers: this.headers(), body: JSON.stringify(body) },
@@ -148,11 +161,12 @@ export class OpenAiCompatibleProvider implements Provider {
     controller: AbortController,
     unlink: () => void,
   ): AsyncGenerator<StreamChunk> {
+    const toolCalls = new ToolCallAccumulator();
     try {
       for await (const event of readSse(body, controller.signal, this.label)) {
         const data = event.data.trim();
         if (!data) continue;
-        if (data === "[DONE]") return;
+        if (data === "[DONE]") break;
         let json: Record<string, unknown>;
         try {
           json = JSON.parse(data) as Record<string, unknown>;
@@ -164,12 +178,79 @@ export class OpenAiCompatibleProvider implements Provider {
           const code = typeof err.code === "number" ? err.code : 502;
           throw classifyHttpError(this.label, code, JSON.stringify({ error: err }), null);
         }
+        toolCalls.add(json);
         yield* parseOpenAiChunk(json);
       }
+      const calls = toolCalls.finish();
+      if (calls.length > 0) yield { type: "tool_calls", calls };
     } finally {
       controller.abort();
       unlink();
     }
+  }
+}
+
+/** Serialize our message union into the OpenAI wire format. */
+export function toWireMessages(messages: ChatMessage[], toolMessageName: boolean): Record<string, unknown>[] {
+  return messages.map((m) => {
+    if (m.role === "assistant" && m.tool_calls?.length) {
+      return {
+        role: "assistant",
+        content: m.content ?? "",
+        tool_calls: m.tool_calls.map((c) => ({
+          ...(c.extra ?? {}),
+          id: c.id,
+          type: "function",
+          function: { name: c.name, arguments: c.arguments },
+        })),
+      };
+    }
+    if (m.role === "tool") {
+      return { role: "tool", tool_call_id: m.tool_call_id, content: m.content, ...(toolMessageName ? { name: m.name } : {}) };
+    }
+    return { role: m.role, content: m.content ?? "" };
+  });
+}
+
+/**
+ * Tool calls arrive in fragments (`delta.tool_calls[i]` with partial `arguments`).
+ * Some providers send each call whole, some omit `index` or `id`; this handles all of them.
+ */
+export class ToolCallAccumulator {
+  private readonly calls = new Map<number, { id: string; name: string; args: string; extra: Record<string, unknown> }>();
+
+  add(json: Record<string, unknown>): void {
+    const choices = Array.isArray(json.choices) ? (json.choices as Record<string, unknown>[]) : [];
+    const delta = (choices[0]?.delta ?? {}) as Record<string, unknown>;
+    const parts = Array.isArray(delta.tool_calls) ? (delta.tool_calls as Record<string, unknown>[]) : [];
+    parts.forEach((part, position) => {
+      const index = typeof part.index === "number" ? part.index : this.calls.size + position;
+      const fn = (part.function ?? {}) as Record<string, unknown>;
+      let entry = this.calls.get(index);
+      if (!entry) {
+        entry = { id: "", name: "", args: "", extra: {} };
+        this.calls.set(index, entry);
+      }
+      if (typeof part.id === "string" && part.id) entry.id = part.id;
+      if (typeof fn.name === "string" && fn.name) entry.name = entry.name || fn.name;
+      if (typeof fn.arguments === "string") entry.args += fn.arguments;
+      else if (fn.arguments && typeof fn.arguments === "object") entry.args += JSON.stringify(fn.arguments);
+      for (const [key, value] of Object.entries(part)) {
+        if (!["index", "id", "type", "function"].includes(key)) entry.extra[key] = value;
+      }
+    });
+  }
+
+  finish(): ToolCall[] {
+    return [...this.calls.entries()]
+      .sort(([a], [b]) => a - b)
+      .filter(([, c]) => c.name)
+      .map(([index, c]) => ({
+        id: c.id || `call_${index}_${Math.random().toString(36).slice(2, 10)}`,
+        name: c.name,
+        arguments: c.args || "{}",
+        ...(Object.keys(c.extra).length ? { extra: c.extra } : {}),
+      }));
   }
 }
 

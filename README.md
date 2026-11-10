@@ -5,6 +5,8 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
 **automatic fallback** when a free limit is reached. Optional **local models** through Ollama.
 
 - 💬 Streaming chat with Markdown, code highlighting, tables, and collapsible model reasoning
+- 🛠️ Tool-using agent: exact calculator, date/time in any timezone, long-term memory (multi-step, streamed live)
+- 🧠 Long-term memory you control: view, add and delete in Settings → Memory
 - 🔁 Automatic free-provider fallback with cooldowns, retries and clear error messages
 - 🎛️ Manual model picker with live model lists from every provider
 - 🗂️ Conversation history stored in a cloud database (rename, delete, deep links, regenerate, stop)
@@ -13,7 +15,7 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
 - 🌗 Light/dark/system themes and a responsive mobile layout
 - 💸 **No paid services, no credit card, no automatic billing**
 
-> Status: **Phase 4 (core chat) complete.** Tools, web search, documents and integrations (GitHub, Gmail, Calendar,
+> Status: **Phase 5 (tools & agent loop) complete.** Web search, documents and integrations (GitHub, Gmail, Calendar,
 > Telegram) come in later phases. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
@@ -143,7 +145,8 @@ contacts your machine, and local chats still save to your history.
 │  │  ├─ routes/           auth, chat (SSE), conversations, models, settings
 │  │  ├─ middleware/       session auth, CSRF/origin guard, rate limiting, request logging
 │  │  ├─ db/               D1 queries
-│  │  └─ llm/              providers, fallback router, prompt/context builder, model catalogue
+│  │  ├─ llm/              providers, fallback router, agent loop, prompt/context builder, model catalogue
+│  │  └─ tools/            tool registry + tools (calculator, date/time, memory)
 │  └─ web/                 React app (Vite + Tailwind)
 ├─ tests/                  Vitest suites (run inside workerd)
 ├─ docs/                   ARCHITECTURE.md, DEPLOYMENT.md

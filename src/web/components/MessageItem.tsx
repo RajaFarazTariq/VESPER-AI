@@ -3,6 +3,7 @@ import { memo, useState } from "react";
 import type { UiMessage } from "../hooks/useChat";
 import { providerLabel } from "../lib/format";
 import { CopyButton, Markdown } from "./Markdown";
+import { ToolActivity } from "./ToolActivity";
 
 interface Props {
   message: UiMessage;
@@ -36,7 +37,9 @@ export const MessageItem = memo(function MessageItem({ message, isLast, canRetry
 
       {message.reasoning ? <Reasoning text={message.reasoning} streaming={Boolean(message.streaming && !message.content)} /> : null}
 
-      {waiting ? (
+      {message.tools?.length ? <ToolActivity tools={message.tools} /> : null}
+
+      {waiting && !message.tools?.length ? (
         <div className="flex items-center gap-2 text-sm text-[var(--text-soft)]" role="status">
           <span className="inline-flex gap-1">
             <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />

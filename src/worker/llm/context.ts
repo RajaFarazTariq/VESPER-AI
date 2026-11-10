@@ -1,9 +1,23 @@
-import type { MessageDto } from "../../shared/types";
-import type { ChatMessage } from "./types";
+import type { MemoryDto, MessageDto } from "../../shared/types";
+/** Plain text messages (no tool calls): what conversation history is made of. */
+export type PlainMessage = { role: "system" | "user" | "assistant"; content: string };
 
-export function buildSystemPrompt(appName: string, customInstructions: string, now = new Date()): string {
+export interface SystemPromptInput {
+  appName: string;
+  customInstructions: string;
+  /** Saved long-term memories (only when memory is enabled). */
+  memories?: MemoryDto[];
+  /** Names of tools offered this turn. */
+  tools?: string[];
+  now?: Date;
+}
+
+const MAX_MEMORY_PROMPT_CHARS = 6_000;
+
+export function buildSystemPrompt(input: SystemPromptInput): string {
+  const now = input.now ?? new Date();
   const lines = [
-    `You are ${appName}, a helpful, knowledgeable and honest AI assistant.`,
+    `You are ${input.appName}, a helpful, knowledgeable and honest AI assistant.`,
     `Current date: ${now.toISOString().slice(0, 10)} (UTC).`,
     "Guidelines:",
     "- Answer directly and accurately. Be concise by default and go deeper when asked.",
@@ -11,7 +25,34 @@ export function buildSystemPrompt(appName: string, customInstructions: string, n
     "- If you are unsure or lack information, say so instead of guessing.",
     "- You cannot browse the internet in this version. For recent events, say your knowledge may be out of date.",
   ];
-  const custom = customInstructions.trim();
+  const tools = input.tools ?? [];
+  if (tools.length > 0) {
+    lines.push(
+      "",
+      `Tools available: ${tools.join(", ")}.`,
+      "- Call a tool whenever it gives a more reliable answer (e.g. the calculator for any non-trivial arithmetic).",
+      "- Never claim you used a tool, saved something or got a result unless a tool call actually returned it.",
+      "- After using tools, answer the user in normal prose; don't paste raw tool output.",
+    );
+  }
+  if (input.memories) {
+    lines.push("", "Long-term memory (facts the user asked you to remember; use them when relevant, don't recite them unprompted):");
+    if (input.memories.length === 0) {
+      lines.push("- (nothing saved yet)");
+    } else {
+      let used = 0;
+      for (const m of [...input.memories].reverse()) {
+        const line = `- [${m.id}] ${m.content}`;
+        if (used + line.length > MAX_MEMORY_PROMPT_CHARS) break;
+        lines.push(line);
+        used += line.length;
+      }
+    }
+    if (tools.includes("remember")) {
+      lines.push("Use the remember tool when the user asks you to remember something; use forget with the [id] to remove one.");
+    }
+  }
+  const custom = input.customInstructions.trim();
   if (custom) {
     lines.push("", "The user's custom instructions (follow them unless they conflict with being safe and honest):", custom);
   }
@@ -27,9 +68,9 @@ const TRUNCATION_NOTE = "\n\n[…message truncated to fit the model's context wi
  * - Consecutive same-role messages are merged, and the window never starts with an
  *   assistant turn, because some providers require strict user/assistant alternation.
  */
-export function buildContext(system: string, history: MessageDto[], budgetChars: number): ChatMessage[] {
+export function buildContext(system: string, history: MessageDto[], budgetChars: number): PlainMessage[] {
   const usable = history.filter((m) => m.status !== "error" && m.content.trim().length > 0);
-  const selected: ChatMessage[] = [];
+  const selected: PlainMessage[] = [];
   let used = system.length;
 
   for (let i = usable.length - 1; i >= 0; i--) {
@@ -51,7 +92,7 @@ export function buildContext(system: string, history: MessageDto[], budgetChars:
 
   while (selected.length > 0 && selected[0]!.role === "assistant") selected.shift();
 
-  const merged: ChatMessage[] = [];
+  const merged: PlainMessage[] = [];
   for (const m of selected) {
     const last = merged[merged.length - 1];
     if (last && last.role === m.role) last.content = `${last.content}\n\n${m.content}`;

@@ -4,9 +4,11 @@ import type {
   ChatStreamEvent,
   ConversationDto,
   LocalPrepareResponse,
+  MemoryDto,
   MessageDto,
   ModelsResponse,
   PublicConfigDto,
+  ToolInfoDto,
   UserDto,
   UserSettings,
 } from "../../shared/types";
@@ -73,6 +75,12 @@ export const api = {
   models: (refresh = false) => request<ModelsResponse>(`/api/models${refresh ? "?refresh=1" : ""}`),
   updateSettings: (patch: Partial<UserSettings>) =>
     request<{ settings: UserSettings }>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+
+  tools: () => request<{ tools: ToolInfoDto[] }>("/api/tools"),
+  listMemories: () => request<{ memories: MemoryDto[] }>("/api/memories"),
+  addMemory: (content: string) => request<{ memory: MemoryDto }>("/api/memories", { method: "POST", body: JSON.stringify({ content }) }),
+  deleteMemory: (id: string) => request<{ ok: true }>(`/api/memories/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  deleteAllMemories: () => request<{ deleted: number }>("/api/memories", { method: "DELETE" }),
 
   localPrepare: (body: { conversationId?: string; message?: string; regenerate?: boolean; model: string }) =>
     request<LocalPrepareResponse>("/api/chat/local/prepare", { method: "POST", body: JSON.stringify(body) }),

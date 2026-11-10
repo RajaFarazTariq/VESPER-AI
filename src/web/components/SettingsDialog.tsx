@@ -1,12 +1,12 @@
-import { ExternalLink, Monitor, Moon, Sun, X } from "lucide-react";
+import { ExternalLink, Monitor, Moon, Plus, Sun, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { ModelsResponse, UserSettings } from "../../shared/types";
+import type { MemoryDto, ModelsResponse, ToolInfoDto, UserSettings } from "../../shared/types";
 import { api, ApiError } from "../api/client";
 import { formatRelative, selectionLabel } from "../lib/format";
 import { explainOllamaError, listOllamaModels } from "../lib/ollama";
 import { getThemePreference, setThemePreference, type ThemePreference } from "../lib/theme";
 
-type Tab = "general" | "providers" | "local" | "appearance";
+type Tab = "general" | "tools" | "memory" | "providers" | "local" | "appearance";
 
 interface Props {
   settings: UserSettings;
@@ -25,6 +25,25 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
   const [error, setError] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemePreference>(getThemePreference());
   const [ollamaTest, setOllamaTest] = useState<string | null>(null);
+  const [tools, setTools] = useState<ToolInfoDto[] | null>(null);
+  const [memories, setMemories] = useState<MemoryDto[] | null>(null);
+  const [newMemory, setNewMemory] = useState("");
+  const [memoryError, setMemoryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tab === "tools" && tools === null) {
+      api.tools().then((r) => setTools(r.tools), () => setTools([]));
+    }
+    if (tab === "memory" && memories === null) {
+      api.listMemories().then(
+        (r) => setMemories(r.memories),
+        (e: unknown) => {
+          setMemories([]);
+          setMemoryError(e instanceof ApiError ? e.message : "Could not load memories.");
+        },
+      );
+    }
+  }, [tab, tools, memories]);
   const dialog = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,6 +80,8 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
 
   const tabs: [Tab, string][] = [
     ["general", "General"],
+    ["tools", "Tools"],
+    ["memory", "Memory"],
     ["providers", "Providers"],
     ["local", "Local models"],
     ["appearance", "Appearance"],
@@ -137,6 +158,137 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
                   {draft.systemPrompt.length}/{MAX_INSTRUCTIONS}
                 </div>
               </Field>
+            </div>
+          ) : null}
+
+          {tab === "tools" ? (
+            <div className="space-y-4">
+              <Toggle
+                checked={draft.toolsEnabled}
+                onChange={(toolsEnabled) => setDraft({ ...draft, toolsEnabled })}
+                label="Let the assistant use tools"
+                hint="Tools let the model calculate exactly, check the time and manage memory. Each tool step uses one extra request from your free quota."
+              />
+              <div className={`space-y-2 ${draft.toolsEnabled ? "" : "pointer-events-none opacity-50"}`}>
+                {(tools ?? []).map((t) => {
+                  const off = draft.disabledTools.includes(t.name);
+                  const needsMemory = t.requiresMemory && !draft.memoryEnabled;
+                  return (
+                    <div key={t.name} className="rounded-xl border border-[var(--border)] p-3">
+                      <Toggle
+                        checked={!off && !needsMemory}
+                        onChange={(on) =>
+                          setDraft({
+                            ...draft,
+                            disabledTools: on ? draft.disabledTools.filter((n) => n !== t.name) : [...draft.disabledTools, t.name],
+                          })
+                        }
+                        label={t.label}
+                        hint={`${t.description}${needsMemory ? " (Turn on Memory to use this.)" : ""}`}
+                      />
+                      <span className="ml-12 mt-1 inline-block rounded-full bg-[var(--bg-soft)] px-2 py-0.5 text-[11px] text-[var(--text-soft)]">
+                        {t.risk === "read" ? "Read-only" : "Changes data in your account"}
+                      </span>
+                    </div>
+                  );
+                })}
+                {tools === null ? <p className="text-sm text-[var(--text-soft)]">Loading…</p> : null}
+              </div>
+              <p className="text-xs text-[var(--text-soft)]">
+                Coming next: web search, documents and GitHub tools. Anything that acts outside your account (sending, creating, deleting) will always
+                ask for your approval first.
+              </p>
+            </div>
+          ) : null}
+
+          {tab === "memory" ? (
+            <div className="space-y-4">
+              <Toggle
+                checked={draft.memoryEnabled}
+                onChange={(memoryEnabled) => setDraft({ ...draft, memoryEnabled })}
+                label="Use long-term memory"
+                hint="Saved facts are included in every conversation, and the assistant can save new ones when you ask it to remember something. Never store passwords or sensitive data."
+              />
+              <div>
+                <div className="mb-1.5 text-sm font-medium">Add a memory</div>
+                <form
+                  className="flex gap-2"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const content = newMemory.trim();
+                    if (!content) return;
+                    setMemoryError(null);
+                    try {
+                      const { memory } = await api.addMemory(content);
+                      setMemories((list) => [...(list ?? []).filter((m) => m.id !== memory.id), memory]);
+                      setNewMemory("");
+                    } catch (err) {
+                      setMemoryError(err instanceof ApiError ? err.message : "Could not save.");
+                    }
+                  }}
+                >
+                  <input
+                    value={newMemory}
+                    maxLength={500}
+                    onChange={(e) => setNewMemory(e.target.value)}
+                    placeholder="e.g. I work in Pakistan Standard Time (UTC+5)."
+                    aria-label="New memory"
+                    className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="submit"
+                    className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-[var(--bg-hover)]"
+                  >
+                    <Plus size={14} /> Add
+                  </button>
+                </form>
+              </div>
+              {memoryError ? <p className="text-sm text-[var(--danger)]">{memoryError}</p> : null}
+              <div>
+                <div className="mb-1.5 flex items-center justify-between text-sm font-medium">
+                  <span>Saved memories {memories ? `(${memories.length})` : ""}</span>
+                  {memories && memories.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!window.confirm("Delete ALL saved memories? This cannot be undone.")) return;
+                        await api.deleteAllMemories().catch(() => {});
+                        setMemories([]);
+                      }}
+                      className="text-xs font-normal text-[var(--danger)] hover:underline"
+                    >
+                      Delete all
+                    </button>
+                  ) : null}
+                </div>
+                {memories === null ? (
+                  <p className="text-sm text-[var(--text-soft)]">Loading…</p>
+                ) : memories.length === 0 ? (
+                  <p className="rounded-lg bg-[var(--bg-soft)] px-3 py-3 text-sm text-[var(--text-soft)]">
+                    Nothing saved yet. Try telling the assistant: “Remember that I prefer short answers.”
+                  </p>
+                ) : (
+                  <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)]">
+                    {[...memories].reverse().map((m) => (
+                      <li key={m.id} className="flex items-start gap-2 px-3 py-2 text-sm">
+                        <span className="min-w-0 flex-1">{m.content}</span>
+                        <span className="shrink-0 text-[11px] text-[var(--text-soft)]">{m.source === "user" ? "added by you" : "saved in chat"}</span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await api.deleteMemory(m.id).catch(() => {});
+                            setMemories((list) => (list ?? []).filter((x) => x.id !== m.id));
+                          }}
+                          className="shrink-0 rounded p-1 text-[var(--text-soft)] hover:text-[var(--danger)]"
+                          aria-label={`Delete memory: ${m.content}`}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           ) : null}
 
@@ -263,7 +415,7 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
           ) : null}
         </div>
 
-        {tab === "general" || tab === "local" ? (
+        {tab === "general" || tab === "local" || tab === "tools" || tab === "memory" ? (
           <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-3">
             {error ? <span className="mr-auto text-sm text-[var(--danger)]">{error}</span> : null}
             <button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-sm hover:bg-[var(--bg-hover)]">

@@ -353,7 +353,15 @@ function ChatApp({
           ) : null}
         </div>
 
-        <Composer value={input} onChange={setInput} onSend={() => void send()} onStop={chat.stop} streaming={chat.streaming} disabled={chat.loading} />
+        <Composer
+          value={input}
+          onChange={setInput}
+          onSend={() => void send()}
+          onStop={chat.stop}
+          streaming={chat.streaming}
+          disabled={chat.loading}
+          placeholder={`Message ${appName}…`}
+        />
       </main>
 
       {settingsOpen ? (

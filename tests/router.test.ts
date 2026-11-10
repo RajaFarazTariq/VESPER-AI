@@ -14,6 +14,7 @@ class FakeProvider implements Provider {
   readonly freeTier = "";
   readonly notes: string[] = [];
   readonly signupUrl = "";
+  readonly supportsTools = true;
   calls = 0;
   constructor(
     readonly id: ProviderId,

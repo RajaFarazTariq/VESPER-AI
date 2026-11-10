@@ -21,6 +21,25 @@ function readBody(req) {
   });
 }
 
+function pickTool(text, names) {
+  const time = /time in ([A-Za-z_]+\/[A-Za-z_]+)/i.exec(text);
+  if (time && names.includes("current_datetime")) return { name: "current_datetime", args: { timezone: time[1] } };
+  const remember = /remember (?:that )?(.+)/i.exec(text);
+  if (remember && names.includes("remember")) return { name: "remember", args: { fact: remember[1].trim() } };
+  const calc = /(?:calculate|compute|what is)\s+([-+*/^%().\d\s!a-z,]+?)\??$/i.exec(text);
+  if (calc && names.includes("calculator")) return { name: "calculator", args: { expression: calc[1].trim() } };
+  return null;
+}
+
+async function streamText(res, text) {
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+  for (const piece of text.match(/\S+\s*|\s+/g) ?? []) {
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: piece } }] })}\n\n`);
+    await sleep(15);
+  }
+  res.end("data: [DONE]\n\n");
+}
+
 const server = createServer(async (req, res) => {
   const [, provider = "mock", ...rest] = (req.url ?? "/").split("?")[0].split("/");
   const path = "/" + rest.join("/");
@@ -38,7 +57,28 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify({ error: { message: `Rate limit reached for ${body.model} (mock)` } }));
       return;
     }
+    const lastMessage = (body.messages ?? []).at(-1);
     const last = [...(body.messages ?? [])].reverse().find((m) => m.role === "user")?.content ?? "";
+
+    // Tool calling: decide on a tool for recognisable requests, then answer from the tool result.
+    if (Array.isArray(body.tools) && body.tools.length > 0) {
+      const toolNames = body.tools.map((t) => t.function?.name);
+      if (lastMessage?.role === "tool") {
+        return streamText(res, `Done. The tool returned: ${lastMessage.content}`);
+      }
+      const call = pickTool(String(last), toolNames);
+      if (call) {
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+        const args = JSON.stringify(call.args);
+        const half = Math.ceil(args.length / 2);
+        // Stream the call in two fragments, like real providers do.
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_mock1", type: "function", function: { name: call.name, arguments: args.slice(0, half) } }] } }] })}\n\n`);
+        await sleep(15);
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: args.slice(half) } }] }, finish_reason: "tool_calls" }] })}\n\n`);
+        res.end("data: [DONE]\n\n");
+        return;
+      }
+    }
     const reply =
       `**Mock reply** from \`${provider}\` (model \`${body.model}\`).\n\n` +
       `You said: "${String(last).slice(0, 200)}"\n\n` +

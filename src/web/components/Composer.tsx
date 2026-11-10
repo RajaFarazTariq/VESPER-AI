@@ -47,7 +47,7 @@ export function Composer({ value, onChange, onSend, onStop, streaming, disabled,
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={placeholder ?? "Message the assistant…"}
+          placeholder={placeholder ?? "Send a message…"}
           aria-label="Message"
           className="max-h-60 min-h-[28px] flex-1 resize-none bg-transparent py-1.5 leading-relaxed outline-none placeholder:text-[var(--text-soft)] thin-scroll"
           disabled={disabled}

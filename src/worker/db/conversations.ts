@@ -1,4 +1,4 @@
-import type { ConversationDto, MessageDto, MessageRole, MessageStatus } from "../../shared/types";
+import type { ConversationDto, MessageDto, MessageRole, MessageStatus, ToolEventDto } from "../../shared/types";
 import { newId } from "../lib/crypto";
 
 interface ConversationRow {
@@ -18,7 +18,18 @@ interface MessageRow {
   model: string | null;
   status: MessageStatus;
   error: string | null;
+  tools: string | null;
   created_at: number;
+}
+
+function parseTools(raw: string | null): ToolEventDto[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) && parsed.length > 0 ? (parsed as ToolEventDto[]) : null;
+  } catch {
+    return null;
+  }
 }
 
 const toConversation = (r: ConversationRow): ConversationDto => ({
@@ -38,6 +49,7 @@ const toMessage = (r: MessageRow): MessageDto => ({
   model: r.model,
   status: r.status,
   error: r.error,
+  tools: parseTools(r.tools),
   createdAt: r.created_at,
 });
 
@@ -137,7 +149,7 @@ export async function listMessages(db: D1Database, conversationId: string, limit
   const { results } = await db
     .prepare(
       `SELECT * FROM (
-         SELECT id, role, content, reasoning, provider, model, status, error, created_at, rowid AS rid
+         SELECT id, role, content, reasoning, provider, model, status, error, tools, created_at, rowid AS rid
          FROM messages WHERE conversation_id = ?1
          ORDER BY created_at DESC, rid DESC LIMIT ?2
        ) ORDER BY created_at ASC, rid ASC`,
@@ -157,6 +169,7 @@ export interface NewMessage {
   error?: string | null;
   tokensIn?: number | null;
   tokensOut?: number | null;
+  tools?: ToolEventDto[] | null;
   /** Ensures the message sorts after an earlier one created in the same millisecond. */
   notBefore?: number;
 }
@@ -172,14 +185,15 @@ export async function insertMessage(db: D1Database, conversationId: string, m: N
     model: m.model ?? null,
     status: m.status ?? "complete",
     error: m.error ?? null,
+    tools: m.tools && m.tools.length > 0 ? m.tools : null,
     createdAt,
   };
   await db.batch([
     db
       .prepare(
         `INSERT INTO messages (id, conversation_id, role, content, reasoning, provider, model, status, error,
-                               tokens_in, tokens_out, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
+                               tokens_in, tokens_out, created_at, tools)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
       )
       .bind(
         message.id,
@@ -194,6 +208,7 @@ export async function insertMessage(db: D1Database, conversationId: string, m: N
         m.tokensIn ?? null,
         m.tokensOut ?? null,
         createdAt,
+        message.tools ? JSON.stringify(message.tools) : null,
       ),
     db.prepare("UPDATE conversations SET updated_at = ?1 WHERE id = ?2").bind(createdAt, conversationId),
   ]);

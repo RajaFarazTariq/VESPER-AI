@@ -12,6 +12,7 @@ import {
   listMessages,
   updateConversation,
 } from "../db/conversations";
+import { listMemories } from "../db/memories";
 import { D1ProviderStateStore } from "../db/provider-state";
 import type { SessionUser } from "../db/users";
 import { getConfig } from "../env";
@@ -20,7 +21,9 @@ import { parseJson } from "../lib/validation";
 import { getProviderModels } from "../llm/catalog";
 import { buildContext, buildSystemPrompt } from "../llm/context";
 import { getProviders } from "../llm/registry";
-import { executeRoute, planRoute } from "../llm/router";
+import { runAgent } from "../llm/agent";
+import { planRoute } from "../llm/router";
+import { enabledTools, type AgentTool } from "../tools/registry";
 import { requireUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/security";
 
@@ -64,6 +67,7 @@ async function prepareTurn(
   user: SessionUser,
   input: { conversationId?: string; message?: string; regenerate?: boolean },
   selection: string,
+  tools: AgentTool[],
 ): Promise<{ conversation: ConversationDto; isNew: boolean; userMessage: MessageDto; context: ReturnType<typeof buildContext> }> {
   const db = c.env.DB;
   const config = getConfig(c.env);
@@ -92,8 +96,16 @@ async function prepareTurn(
     conversation = { ...conversation, model: selection };
   }
 
-  const history = await listMessages(db, conversation.id, HISTORY_LIMIT);
-  const system = buildSystemPrompt(config.appName, user.settings.systemPrompt);
+  const [history, memories] = await Promise.all([
+    listMessages(db, conversation.id, HISTORY_LIMIT),
+    user.settings.memoryEnabled ? listMemories(db, user.id) : Promise.resolve(undefined),
+  ]);
+  const system = buildSystemPrompt({
+    appName: config.appName,
+    customInstructions: user.settings.systemPrompt,
+    ...(memories ? { memories } : {}),
+    tools: tools.map((t) => t.name),
+  });
   return { conversation, isNew, userMessage, context: buildContext(system, history, config.maxContextChars) };
 }
 
@@ -127,7 +139,8 @@ export const chatRoutes = new Hono<AppEnv>()
       throw new AppError(status, planned.error.code, planned.error.message);
     }
 
-    const turn = await prepareTurn(c, user, body, selection);
+    const tools = enabledTools(user.settings);
+    const turn = await prepareTurn(c, user, body, selection, tools);
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
     const encoder = new TextEncoder();
@@ -151,10 +164,12 @@ export const chatRoutes = new Hono<AppEnv>()
         if (turn.isNew) await send({ type: "conversation", conversation: turn.conversation });
         await send({ type: "user_message", message: turn.userMessage });
 
-        const result = await executeRoute({
+        const result = await runAgent({
           plan: planned.plan,
           providers,
           messages: turn.context,
+          tools,
+          toolContext: { db: c.env.DB, userId: user.id, settings: user.settings, now: new Date() },
           maxTokens: config.maxOutputTokens,
           signal: abort.signal,
           store,
@@ -164,6 +179,7 @@ export const chatRoutes = new Hono<AppEnv>()
             fallback: (from, reason) => send({ type: "fallback", from, reason }),
             text: (text) => send({ type: "delta", text }),
             reasoning: (text) => send({ type: "reasoning", text }),
+            tool: (tool) => send({ type: "tool", tool }),
           },
         });
 
@@ -178,6 +194,7 @@ export const chatRoutes = new Hono<AppEnv>()
           error: result.error?.message ?? null,
           tokensIn: result.usage.inputTokens,
           tokensOut: result.usage.outputTokens,
+          tools: result.tools,
           notBefore: turn.userMessage.createdAt,
         });
         if (result.status === "complete") {
@@ -222,7 +239,7 @@ export const chatRoutes = new Hono<AppEnv>()
     if (!selection.startsWith("ollama:") || !/^ollama:[\w.:\-/]{1,150}$/.test(selection)) {
       throw badRequest("Local chat requires an ollama:<model> selection.");
     }
-    const turn = await prepareTurn(c, user, body, selection);
+    const turn = await prepareTurn(c, user, body, selection, []);
     const response: LocalPrepareResponse = {
       conversation: turn.conversation,
       userMessage: turn.userMessage,

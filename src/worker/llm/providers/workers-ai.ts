@@ -1,6 +1,6 @@
 import type { ModelInfo } from "../../../shared/types";
 import { linkedController, readSse } from "../stream";
-import { ProviderError, type Provider, type ProviderRequest, type StreamChunk } from "../types";
+import { flattenToolMessages, ProviderError, type Provider, type ProviderRequest, type StreamChunk } from "../types";
 import { parseOpenAiChunk } from "./openai-compatible";
 
 /**
@@ -31,6 +31,8 @@ export class WorkersAiProvider implements Provider {
     "Roughly a few hundred thousand output tokens/day on small models; large models use neurons much faster.",
   ];
   readonly signupUrl = "https://developers.cloudflare.com/workers-ai/platform/pricing/";
+  /** Tool calling on Workers AI differs per model and isn't streamed, so it's used for plain chat only. */
+  readonly supportsTools = false;
   private readonly models: ModelInfo[];
 
   constructor(
@@ -70,7 +72,7 @@ export class WorkersAiProvider implements Provider {
     let result: unknown;
     try {
       result = await (this.ai as unknown as AiRunner).run(request.model, {
-        messages: request.messages,
+        messages: flattenToolMessages(request.messages),
         stream: true,
         max_tokens: request.maxTokens,
       });

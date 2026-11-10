@@ -1,6 +1,15 @@
 import { AUTO_MODEL, PROVIDER_IDS, type ProviderId } from "../../shared/types";
 import type { ProviderHealth, ProviderStateStore } from "../db/provider-state";
-import { ProviderError, toProviderError, type ChatMessage, type Provider, type ProviderErrorKind } from "./types";
+import {
+  flattenToolMessages,
+  ProviderError,
+  toProviderError,
+  type ChatMessage,
+  type Provider,
+  type ProviderErrorKind,
+  type ToolCall,
+  type ToolSpec,
+} from "./types";
 
 export interface RouteTarget {
   provider: ProviderId;
@@ -27,6 +36,8 @@ export interface RouteResult {
   text: string;
   reasoning: string;
   usage: { inputTokens: number | null; outputTokens: number | null };
+  /** Tool calls requested by the model (only when tools were offered). */
+  toolCalls: ToolCall[];
   error: RouteError | null;
 }
 
@@ -187,6 +198,7 @@ export async function executeRoute(input: {
   store: ProviderStateStore;
   health: Map<ProviderId, ProviderHealth>;
   events: RouterEvents;
+  tools?: ToolSpec[];
   sleep?: (ms: number) => Promise<void>;
 }): Promise<RouteResult> {
   const sleep = input.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -197,6 +209,7 @@ export async function executeRoute(input: {
     text: "",
     reasoning: "",
     usage: { inputTokens: null, outputTokens: null },
+    toolCalls: [],
     error: null,
   };
 
@@ -214,17 +227,22 @@ export async function executeRoute(input: {
     result.target = target;
 
     let lastError: ProviderError | null = null;
+    let useTools = Boolean(input.tools?.length) && provider.supportsTools;
     for (let attempt = 0; attempt <= MAX_RETRIES_PER_PROVIDER; attempt++) {
       let produced = false;
       try {
         const stream = await provider.stream({
           model: target.model,
-          messages: input.messages,
+          messages: useTools ? input.messages : flattenToolMessages(input.messages),
           maxTokens: input.maxTokens,
           signal: input.signal,
+          ...(useTools ? { tools: input.tools } : {}),
         });
         for await (const chunk of stream) {
-          if (chunk.type === "text") {
+          if (chunk.type === "tool_calls") {
+            produced = true;
+            result.toolCalls.push(...chunk.calls);
+          } else if (chunk.type === "text") {
             produced = true;
             result.text += chunk.text;
             await input.events.text(chunk.text);
@@ -236,7 +254,7 @@ export async function executeRoute(input: {
             result.usage = { inputTokens: chunk.inputTokens, outputTokens: chunk.outputTokens };
           }
         }
-        if (!result.text.trim() && !input.signal.aborted) {
+        if (!result.text.trim() && result.toolCalls.length === 0 && !input.signal.aborted) {
           throw new ProviderError("unavailable", `${provider.label}: returned an empty response`);
         }
         await input.store.recordUsage(target.provider, { ok: true, ...result.usage }).catch(() => {});
@@ -261,6 +279,12 @@ export async function executeRoute(input: {
           return result;
         }
         lastError = error;
+        // Some models (e.g. certain free OpenRouter ones) reject function calling: retry once as plain chat.
+        if (useTools && (error.kind === "bad_request" || error.kind === "not_found") && /tool|function/i.test(error.message)) {
+          useTools = false;
+          attempt--;
+          continue;
+        }
         if (error.retryable && attempt < MAX_RETRIES_PER_PROVIDER) {
           await sleep(600 + Math.floor(Math.random() * 400));
           continue;

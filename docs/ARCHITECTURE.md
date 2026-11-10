@@ -73,6 +73,28 @@ Cron (daily): purge expired sessions, old rate-limit windows, usage older than 9
 **Local models (Ollama):** `/api/chat/local/prepare` stores the user turn and returns the prompt. The browser streams
 from Ollama directly, then `/api/chat/local/complete` stores the reply. The server never calls the user's machine.
 
+## 5b. Agent loop & tools (Phase 5)
+
+- `llm/agent.ts` runs **model → tools → model** for up to 5 rounds per message. The last round offers no tools, which
+  forces a written answer. Every round goes through the same fallback router; once a provider works, the rest of the
+  task sticks with it.
+- **Tool calls stream:** fragments of `delta.tool_calls` are reassembled (`ToolCallAccumulator`). Provider-specific
+  fields such as Gemini's `extra_content.thought_signature` are echoed back on the next request, as Gemini requires.
+- **Providers without tools** (Workers AI) or models that reject them (some free OpenRouter models) get plain chat.
+  If a fallback lands on one mid-task, the tool transcript is flattened into text (`flattenToolMessages`).
+- **Tools** (`tools/registry.ts`): portable hand-written JSON Schema for the model and zod validation of every call.
+  Bad input, unknown tools and invalid JSON become error results the model can recover from. They never crash the turn.
+  - `calculator`: own recursive-descent parser (no `eval`, own-property lookups only, depth and length limits).
+  - `current_datetime`: `Intl` with IANA timezones.
+  - `remember` / `forget`: long-term memory (max 100 items × 500 chars, credential-looking text refused).
+- **Risk levels:** `read` (looks things up) and `write` (changes the user's own data). Tools that act outside the
+  account (send, create, delete elsewhere) will need explicit user approval, enforced in code. That flow ships with
+  the first such tools (GitHub writes, Phase 6b), so it's tested against a real action instead of a stub.
+- **Memory:** enabled memories (up to ~6k chars, newest first) go into the system prompt with their ids. Users manage them
+  in Settings → Memory, and can switch memory and each tool off in Settings → Tools.
+- Tool activity is stored on the assistant message (`messages.tools`, JSON) and shown in the UI. Later turns replay only
+  the final text, not the tool transcript, which keeps prompts small for free-tier token limits.
+
 ## 6. Security model
 
 | Threat | Control |
@@ -117,9 +139,9 @@ tools are blocked once untrusted content is in context.
 | Phase | Scope | Free building blocks |
 |---|---|---|
 | ✅ 4 | Core chat, auth, history, multi-provider fallback, UI | Workers, D1, free LLM APIs |
-| 5 | Tool registry, approval gate, agent loop, planner, `ask_user`, calculator | Provider tool-calling APIs |
+| ✅ 5 | Agent loop, tool registry, calculator, date/time, long-term memory, tool & memory settings | Provider tool-calling APIs |
 | 6a | Web search + page reading with citations; file upload, PDF/DOCX parsing, RAG | Tavily free / DuckDuckGo, D1 blobs (R2 needs a card, so it's avoided), Workers AI embeddings + Vectorize free tier |
-| 6b | **GitHub** integration (repos, issues, PRs: read freely, write with approval) | GitHub REST API, incremental OAuth scopes |
+| 6b | **GitHub** integration (repos, issues, PRs: read freely, write with approval) + the approval gate | GitHub REST API, incremental OAuth scopes |
 | 6c | **Gmail** (draft-first, send with approval), **Google Calendar** | Google APIs (free) via OAuth |
 | 6d | **Telegram** bot (webhook into the same Worker) | Telegram Bot API |
 | 6e | Voice (Groq Whisper STT, browser TTS), images (Workers AI) | Free quotas |

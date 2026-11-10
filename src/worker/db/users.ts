@@ -25,6 +25,9 @@ export const settingsSchema = z.object({
     .trim()
     .max(300)
     .refine((v) => /^https?:\/\/[^\s/]+(:\d+)?(\/[^\s]*)?$/i.test(v), "Must be an http(s) URL"),
+  toolsEnabled: z.boolean(),
+  disabledTools: z.array(z.string().trim().min(1).max(64)).max(50),
+  memoryEnabled: z.boolean(),
 });
 
 /** Parse stored settings, falling back to defaults for anything missing or invalid. */

@@ -115,6 +115,7 @@ export function createProviders(env: Env): Map<ProviderId, Provider> {
         "Strong for writing and translation in European languages.",
       ],
       signupUrl: "https://console.mistral.ai/api-keys",
+      toolMessageName: true,
       mapModel: (raw) => {
         const id = typeof raw.id === "string" ? raw.id : "";
         const caps = (raw.capabilities ?? {}) as Record<string, unknown>;

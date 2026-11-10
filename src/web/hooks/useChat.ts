@@ -25,6 +25,7 @@ const placeholder = (id: string, provider: string | null = null, model: string |
   model,
   status: "complete",
   error: null,
+  tools: null,
   createdAt: Date.now(),
   streaming: true,
   notices: [],
@@ -143,6 +144,16 @@ export function useChat(options: Options) {
               ...m,
               notices: [...(m.notices ?? []), `${providerLabel(event.from.provider)}: ${event.reason}. Switched to the next free provider.`],
             }));
+            break;
+          case "tool":
+            settle();
+            patch(assistantId, (m) => {
+              const tools = [...(m.tools ?? [])];
+              const index = tools.findIndex((t) => t.id === event.tool.id);
+              if (index >= 0) tools[index] = event.tool;
+              else tools.push(event.tool);
+              return { ...m, tools };
+            });
             break;
           case "delta":
             queue(assistantId, "text", event.text);
