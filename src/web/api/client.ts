@@ -41,6 +41,16 @@ async function toApiError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, code, message);
 }
 
+/** The user's time zone name (e.g. "Asia/Karachi"), so "today" means their today, not UTC's. */
+function browserTimeZone(): { timeZone?: string } {
+  try {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return timeZone ? { timeZone } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body !== undefined) headers.set("Content-Type", "application/json");
@@ -95,7 +105,10 @@ export const api = {
   },
 
   localPrepare: (body: { conversationId?: string; message?: string; regenerate?: boolean; model: string }) =>
-    request<LocalPrepareResponse>("/api/chat/local/prepare", { method: "POST", body: JSON.stringify(body) }),
+    request<LocalPrepareResponse>("/api/chat/local/prepare", {
+      method: "POST",
+      body: JSON.stringify({ ...body, ...browserTimeZone() }),
+    }),
   localComplete: (body: {
     conversationId: string;
     model: string;
@@ -120,7 +133,7 @@ export async function streamChat(
     response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, ...browserTimeZone() }),
       credentials: "same-origin",
       signal,
     });

@@ -14,13 +14,14 @@ import {
 } from "../db/conversations";
 import { listMemories } from "../db/memories";
 import { D1ProviderStateStore } from "../db/provider-state";
-import { getAppSettings } from "../db/app-settings";
+import { getAppSettings, userMayUseModel } from "../db/app-settings";
 import { consumeDailyMessage, type SessionUser } from "../db/users";
 import { getConfig } from "../env";
 import { AppError, badRequest, notFound } from "../lib/errors";
 import { parseJson } from "../lib/validation";
 import { getProviderModels } from "../llm/catalog";
-import { buildContext, buildSystemPrompt } from "../llm/context";
+import { buildContext, buildSystemPrompt, normalizeTimeZone } from "../llm/context";
+import { presentEvent, presentMessage, viewerOf } from "../lib/present";
 import { getProviders } from "../llm/registry";
 import { runAgent } from "../llm/agent";
 import { planRoute } from "../llm/router";
@@ -38,6 +39,8 @@ const chatSchema = z
     message: z.string().max(MAX_MESSAGE_CHARS, `Messages are limited to ${MAX_MESSAGE_CHARS} characters.`).optional(),
     model: z.string().trim().min(1).max(250).optional(),
     regenerate: z.boolean().optional(),
+    /** The browser's IANA time zone, e.g. "Asia/Karachi". Unknown values are ignored (UTC is used). */
+    timeZone: z.string().max(64).optional(),
   })
   .refine((d) => (d.regenerate ? Boolean(d.conversationId) : Boolean(d.message?.trim())), {
     message: "A non-empty message is required (or conversationId with regenerate).",
@@ -91,8 +94,7 @@ async function prepareTurn(
   user: SessionUser,
   input: { conversationId?: string; message?: string; regenerate?: boolean },
   selection: string,
-  tools: AgentTool[],
-  adminInstructions: string,
+  extras: { tools: AgentTool[]; adminInstructions: string; timeZone: string | undefined },
 ): Promise<{ conversation: ConversationDto; isNew: boolean; userMessage: MessageDto; context: ReturnType<typeof buildContext> }> {
   const db = c.env.DB;
   const config = getConfig(c.env);
@@ -128,9 +130,10 @@ async function prepareTurn(
   const system = buildSystemPrompt({
     appName: config.appName,
     customInstructions: user.settings.systemPrompt,
-    adminInstructions,
+    adminInstructions: extras.adminInstructions,
     ...(memories ? { memories } : {}),
-    tools: tools.map((t) => t.name),
+    tools: extras.tools.map((t) => t.name),
+    ...(extras.timeZone ? { timeZone: extras.timeZone } : {}),
   });
   return { conversation, isNew, userMessage, context: buildContext(system, history, config.maxContextChars) };
 }
@@ -143,7 +146,15 @@ export const chatRoutes = new Hono<AppEnv>()
     const user = c.get("user");
     const body = await parseJson(c, chatSchema);
     const config = getConfig(c.env);
-    const selection = body.model ?? user.settings.defaultModel;
+    const appSettings = await getAppSettings(c.env.DB, config);
+    let selection = body.model ?? user.settings.defaultModel;
+    // Regular users may only use Auto or the models the admin listed (admin panel → Models).
+    if (user.role !== "admin" && !userMayUseModel(appSettings, selection)) {
+      if (body.model) {
+        throw new AppError(403, "model_not_allowed", "That model isn't available. Choose one from the model menu, or use Auto.");
+      }
+      selection = "auto"; // their saved default is no longer on the list
+    }
     const providers = getProviders(c.env);
     const store = new D1ProviderStateStore(c.env.DB);
     const health = await store.getHealth();
@@ -167,11 +178,11 @@ export const chatRoutes = new Hono<AppEnv>()
 
     // Count the message against the daily limit only once the request is known to be valid,
     // and before anything is written, so a refused message leaves no half-created chat.
-    const appSettings = await getAppSettings(c.env.DB, config);
     await enforceDailyLimit(c.env.DB, user, appSettings.defaultDailyLimit);
 
     const tools = enabledTools(user.settings, appSettings.disabledTools);
-    const turn = await prepareTurn(c, user, body, selection, tools, appSettings.botInstructions);
+    const timeZone = normalizeTimeZone(body.timeZone);
+    const turn = await prepareTurn(c, user, body, selection, { tools, adminInstructions: appSettings.botInstructions, timeZone });
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
     const encoder = new TextEncoder();
@@ -187,7 +198,12 @@ export const chatRoutes = new Hono<AppEnv>()
         abort.abort();
       }
     };
-    const send = (event: ChatStreamEvent) => writeRaw(formatSse(event.type, event));
+    // Users get the clean view (see lib/present.ts); the admin gets every detail.
+    const viewer = viewerOf(user, appSettings);
+    const send = async (event: ChatStreamEvent) => {
+      const shown = presentEvent(event, viewer);
+      if (shown) await writeRaw(formatSse(shown.type, shown));
+    };
 
     const pump = async () => {
       const heartbeat = setInterval(() => void writeRaw(": keep-alive\n\n"), HEARTBEAT_MS);
@@ -200,7 +216,7 @@ export const chatRoutes = new Hono<AppEnv>()
           providers,
           messages: turn.context,
           tools,
-          toolContext: { db: c.env.DB, userId: user.id, settings: user.settings, now: new Date() },
+          toolContext: { db: c.env.DB, userId: user.id, settings: user.settings, now: new Date(), ...(timeZone ? { timeZone } : {}) },
           maxTokens: config.maxOutputTokens,
           signal: abort.signal,
           store,
@@ -272,7 +288,11 @@ export const chatRoutes = new Hono<AppEnv>()
     }
     // Local models run on the user's own computer, so they don't count against the daily limit.
     const { botInstructions } = await getAppSettings(c.env.DB, getConfig(c.env));
-    const turn = await prepareTurn(c, user, body, selection, [], botInstructions);
+    const turn = await prepareTurn(c, user, body, selection, {
+      tools: [],
+      adminInstructions: botInstructions,
+      timeZone: normalizeTimeZone(body.timeZone),
+    });
     const response: LocalPrepareResponse = {
       conversation: turn.conversation,
       userMessage: turn.userMessage,

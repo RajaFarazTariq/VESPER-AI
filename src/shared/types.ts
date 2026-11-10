@@ -46,6 +46,16 @@ export interface AppSettingsDto {
   botInstructions: string;
   /** Tools switched off for everyone. */
   disabledTools: string[];
+  /** Let regular users see the model's thinking notes ("Reasoning"). Admins always see them. */
+  showReasoningToUsers: boolean;
+  /** Models regular users may pick (besides Auto), with friendly names. Admins can pick any model. */
+  userModels: UserModelOption[];
+}
+
+/** A model the admin made available to users, e.g. { value: "groq:openai/gpt-oss-120b", label: "Smart" }. */
+export interface UserModelOption {
+  value: string;
+  label: string;
 }
 
 export interface UserSettings {
@@ -148,6 +158,11 @@ export interface ProviderStatusDto {
 export interface ModelsResponse {
   providers: ProviderStatusDto[];
   order: ProviderId[];
+  /**
+   * Regular users: the models the admin made available (besides Auto), with friendly names; the
+   * model menu shows only these. Admins: null (they get the full list).
+   */
+  userModels: UserModelOption[] | null;
 }
 
 export interface PublicConfigDto {

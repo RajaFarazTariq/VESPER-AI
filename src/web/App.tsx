@@ -343,6 +343,7 @@ function ChatApp({
                   isLast={i === lastIndex}
                   canRetry={!chat.streaming && Boolean(chat.conversationId)}
                   onRetry={() => void chat.regenerate(selection)}
+                  isAdmin={user.role === "admin"}
                 />
               ))}
             </div>

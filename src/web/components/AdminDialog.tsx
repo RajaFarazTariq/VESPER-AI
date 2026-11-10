@@ -1,11 +1,11 @@
 import { ExternalLink, RefreshCw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AdminUserDto, AppSettingsDto, ModelsResponse, ToolInfoDto } from "../../shared/types";
+import type { AdminUserDto, AppSettingsDto, ModelsResponse, ToolInfoDto, UserModelOption } from "../../shared/types";
 import { api, ApiError } from "../api/client";
 import { formatRelative } from "../lib/format";
 import { Field, Toggle } from "./SettingsDialog";
 
-type Tab = "users" | "settings" | "providers";
+type Tab = "users" | "settings" | "models" | "providers";
 
 interface Props {
   currentUserId: string;
@@ -36,6 +36,7 @@ export function AdminDialog({ currentUserId, models, refreshingModels, onRefresh
   const tabs: [Tab, string][] = [
     ["users", "Users"],
     ["settings", "App settings"],
+    ["models", "Models"],
     ["providers", "Providers"],
   ];
 
@@ -49,7 +50,7 @@ export function AdminDialog({ currentUserId, models, refreshingModels, onRefresh
         aria-labelledby="admin-title"
         className="flex max-h-[92vh] w-full max-w-3xl flex-col rounded-t-2xl border border-[var(--border)] bg-[var(--bg)] shadow-2xl outline-none sm:rounded-2xl"
       >
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-5 py-3">
           <h2 id="admin-title" className="text-lg font-semibold">
             Admin panel
           </h2>
@@ -58,7 +59,7 @@ export function AdminDialog({ currentUserId, models, refreshingModels, onRefresh
           </button>
         </div>
 
-        <div className="flex gap-1 overflow-x-auto border-b border-[var(--border)] px-3 thin-scroll" role="tablist">
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-[var(--border)] px-3 thin-scroll" role="tablist">
           {tabs.map(([id, label]) => (
             <button
               key={id}
@@ -78,6 +79,7 @@ export function AdminDialog({ currentUserId, models, refreshingModels, onRefresh
         <div className="flex-1 overflow-y-auto px-5 py-4 thin-scroll">
           {tab === "users" ? <UsersTab currentUserId={currentUserId} onNotice={onNotice} /> : null}
           {tab === "settings" ? <SettingsTab onNotice={onNotice} /> : null}
+          {tab === "models" ? <ModelsTab models={models} onNotice={onNotice} /> : null}
           {tab === "providers" ? <ProvidersTab models={models} refreshing={refreshingModels} onRefresh={onRefreshModels} /> : null}
         </div>
       </div>
@@ -309,7 +311,9 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
     setSaving(true);
     setError(null);
     try {
-      const { settings } = await api.admin.updateSettings(next);
+      // Only this tab's fields: the model list is saved by the Models tab, so it is never overwritten here.
+      const { userModels: _models, ...patch } = next;
+      const { settings } = await api.admin.updateSettings(patch);
       setSaved(settings);
       setDraft(settings);
       setLimitText(String(settings.defaultDailyLimit));
@@ -328,6 +332,12 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         onChange={(signupsOpen) => setDraft({ ...draft, signupsOpen })}
         label="Sign-ups open"
         hint="When off, nobody new can create an account. Everyone who already has an account can still sign in."
+      />
+      <Toggle
+        checked={draft.showReasoningToUsers}
+        onChange={(showReasoningToUsers) => setDraft({ ...draft, showReasoningToUsers })}
+        label="Show the assistant's thinking notes to users"
+        hint="Some models write out their reasoning before answering. Off: users see only the answer (you always see everything)."
       />
       <Field label="Messages per user per day" hint="Applies to everyone without a personal limit (set those in Users). Admins are unlimited. Resets at 00:00 UTC.">
         <input
@@ -376,6 +386,154 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
           type="button"
           onClick={() => void save()}
           disabled={!dirty || !limitValid || saving}
+          className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-text)] disabled:opacity-40"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Models for users
+
+const MAX_USER_MODELS = 20;
+const MAX_MODEL_LABEL = 40;
+const suggestLabel = (label: string) => (label.split("/").pop() ?? label).slice(0, MAX_MODEL_LABEL);
+
+function ModelsTab({ models, onNotice }: { models: ModelsResponse | null; onNotice: Props["onNotice"] }) {
+  const [saved, setSaved] = useState<UserModelOption[] | null>(null);
+  const [draft, setDraft] = useState<UserModelOption[]>([]);
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.admin.settings().then(
+      (r) => {
+        setSaved(r.settings.userModels);
+        setDraft(r.settings.userModels);
+      },
+      (e: unknown) => setError(errorText(e, "Could not load the model list.")),
+    );
+  }, []);
+
+  if (!saved) return error ? <p className="text-sm text-[var(--danger)]">{error}</p> : <p className="text-sm text-[var(--text-soft)]">Loading…</p>;
+
+  const offered = new Set((models?.providers ?? []).flatMap((p) => p.models.map((m) => `${p.id}:${m.id}`)));
+  const chosen = new Set(draft.map((m) => m.value));
+  const labelsValid = draft.every((m) => m.label.trim().length > 0 && m.label.trim().length <= MAX_MODEL_LABEL);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+  const q = query.trim().toLowerCase();
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const { settings } = await api.admin.updateSettings({ userModels: draft.map((m) => ({ value: m.value, label: m.label.trim() })) });
+      setSaved(settings.userModels);
+      setDraft(settings.userModels);
+      onNotice("Model list saved. Users see it the next time they open or refresh the app.", "info");
+    } catch (e) {
+      setError(errorText(e, "Could not save the model list."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-[var(--text-soft)]">
+        Users always have <b>Auto</b> (the app picks the best available free model). Add up to {MAX_USER_MODELS} more models here, each with a
+        simple name users will see (for example "Fast" or "Smart"). You can always use every model yourself.
+      </p>
+
+      <div>
+        <div className="mb-1.5 text-sm font-medium">Available to users ({draft.length})</div>
+        {draft.length === 0 ? (
+          <p className="rounded-lg bg-[var(--bg-soft)] px-3 py-3 text-sm text-[var(--text-soft)]">None yet: users only have Auto.</p>
+        ) : (
+          <ul className="space-y-2">
+            {draft.map((m, i) => (
+              <li key={m.value} className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] p-2.5">
+                <input
+                  value={m.label}
+                  maxLength={MAX_MODEL_LABEL}
+                  onChange={(e) => setDraft(draft.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+                  aria-label={`Name users see for ${m.value}`}
+                  className={`w-40 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm ${m.label.trim() ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+                />
+                <span className="min-w-0 flex-1 truncate text-xs text-[var(--text-soft)]" title={m.value}>
+                  {m.value}
+                  {models && !offered.has(m.value) ? <span className="ml-1 text-amber-600 dark:text-amber-400">(not offered by the provider right now)</span> : null}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setDraft(draft.filter((_, j) => j !== i))}
+                  className="rounded-md p-1 text-[var(--text-soft)] hover:text-[var(--danger)]"
+                  aria-label={`Remove ${m.label || m.value}`}
+                  title="Remove"
+                >
+                  <X size={14} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div>
+        <div className="mb-1.5 flex items-center gap-2">
+          <span className="text-sm font-medium">All free models</span>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search"
+            aria-label="Search models"
+            className="ml-auto w-40 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-sm"
+          />
+        </div>
+        <div className="max-h-72 overflow-y-auto rounded-xl border border-[var(--border)] thin-scroll">
+          {(models?.providers ?? [])
+            .filter((p) => p.configured && p.models.length > 0)
+            .map((p) => {
+              const visible = p.models.filter((m) => !q || m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q));
+              if (visible.length === 0) return null;
+              return (
+                <div key={p.id}>
+                  <div className="sticky top-0 bg-[var(--bg-soft)] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--text-soft)]">{p.label}</div>
+                  {visible.map((m) => {
+                    const value = `${p.id}:${m.id}`;
+                    const added = chosen.has(value);
+                    return (
+                      <div key={value} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                        <span className="min-w-0 flex-1 truncate">{m.label}</span>
+                        {m.id === p.defaultModel ? <span className="text-xs text-[var(--text-soft)]">default</span> : null}
+                        <button
+                          type="button"
+                          disabled={added || draft.length >= MAX_USER_MODELS}
+                          onClick={() => setDraft([...draft, { value, label: suggestLabel(m.label) }])}
+                          className="rounded-md border border-[var(--border)] px-2 py-0.5 text-xs hover:bg-[var(--bg-hover)] disabled:opacity-40"
+                        >
+                          {added ? "Added" : "Add"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          {!models ? <p className="px-3 py-3 text-sm text-[var(--text-soft)]">Loading models…</p> : null}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] pt-3">
+        {error ? <span className="mr-auto text-sm text-[var(--danger)]">{error}</span> : null}
+        {!labelsValid ? <span className="mr-auto text-sm text-[var(--danger)]">Every model needs a name.</span> : null}
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={!dirty || !labelsValid || saving}
           className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-text)] disabled:opacity-40"
         >
           {saving ? "Saving…" : "Save"}

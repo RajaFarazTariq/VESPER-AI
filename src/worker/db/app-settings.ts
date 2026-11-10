@@ -8,13 +8,40 @@ export const appSettingsSchema = z.object({
   defaultDailyLimit: z.number().int().min(0).max(100_000),
   botInstructions: z.string().max(4_000),
   disabledTools: z.array(z.string().trim().min(1).max(64)).max(50),
+  showReasoningToUsers: z.boolean(),
+  userModels: z
+    .array(
+      z.object({
+        // "<provider>:<model id>" for one of the cloud providers (Auto and local models are always allowed).
+        value: z
+          .string()
+          .trim()
+          .max(250)
+          .regex(/^(groq|gemini|openrouter|mistral|workers-ai):\S{1,240}$/, "Must be <provider>:<model id>"),
+        label: z.string().trim().min(1).max(40),
+      }),
+    )
+    .max(20)
+    .refine((list) => new Set(list.map((m) => m.value)).size === list.length, "Each model can only be listed once"),
 });
 
 type Key = keyof AppSettingsDto;
 const KEYS = Object.keys(appSettingsSchema.shape) as Key[];
 
 export function defaultAppSettings(config: AppConfig): AppSettingsDto {
-  return { signupsOpen: true, defaultDailyLimit: config.defaultDailyLimit, botInstructions: "", disabledTools: [] };
+  return {
+    signupsOpen: true,
+    defaultDailyLimit: config.defaultDailyLimit,
+    botInstructions: "",
+    disabledTools: [],
+    showReasoningToUsers: false,
+    userModels: [],
+  };
+}
+
+/** Whether a regular user may use this model selection. Auto and local (browser-side) models are always allowed. */
+export function userMayUseModel(settings: AppSettingsDto, selection: string): boolean {
+  return selection === "auto" || selection.startsWith("ollama:") || settings.userModels.some((m) => m.value === selection);
 }
 
 /** Stored values override the defaults; anything missing or invalid falls back to the default. */

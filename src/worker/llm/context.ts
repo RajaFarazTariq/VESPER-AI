@@ -12,6 +12,27 @@ export interface SystemPromptInput {
   /** Names of tools offered this turn. */
   tools?: string[];
   now?: Date;
+  /** The user's IANA time zone (already validated with normalizeTimeZone). */
+  timeZone?: string;
+}
+
+/** Returns the time zone if the runtime knows it (e.g. "Asia/Karachi"), otherwise undefined. */
+export function normalizeTimeZone(value: string | undefined | null): string | undefined {
+  const tz = value?.trim();
+  if (!tz || tz.length > 64) return undefined;
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: tz }).resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
+/** e.g. "Wednesday, 11 November 2026, 04:03 (Asia/Karachi, GMT+05:00)" */
+function describeNow(now: Date, timeZone: string): string {
+  const local = new Intl.DateTimeFormat("en-GB", { timeZone, dateStyle: "full", timeStyle: "short", hourCycle: "h23" }).format(now);
+  const offset =
+    new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" }).formatToParts(now).find((p) => p.type === "timeZoneName")?.value ?? "";
+  return `${local} (${timeZone}${offset ? `, ${offset}` : ""})`;
 }
 
 const MAX_MEMORY_PROMPT_CHARS = 6_000;
@@ -20,7 +41,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   const now = input.now ?? new Date();
   const lines = [
     `You are ${input.appName}, a helpful, knowledgeable and honest AI assistant.`,
-    `Current date: ${now.toISOString().slice(0, 10)} (UTC).`,
+    input.timeZone
+      ? `The user's current local date and time: ${describeNow(now, input.timeZone)}. Use this when they say "today", "now", "tomorrow", etc.`
+      : `Current date: ${now.toISOString().slice(0, 10)} (UTC).`,
     "Guidelines:",
     "- Answer directly and accurately. Be concise by default and go deeper when asked.",
     "- Use Markdown when it helps: headings, lists, tables, and fenced code blocks with a language tag.",

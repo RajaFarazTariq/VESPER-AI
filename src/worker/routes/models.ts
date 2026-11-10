@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { ModelsResponse, ProviderStatusDto } from "../../shared/types";
 import type { AppEnv } from "../app-env";
+import { getAppSettings } from "../db/app-settings";
 import { D1ProviderStateStore, getTodayUsage } from "../db/provider-state";
 import { getConfig } from "../env";
 import { getProviderModels } from "../llm/catalog";
@@ -12,13 +13,19 @@ export const modelRoutes = new Hono<AppEnv>()
 
   /** Every provider with its live free model list, health and today's usage. */
   .get("/", async (c) => {
-    const refresh = c.req.query("refresh") === "1";
     const config = getConfig(c.env);
-    const providers = getProviders(c.env);
-    const [health, usage] = await Promise.all([new D1ProviderStateStore(c.env.DB).getHealth(), getTodayUsage(c.env.DB)]);
-    const now = Date.now();
-    // Provider error messages are for the administrator; users only need the model lists.
+    // Provider details (errors, every model) are for the administrator. Users get only the models
+    // the admin made available (admin panel → Models), and can't force a refresh from the providers.
     const isAdmin = c.get("user").role === "admin";
+    const refresh = isAdmin && c.req.query("refresh") === "1";
+    const providers = getProviders(c.env);
+    const [health, usage, appSettings] = await Promise.all([
+      new D1ProviderStateStore(c.env.DB).getHealth(),
+      getTodayUsage(c.env.DB),
+      getAppSettings(c.env.DB, config),
+    ]);
+    const now = Date.now();
+    const allowed = new Set(appSettings.userModels.map((m) => m.value));
 
     // Show providers in routing order, then any not listed in PROVIDER_ORDER.
     const ordered = [
@@ -29,7 +36,8 @@ export const modelRoutes = new Hono<AppEnv>()
     const statuses = await Promise.all(
       ordered.map(async (provider): Promise<ProviderStatusDto> => {
         const configured = provider.isConfigured();
-        const models = configured ? await getProviderModels(c.env.DB, provider, { refresh }) : [];
+        const all = configured ? await getProviderModels(c.env.DB, provider, { refresh }) : [];
+        const models = isAdmin ? all : all.filter((m) => allowed.has(`${provider.id}:${m.id}`));
         let defaultModel: string | null = null;
         if (configured) defaultModel = await provider.defaultModel().catch(() => null);
         const state = health.get(provider.id);
@@ -48,6 +56,10 @@ export const modelRoutes = new Hono<AppEnv>()
         };
       }),
     );
-    const body: ModelsResponse = { providers: statuses, order: config.providerOrder };
+    const body: ModelsResponse = {
+      providers: statuses,
+      order: config.providerOrder,
+      userModels: isAdmin ? null : appSettings.userModels,
+    };
     return c.json(body);
   });

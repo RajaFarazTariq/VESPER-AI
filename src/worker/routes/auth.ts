@@ -23,6 +23,7 @@ import { AppError } from "../lib/errors";
 import { parseJson } from "../lib/validation";
 import { clearSessionCookie, getSessionToken, requireUser, setSessionCookie } from "../middleware/auth";
 import { clientIp, rateLimit } from "../middleware/security";
+import { effectiveSettings } from "./settings";
 
 type Provider = "github" | "google";
 
@@ -366,7 +367,7 @@ export const authRoutes = new Hono<AppEnv>()
     return c.json({ ok: true });
   })
 
-  .get("/me", requireUser, (c) => {
-    const { settings, status: _status, dailyLimit: _limit, ...user } = c.get("user");
-    return c.json({ user, settings });
+  .get("/me", requireUser, async (c) => {
+    const { settings: _stored, status: _status, dailyLimit: _limit, ...user } = c.get("user");
+    return c.json({ user, settings: await effectiveSettings(c.env.DB, c.env, c.get("user")) });
   });

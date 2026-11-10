@@ -8,6 +8,8 @@ export interface ToolContext {
   userId: string;
   settings: UserSettings;
   now: Date;
+  /** The user's IANA time zone from their browser (validated), used as the default for date/time. */
+  timeZone?: string;
 }
 
 export interface ToolOutput {
@@ -74,11 +76,11 @@ const datetime = define({
   requiresMemory: false,
   parameters: {
     type: "object",
-    properties: { timezone: { type: "string", description: "IANA timezone name. Defaults to UTC." } },
+    properties: { timezone: { type: "string", description: "IANA timezone name. Defaults to the user's own time zone." } },
   },
   schema: z.object({ timezone: z.string().max(64).optional() }),
   async run({ timezone }, ctx) {
-    const timeZone = timezone?.trim() || "UTC";
+    const timeZone = timezone?.trim() || ctx.timeZone || "UTC";
     let formatted: string;
     let offset = "";
     try {

@@ -5,10 +5,11 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SseParser } from "../src/shared/sse";
-import type { ChatStreamEvent } from "../src/shared/types";
+import { DEFAULT_SETTINGS, type ChatStreamEvent } from "../src/shared/types";
 import { app } from "../src/worker/app";
 import { consumeDailyMessage, createUser } from "../src/worker/db/users";
 import { clearModelMemoryCache } from "../src/worker/llm/catalog";
+import { ALL_TOOLS } from "../src/worker/tools/registry";
 
 const ORIGIN = "http://localhost";
 type ExtraEnv = Partial<Record<string, string>>;
@@ -412,5 +413,202 @@ describe("chat history survives sign-out", () => {
       ["user", "remember this conversation"],
       ["assistant", "ok"],
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Phase 6.1: clean replies for users, the user's time zone, and the admin-picked model list.
+// ---------------------------------------------------------------------------------------------
+
+const parseStream = (text: string): ChatStreamEvent[] => {
+  const parser = new SseParser();
+  return [...parser.feed(text), ...parser.flush()].map((e) => JSON.parse(e.data) as ChatStreamEvent);
+};
+
+/** A streamed model turn that "thinks" and then calls the date tool. */
+const thinkingToolCall = () =>
+  new Response(
+    `data: ${JSON.stringify({
+      choices: [
+        {
+          delta: {
+            reasoning: "Let me check the clock.",
+            tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "current_datetime", arguments: '{"timezone":"Asia/Karachi"}' } }],
+          },
+        },
+      ],
+    })}\n\ndata: [DONE]\n\n`,
+    { headers: { "content-type": "text/event-stream" } },
+  );
+
+const GEMINI: ExtraEnv = { GEMINI_API_KEY: "k", GEMINI_BASE_URL: "https://gemini.test/v1" };
+
+describe("6.1 clean replies for users", () => {
+  async function askTheTime(cookie: string) {
+    await env.DB.prepare("DELETE FROM provider_state").run(); // fresh: Groq fails first every time
+    let geminiCalls = 0;
+    extraHandler = (url) => {
+      if (url.startsWith("https://groq.test")) return jsonResponse({ error: { message: "Rate limit reached for model" } }, 429);
+      geminiCalls++;
+      return geminiCalls === 1 ? thinkingToolCall() : sseResponse("It is just after 4 AM.");
+    };
+    installFetch();
+    const { text } = await call("/api/chat", { method: "POST", body: JSON.stringify({ message: "What time is it?" }), cookie, env: GEMINI });
+    return parseStream(text);
+  }
+
+  it("users get no thinking notes, tool details, provider switching or model names; the admin gets everything", async () => {
+    const admin = await devLogin("octocat");
+    const tester = await devLogin("tester");
+
+    const userEvents = await askTheTime(tester);
+    const userTypes = userEvents.map((e) => e.type);
+    expect(userTypes).not.toContain("attempt");
+    expect(userTypes).not.toContain("fallback");
+    expect(userTypes).not.toContain("reasoning");
+    const userTools = userEvents.filter((e) => e.type === "tool") as Extract<ChatStreamEvent, { type: "tool" }>[];
+    expect(userTools.length).toBeGreaterThan(0);
+    for (const t of userTools) expect(t.tool).toMatchObject({ name: "current_datetime", args: {}, summary: null });
+    const userDone = userEvents.at(-1) as Extract<ChatStreamEvent, { type: "done" }>;
+    expect(userDone.type).toBe("done");
+    expect(userDone.message).toMatchObject({ content: "It is just after 4 AM.", reasoning: null, provider: null, model: null });
+    expect(userDone.message.tools?.[0]).toMatchObject({ args: {}, summary: null });
+
+    const adminEvents = await askTheTime(admin);
+    const adminTypes = adminEvents.map((e) => e.type);
+    expect(adminTypes).toContain("attempt");
+    expect(adminTypes).toContain("fallback");
+    expect(adminTypes).toContain("reasoning");
+    const adminDone = adminEvents.at(-1) as Extract<ChatStreamEvent, { type: "done" }>;
+    expect(adminDone.message).toMatchObject({ reasoning: "Let me check the clock.", provider: "gemini" });
+    expect(adminDone.message.tools?.[0]?.args).toEqual({ timezone: "Asia/Karachi" });
+    expect(adminDone.message.tools?.[0]?.summary).toContain("Asia/Karachi");
+
+    // Reopening the chat later is just as clean for the user (the full reply is still stored).
+    const userConvId = (userEvents[0] as Extract<ChatStreamEvent, { type: "conversation" }>).conversation.id;
+    const reopened = await call(`/api/conversations/${userConvId}`, { cookie: tester });
+    expect(reopened.json.messages[1]).toMatchObject({ reasoning: null, provider: null, model: null });
+    expect(reopened.json.messages[1].tools[0]).toMatchObject({ args: {}, summary: null });
+    const stored = await env.DB.prepare("SELECT reasoning, provider FROM messages WHERE conversation_id = ?1 AND role = 'assistant'")
+      .bind(userConvId)
+      .first<{ reasoning: string; provider: string }>();
+    expect(stored).toEqual({ reasoning: "Let me check the clock.", provider: "gemini" });
+
+    // The admin can switch thinking notes on for users; tool details and model names stay hidden.
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ showReasoningToUsers: true }), cookie: admin });
+    const withNotes = await call(`/api/conversations/${userConvId}`, { cookie: tester });
+    expect(withNotes.json.messages[1]).toMatchObject({ reasoning: "Let me check the clock.", provider: null });
+    expect(withNotes.json.messages[1].tools[0].args).toEqual({});
+  });
+});
+
+describe("6.1 the user's own time zone", () => {
+  it("tells the assistant the user's local date and time, and ignores unknown zones", async () => {
+    const tester = await devLogin("tester");
+    const systems: string[] = [];
+    extraHandler = (_url, init) => {
+      systems.push(JSON.parse(String(init?.body)).messages[0].content);
+      return sseResponse("ok");
+    };
+    installFetch();
+    await call("/api/chat", { method: "POST", body: JSON.stringify({ message: "hi", timeZone: "Asia/Karachi" }), cookie: tester });
+    await call("/api/chat", { method: "POST", body: JSON.stringify({ message: "hi", timeZone: "Mars/Olympus_Mons" }), cookie: tester });
+    expect(systems[0]).toContain("The user's current local date and time:");
+    expect(systems[0]).toContain("(Asia/Karachi, GMT+05:00)");
+    expect(systems[1]).toMatch(/Current date: \d{4}-\d{2}-\d{2} \(UTC\)/);
+    const tooLong = await call("/api/chat", { method: "POST", body: JSON.stringify({ message: "hi", timeZone: "x".repeat(65) }), cookie: tester });
+    expect(tooLong.response.status).toBe(400);
+  });
+
+  it("the date tool defaults to the user's time zone (late evening UTC is already tomorrow in Pakistan)", async () => {
+    const tool = ALL_TOOLS.find((t) => t.name === "current_datetime")!;
+    const now = new Date("2026-11-10T23:03:00Z");
+    const base = { db: env.DB, userId: "u", settings: DEFAULT_SETTINGS, now };
+    const local = await tool.run({}, { ...base, timeZone: "Asia/Karachi" });
+    expect(local.summary).toContain("Wednesday, 11 November 2026");
+    expect(local.summary).toContain("Asia/Karachi");
+    const utc = await tool.run({}, base);
+    expect(utc.summary).toContain("Tuesday, 10 November 2026");
+    expect(utc.summary).toContain("UTC");
+  });
+});
+
+describe("6.1 admin-picked model list for users", () => {
+  const groqModels = () =>
+    jsonResponse({ data: [{ id: "openai/gpt-oss-120b", context_window: 131072 }, { id: "llama-3.3-70b-versatile" }] });
+  const post = (cookie: string, body: Record<string, unknown>) => call("/api/chat", { method: "POST", body: JSON.stringify(body), cookie });
+
+  it("users see and may use only Auto plus the admin's picks; the admin keeps every model", async () => {
+    const admin = await devLogin("octocat");
+    const tester = await devLogin("tester");
+    extraHandler = (url) => (url.endsWith("/models") ? groqModels() : sseResponse("ok"));
+    installFetch();
+
+    // Nothing picked yet: users only have Auto.
+    const before = await call("/api/models?refresh=1", { cookie: tester });
+    expect(before.json.userModels).toEqual([]);
+    expect(before.json.providers.find((p: any) => p.id === "groq").models).toEqual([]);
+    const adminList = await call("/api/models?refresh=1", { cookie: admin });
+    expect(adminList.json.userModels).toBeNull();
+    // (The app sorts model lists, so compare without caring about order.)
+    expect(adminList.json.providers.find((p: any) => p.id === "groq").models.map((m: any) => m.id).sort()).toEqual([
+      "llama-3.3-70b-versatile",
+      "openai/gpt-oss-120b",
+    ]);
+    const refused = await post(tester, { message: "hi", model: "groq:openai/gpt-oss-120b" });
+    expect(refused.response.status).toBe(403);
+    expect(refused.json.error.code).toBe("model_not_allowed");
+    expect(await conversationCount((await me(tester)).json.user.id)).toBe(0);
+    expect((await post(tester, { message: "hi", model: "auto" })).response.status).toBe(200);
+    expect((await post(admin, { message: "hi", model: "groq:llama-3.3-70b-versatile" })).response.status).toBe(200);
+
+    // Bad lists are rejected.
+    for (const bad of [
+      [{ value: "openrouter", label: "x" }],
+      [{ value: "groq:openai/gpt-oss-120b", label: "" }],
+      [
+        { value: "groq:a", label: "A" },
+        { value: "groq:a", label: "B" },
+      ],
+      [{ value: "ollama:llama3", label: "Local" }],
+    ]) {
+      const r = await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ userModels: bad }), cookie: admin });
+      expect(r.response.status, JSON.stringify(bad)).toBe(400);
+    }
+
+    // The admin picks one model and names it "Smart".
+    const saved = await call("/api/admin/settings", {
+      method: "PUT",
+      body: JSON.stringify({ userModels: [{ value: "groq:openai/gpt-oss-120b", label: "Smart" }] }),
+      cookie: admin,
+    });
+    expect(saved.json.settings.userModels).toEqual([{ value: "groq:openai/gpt-oss-120b", label: "Smart" }]);
+    const after = await call("/api/models", { cookie: tester });
+    expect(after.json.userModels).toEqual([{ value: "groq:openai/gpt-oss-120b", label: "Smart" }]);
+    expect(after.json.providers.find((p: any) => p.id === "groq").models.map((m: any) => m.id)).toEqual(["openai/gpt-oss-120b"]);
+    expect((await post(tester, { message: "hi", model: "groq:openai/gpt-oss-120b" })).response.status).toBe(200);
+    expect((await post(tester, { message: "hi", model: "groq:llama-3.3-70b-versatile" })).response.status).toBe(403);
+
+    // Default model in Settings: only allowed choices.
+    const badDefault = await call("/api/settings", { method: "PUT", body: JSON.stringify({ defaultModel: "groq:llama-3.3-70b-versatile" }), cookie: tester });
+    expect(badDefault.response.status).toBe(400);
+    const okDefault = await call("/api/settings", { method: "PUT", body: JSON.stringify({ defaultModel: "groq:openai/gpt-oss-120b" }), cookie: tester });
+    expect(okDefault.json.settings.defaultModel).toBe("groq:openai/gpt-oss-120b");
+
+    // The admin removes it: the user's saved default quietly becomes Auto; they can still chat and save settings.
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ userModels: [] }), cookie: admin });
+    expect((await me(tester)).json.settings.defaultModel).toBe("auto");
+    expect((await post(tester, { message: "still works" })).response.status).toBe(200);
+    const otherSetting = await call("/api/settings", { method: "PUT", body: JSON.stringify({ systemPrompt: "Be brief." }), cookie: tester });
+    expect(otherSetting.response.status).toBe(200);
+    expect(otherSetting.json.settings).toMatchObject({ systemPrompt: "Be brief.", defaultModel: "auto" });
+  });
+
+  it("saving App settings never touches the model list, and vice versa", async () => {
+    const admin = await devLogin("octocat");
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ userModels: [{ value: "groq:m", label: "M" }] }), cookie: admin });
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ signupsOpen: false, showReasoningToUsers: true }), cookie: admin });
+    const s = (await call("/api/admin/settings", { cookie: admin })).json.settings;
+    expect(s).toMatchObject({ signupsOpen: false, showReasoningToUsers: true, userModels: [{ value: "groq:m", label: "M" }] });
   });
 });

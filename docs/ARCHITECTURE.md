@@ -108,6 +108,7 @@ from Ollama directly, then `/api/chat/local/complete` stores the reply. The serv
 | Threat | Control |
 |---|---|
 | Strangers using your quota | Per-user daily message limit (default 30, admins unlimited), sign-ups switch, Google *Testing* mode allows only listed test users, block button (checked **every request**, sessions deleted) |
+| Users seeing internals / using any model | Replies are filtered per viewer before they leave the server (`lib/present.ts`); `/api/chat`, `/api/settings` and `/api/models` only accept/offer Auto + the admin's model list for users |
 | Non-admins reaching admin functions | `/api/admin/*` requires the admin role, derived from config on every request; admins can't be blocked or deleted through the API |
 | Session theft | 256-bit random token, `HttpOnly; Secure; SameSite=Lax; __Host-` cookie, only the hash stored, sliding 30-day expiry, logout deletes the row |
 | CSRF | Mutating requests must be same-origin (Origin / Sec-Fetch-Site) and `application/json` |
@@ -153,6 +154,7 @@ tools are blocked once untrusted content is in context.
 | ✅ 4 | Core chat, auth, history, multi-provider fallback, UI | Workers, D1, free LLM APIs |
 | ✅ 5 | Agent loop, tool registry, calculator, date/time, long-term memory, tool & memory settings | Provider tool-calling APIs |
 | ✅ 6.0 | Multi-user: Google sign-up/sign-in, admin role, admin panel (users, block, limits, sign-ups, bot instructions, tools, providers), per-user daily limits | Google OAuth (free) |
+| ✅ 6.1 | Clean replies for users (no reasoning/tool details/model names; admin sees all; `lib/present.ts`), admin-picked model list with friendly names (enforced server-side), user's own time zone for dates, dialog/focus UI fixes | n/a |
 | 6a | Web search + page reading with citations; file upload, PDF/DOCX parsing, RAG | Tavily free / DuckDuckGo, D1 blobs (R2 needs a card, so it's avoided), Workers AI embeddings + Vectorize free tier |
 | 6b | **GitHub** integration (repos, issues, PRs: read freely, write with approval) + the approval gate | GitHub REST API, incremental OAuth scopes |
 | 6c | **Gmail** (draft-first, send with approval), **Google Calendar** | Google APIs (free) via OAuth |

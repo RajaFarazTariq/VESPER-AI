@@ -10,9 +10,11 @@ interface Props {
   isLast: boolean;
   canRetry: boolean;
   onRetry: () => void;
+  /** Admins see technical details (tool inputs, provider/model). The server also filters for users. */
+  isAdmin?: boolean;
 }
 
-export const MessageItem = memo(function MessageItem({ message, isLast, canRetry, onRetry }: Props) {
+export const MessageItem = memo(function MessageItem({ message, isLast, canRetry, onRetry, isAdmin = false }: Props) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
@@ -37,7 +39,7 @@ export const MessageItem = memo(function MessageItem({ message, isLast, canRetry
 
       {message.reasoning ? <Reasoning text={message.reasoning} streaming={Boolean(message.streaming && !message.content)} /> : null}
 
-      {message.tools?.length ? <ToolActivity tools={message.tools} /> : null}
+      {message.tools?.length ? <ToolActivity tools={message.tools} plain={!isAdmin} /> : null}
 
       {waiting && !message.tools?.length ? (
         <div className="flex items-center gap-2 text-sm text-[var(--text-soft)]" role="status">

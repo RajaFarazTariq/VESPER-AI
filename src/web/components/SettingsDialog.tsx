@@ -70,9 +70,14 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
   };
 
   const modelOptions: { value: string; label: string }[] = [{ value: "auto", label: "Auto (recommended)" }];
-  for (const p of models?.providers ?? []) {
-    if (!p.configured) continue;
-    for (const m of p.models) modelOptions.push({ value: `${p.id}:${m.id}`, label: `${p.label} · ${m.label}` });
+  if (models?.userModels) {
+    // Regular users: only the models the admin made available.
+    for (const m of models.userModels) modelOptions.push({ value: m.value, label: m.label });
+  } else {
+    for (const p of models?.providers ?? []) {
+      if (!p.configured) continue;
+      for (const m of p.models) modelOptions.push({ value: `${p.id}:${m.id}`, label: `${p.label} · ${m.label}` });
+    }
   }
   for (const m of ollamaModels ?? []) modelOptions.push({ value: `ollama:${m}`, label: `Ollama (local) · ${m}` });
   if (!modelOptions.some((o) => o.value === draft.defaultModel)) {
@@ -97,7 +102,7 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
         aria-labelledby="settings-title"
         className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-2xl border border-[var(--border)] bg-[var(--bg)] shadow-2xl outline-none sm:rounded-2xl"
       >
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-5 py-3">
           <h2 id="settings-title" className="text-lg font-semibold">
             Settings
           </h2>
@@ -106,7 +111,7 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
           </button>
         </div>
 
-        <div className="flex gap-1 overflow-x-auto border-b border-[var(--border)] px-3 thin-scroll" role="tablist">
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-[var(--border)] px-3 thin-scroll" role="tablist">
           {tabs.map(([id, label]) => (
             <button
               key={id}
@@ -372,7 +377,7 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
         </div>
 
         {tab === "general" || tab === "local" || tab === "tools" || tab === "memory" ? (
-          <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-3">
+          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-3">
             {error ? <span className="mr-auto text-sm text-[var(--danger)]">{error}</span> : null}
             <button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-sm hover:bg-[var(--bg-hover)]">
               Cancel

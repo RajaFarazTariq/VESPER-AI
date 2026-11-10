@@ -40,8 +40,40 @@ function ToolRow({ tool }: { tool: ToolEventDto }) {
   );
 }
 
-/** Compact list of the tools used while producing a reply. */
-export function ToolActivity({ tools }: { tools: ToolEventDto[] }) {
+/** Plain wording for regular users: what the assistant did, without technical details. */
+const PLAIN: Record<string, [running: string, done: string]> = {
+  calculator: ["Calculating…", "Calculated"],
+  current_datetime: ["Checking the date & time…", "Checked the date & time"],
+  remember: ["Saving to memory…", "Saved to memory"],
+  forget: ["Updating memory…", "Removed from memory"],
+};
+
+function PlainToolLine({ tool }: { tool: ToolEventDto }) {
+  const Icon = tool.status === "running" ? Loader2 : tool.status === "error" ? CircleAlert : (ICONS[tool.name] ?? Wrench);
+  const [running, done] = PLAIN[tool.name] ?? [`${tool.label}…`, tool.label];
+  const text = tool.status === "running" ? running : tool.status === "error" ? `${tool.label}: didn't work` : done;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Icon size={12} className={`shrink-0 ${tool.status === "running" ? "animate-spin" : ""}`} />
+      {text}
+    </span>
+  );
+}
+
+/**
+ * Tools used while producing a reply. Admins get the detailed, expandable list; regular users
+ * (`plain`) get one quiet line such as "Checked the date & time".
+ */
+export function ToolActivity({ tools, plain = false }: { tools: ToolEventDto[]; plain?: boolean }) {
+  if (plain) {
+    return (
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--text-soft)]" aria-label="What the assistant did">
+        {tools.map((t) => (
+          <PlainToolLine key={t.id} tool={t} />
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-0.5 rounded-lg border border-[var(--border)] py-1" aria-label="Tools used">
       {tools.map((t) => (

@@ -13,7 +13,7 @@ requirement: no paid services, no card on file, no paid fallback).
 | Owner | Raja Faraz Tariq (GitHub **RajaFarazTariq**). Personal project, not office work |
 | Repo | https://github.com/RajaFarazTariq/VESPER-AI (private, branch `main`) |
 | Live app | https://ai-assistant.vesper-ai.workers.dev |
-| Health check | https://ai-assistant.vesper-ai.workers.dev/api/health (expects `version` 0.6.0+) |
+| Health check | https://ai-assistant.vesper-ai.workers.dev/api/health (expects `version` 0.6.1+) |
 | Cloudflare | Free plan. Worker name `ai-assistant`, workers.dev subdomain `vesper-ai` |
 | D1 database | `ai-assistant`, id `726f21f4-8ef4-40b5-86ea-3676f2545c84` (not secret) |
 | Sign-in (everyone) | Google OAuth client, callback `https://ai-assistant.vesper-ai.workers.dev/api/auth/google/callback` (Google app in *Testing* mode: only listed test users can sign in) |
@@ -47,7 +47,15 @@ requirement: no paid services, no card on file, no paid fallback).
   username-only login (any name; admin names become admin), and only on localhost.
 - **Admin panel** (`src/web/components/AdminDialog.tsx`, API `src/worker/routes/admin.ts`): users (block/unblock,
   per-user daily limit, delete), app settings stored in D1 `app_settings` (sign-ups open, default daily limit,
-  instructions added to every system prompt, tools disabled for everyone), provider status.
+  instructions added to every system prompt, tools disabled for everyone, show thinking notes to users), **Models**
+  (which models users may pick, with friendly names), provider status.
+- **Clean replies for users** (`src/worker/lib/present.ts`): what each viewer is sent. Admin: everything. Users: no
+  reasoning (unless the admin switch is on), tool names only (no inputs/results), no provider/model, no
+  provider-switch notices. Stored data is untouched. Local (Ollama) replies are shown as they are.
+- **Model list for users**: `userModels` in `app_settings`; enforced in `/api/chat` (403 `model_not_allowed`),
+  `/api/settings` and `/api/models` (users get only their list); a stale saved default becomes Auto.
+- **Time zone**: the browser sends `timeZone` (IANA) with each chat request; validated with `normalizeTimeZone`, used in
+  the system prompt ("user's current local date and time") and as the date tool's default. Not stored.
 - **Daily limit**: `user_usage_daily` counts messages per user per UTC day (atomic check-and-count before anything is
   written). Default 30; admins unlimited; local Ollama chats don't count.
 - Full design: `docs/ARCHITECTURE.md`. Deployment guide: `docs/DEPLOYMENT.md`.
@@ -70,8 +78,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | 5 Agent loop + tools + long-term memory + Tools/Memory settings | ✅ live (v0.5.0) |
 | Fix: tool task switching provider mid-way (Groq → Gemini) | ✅ pushed |
 | Math rendering (KaTeX → MathML, lazy-loaded) + stronger "use calculator" prompt | ✅ live (verified 2026-11-11) |
-| **6.0 Multi-user + admin** (Google sign-in, admin panel, daily limits, block, sign-ups switch) | ✅ built & tested locally (v0.6.0); **owner: Google setup + push + live check** |
-| **Next after 6.0: 6a web search, then admin-managed RAG knowledge base, then 6b GitHub** | ⏳ (agreed order) |
+| **6.0 Multi-user + admin** (Google sign-in, admin panel, daily limits, block, sign-ups switch) | ✅ live (v0.6.0, commit `41a770b`); Google setup done; live checks 1–2 passed (Google admin sign-in linked to the old account; admin panel) |
+| **6.1 Clean replies, model list, time zone, UI fixes** | ✅ built & tested locally (125 tests, browser 36/36 + 19/19); **owner: push, then finish live checks 3–8 + 6.1 items** |
+| **Next: 6a web search, then admin-managed RAG knowledge base, then 6b GitHub** | ⏳ (agreed order) |
 
 **Options (the roadmap PDF puts knowledge/reliability before integrations, so 6a comes first):**
 - **6b GitHub**: read repos/files/issues/PRs; create issues, comments and PRs behind an **Approve/Reject gate**
@@ -85,7 +94,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 120 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 125 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
@@ -94,6 +103,11 @@ Local `.env` for keyless dev: `ADMIN_GITHUB_USERS=<name>`, `DEV_LOGIN=true`, `WO
 Browser checks were done with headless Edge via `playwright-core` installed in a temp folder, not in the project.
 
 ## 7. Gotchas learned the hard way
+- **`git commit` → "could not open '.git/COMMIT_EDITMSG': Permission denied"** (2026-11-11): every file inside `.git`
+  had the Windows *Hidden* attribute, and git can't overwrite hidden files. Fix (in the project folder):
+  `attrib -h ".git\*" /s /d` (the `.git` folder itself stays hidden, which is normal).
+- **Focus styles live in `@layer base`** (styles.css). Unlayered CSS beats Tailwind utilities, so a global
+  `:focus-visible` rule outside the layer overrode `outline-none` and drew a box inside the message box.
 - **Database changes must never delete user data.** Migrations may only ADD (columns, tables, indexes).
   Never DROP or rebuild `users` or any table that others reference: D1 cascades the DROP into
   sessions/conversations/messages/memories even with `PRAGMA defer_foreign_keys = on` (tested 2026-11-11).

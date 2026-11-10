@@ -46,6 +46,8 @@ export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError
     }));
   }, [models, q]);
   const localVisible = (ollamaModels ?? []).filter((m) => !q || m.toLowerCase().includes(q));
+  // Regular users: only Auto plus the models the admin made available, by their friendly names.
+  const userModels = models?.userModels ?? null;
 
   const choose = (selection: string) => {
     onChange(selection);
@@ -84,6 +86,33 @@ export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError
 
       {open ? (
         <div className="absolute left-0 z-30 mt-1 w-[min(92vw,380px)] rounded-xl border border-[var(--border)] bg-[var(--bg)] p-1.5 shadow-xl">
+          {userModels ? (
+            <div className="max-h-[60vh] overflow-y-auto thin-scroll" role="listbox">
+              <button
+                type="button"
+                role="option"
+                aria-selected={value === "auto"}
+                onClick={() => choose("auto")}
+                className="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left hover:bg-[var(--bg-hover)]"
+              >
+                <Sparkles size={16} className="mt-0.5 shrink-0 text-[var(--accent)]" />
+                <span className="flex-1">
+                  <span className="block text-sm font-medium">Auto (recommended)</span>
+                  <span className="block text-xs text-[var(--text-soft)]">Picks the best available model for you.</span>
+                </span>
+                {value === "auto" ? <Check size={14} className="mt-1 text-[var(--accent)]" /> : null}
+              </button>
+              {userModels.map((m) => item(m.value, m.label))}
+              {ollamaModels !== null || ollamaError ? (
+                <div className="mt-1.5">
+                  <div className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--text-soft)]">On this device</div>
+                  {ollamaError ? <p className="px-2 pb-1 text-xs text-[var(--danger)]">{ollamaError}</p> : null}
+                  {(ollamaModels ?? []).map((m) => item(`ollama:${m}`, m, "local"))}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+          <>
           <div className="mb-1 flex items-center gap-1.5 px-1">
             <div className="flex flex-1 items-center gap-1.5 rounded-md bg-[var(--bg-soft)] px-2">
               <Search size={14} className="text-[var(--text-soft)]" />
@@ -159,6 +188,8 @@ export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError
               </div>
             ) : null}
           </div>
+          </>
+          )}
         </div>
       ) : null}
     </div>

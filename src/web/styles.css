@@ -51,6 +51,18 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Keyboard focus: a subtle accent ring instead of the browser's black box; none after mouse clicks.
+   In the base layer so components that opt out (e.g. the message box with `outline-none`) still win. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    outline-offset: 1px;
+  }
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+}
+
 /* ---------- Markdown rendering for assistant messages ---------- */
 .md {
   line-height: 1.7;

@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app-env";
+import { getAppSettings, userMayUseModel } from "../db/app-settings";
+import { getConfig } from "../env";
+import { presentMessage, viewerOf } from "../lib/present";
 import {
   deleteConversation,
   getConversation,
@@ -34,11 +37,16 @@ export const conversationRoutes = new Hono<AppEnv>()
   })
 
   .get("/:id", async (c) => {
+    const user = c.get("user");
     const id = parseId(c.req.param("id"));
-    const conversation = await getConversation(c.env.DB, c.get("user").id, id);
+    const conversation = await getConversation(c.env.DB, user.id, id);
     if (!conversation) throw notFound("Conversation");
-    const messages = await listMessages(c.env.DB, id);
-    return c.json({ conversation, messages });
+    const [messages, appSettings] = await Promise.all([listMessages(c.env.DB, id), getAppSettings(c.env.DB, getConfig(c.env))]);
+    const viewer = viewerOf(user, appSettings);
+    // A user's chat may remember a model that's no longer on their list; it continues with Auto.
+    const model =
+      viewer.admin || !conversation.model || userMayUseModel(appSettings, conversation.model) ? conversation.model : "auto";
+    return c.json({ conversation: { ...conversation, model }, messages: messages.map((m) => presentMessage(m, viewer)) });
   })
 
   .patch("/:id", async (c) => {

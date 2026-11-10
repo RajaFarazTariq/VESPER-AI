@@ -14,6 +14,8 @@ export const providerLabel = (id: string | null | undefined) => (id ? (PROVIDER_
 /** Short human label for a model selection like "groq:openai/gpt-oss-120b". */
 export function selectionLabel(selection: string, models?: ModelsResponse | null): string {
   if (selection === "auto") return "Auto (free)";
+  const friendly = models?.userModels?.find((m) => m.value === selection);
+  if (friendly) return friendly.label;
   const index = selection.indexOf(":");
   if (index < 0) return selection;
   const provider = selection.slice(0, index);

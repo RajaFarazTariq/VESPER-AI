@@ -4,21 +4,23 @@ A ChatGPT-style AI assistant for many users, managed by an administrator, that r
 and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, Mistral, Cloudflare Workers AI) with
 **automatic fallback** when a free limit is reached. Optional **local models** through Ollama.
 
-- 💬 Streaming chat with Markdown, code highlighting, tables, and collapsible model reasoning
-- 🛠️ Tool-using agent: exact calculator, date/time in any timezone, long-term memory (multi-step, streamed live)
+- 💬 Streaming chat with Markdown, code highlighting and tables; a **clean, ChatGPT-like view for users** (model
+  reasoning, tool details and model names are shown to the admin only)
+- 🛠️ Tool-using agent: exact calculator, date/time in **each user's own time zone**, long-term memory
 - 🧠 Long-term memory you control: view, add and delete in Settings → Memory
 - 🔁 Automatic free-provider fallback with cooldowns, retries and clear error messages
-- 🎛️ Manual model picker with live model lists from every provider
+- 🎛️ Model picker: users choose Auto or models the admin picked (with friendly names); the admin sees every live model
 - 🗂️ Conversation history stored in a cloud database (rename, delete, deep links, regenerate, stop)
 - 👥 Anyone can create an account with **Google sign-in**; no passwords stored
 - 🛡️ **Admin panel** for the owner: users (block, delete, personal daily limits), sign-ups open/closed, default
-  daily message limit, instructions for the assistant, tools on/off for everyone, provider status
+  daily message limit, instructions for the assistant, tools on/off for everyone, which models users may pick,
+  whether users see the model's thinking notes, provider status
 - 🔑 GitHub sign-in kept as a backup login for administrators only
 - 🖥️ Optional local models (Ollama) called directly from your browser
 - 🌗 Light/dark/system themes and a responsive mobile layout
 - 💸 **No paid services, no credit card, no automatic billing**
 
-> Status: **Phase 6.0 (multi-user accounts + admin panel) complete.** Web search, documents and integrations (GitHub,
+> Status: **Phase 6.1 (multi-user accounts, admin panel, clean user view, model list) complete.** Web search, documents and integrations (GitHub,
 > Gmail, Calendar, Telegram) come in later phases. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---

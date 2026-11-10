@@ -12,7 +12,7 @@ import { memoryRoutes, toolRoutes } from "./routes/memories";
 import { modelRoutes } from "./routes/models";
 import { settingsRoutes } from "./routes/settings";
 
-export const VERSION = "0.6.0";
+export const VERSION = "0.6.1";
 
 export const app = new Hono<AppEnv>();
 
