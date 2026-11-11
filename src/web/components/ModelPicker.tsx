@@ -11,11 +11,13 @@ interface Props {
   ollamaError: string | null;
   onRefresh: () => void;
   refreshing: boolean;
+  /** Open the list upward (when the picker sits inside the composer at the bottom). */
+  placement?: "down" | "up";
 }
 
 const formatContext = (n?: number) => (n ? (n >= 1000 ? `${Math.round(n / 1000)}K ctx` : `${n} ctx`) : "");
 
-export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError, onRefresh, refreshing }: Props) {
+export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError, onRefresh, refreshing, placement = "down" }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const root = useRef<HTMLDivElement>(null);
@@ -75,7 +77,10 @@ export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex max-w-[60vw] items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium hover:bg-[var(--bg-hover)] sm:max-w-xs"
+        className={`flex max-w-[52vw] items-center gap-1.5 rounded-full px-2.5 py-1.5 font-medium hover:bg-[var(--bg-hover)] sm:max-w-xs ${
+          placement === "up" ? "text-[13px] text-[var(--text-soft)] hover:text-[var(--text)]" : "text-sm"
+        }`}
+        title="Choose a model"
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -85,7 +90,11 @@ export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError
       </button>
 
       {open ? (
-        <div className="absolute left-0 z-30 mt-1 w-[min(92vw,380px)] rounded-xl border border-[var(--border)] bg-[var(--bg)] p-1.5 shadow-xl">
+        <div
+          className={`absolute left-0 z-30 w-[min(88vw,380px)] rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] p-1.5 shadow-[var(--shadow-lg)] ${
+            placement === "up" ? "bottom-full mb-2" : "mt-1"
+          }`}
+        >
           {userModels ? (
             <div className="max-h-[60vh] overflow-y-auto thin-scroll" role="listbox">
               <button

@@ -52,8 +52,8 @@ export const components: Components = {
     const language = /language-([\w+#-]+)/.exec(className)?.[1] ?? "text";
     return (
       <pre {...props}>
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-1 text-xs text-[var(--text-soft)]">
-          <span className="font-mono">{language}</span>
+        <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-soft)] py-1 pl-4 pr-1.5 text-xs text-[var(--text-soft)]">
+          <span className="font-mono text-[11.5px] tracking-wide">{language}</span>
           <CopyButton text={textOf(children).replace(/\n$/, "")} />
         </div>
         {children}

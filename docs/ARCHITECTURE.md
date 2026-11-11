@@ -162,6 +162,7 @@ tools are blocked once untrusted content is in context.
 | ✅ 6.0 | Multi-user: Google sign-up/sign-in, admin role, admin panel (users, block, limits, sign-ups, bot instructions, tools, providers), per-user daily limits | Google OAuth (free) |
 | ✅ 6.1 | Clean replies for users (no reasoning/tool details/model names; admin sees all; `lib/present.ts`), admin-picked model list with friendly names (enforced server-side), user's own time zone for dates, dialog/focus UI fixes | n/a |
 | ✅ 6a | Live information: web search (daily-capped), page reading, weather, Wikipedia, currency rates; source links under answers; web text treated as untrusted | Tavily free plan, Cloudflare HTMLRewriter, Open-Meteo, Wikipedia API, Frankfurter |
+| ✅ UI 0.8 | Redesign: design tokens (light/dark), new mark, sidebar (search, collapsible rail, account menu), welcome screen with tool-aware suggestions, composer with model picker + Tools, refined messages, Edit last message | — |
 | 6c-docs | File upload, PDF/DOCX parsing, admin-managed knowledge base (RAG) with citations | D1 blobs (R2 needs a card, so it's avoided), Workers AI embeddings + Vectorize free tier |
 | 6b | **GitHub** integration (repos, issues, PRs: read freely, write with approval) + the approval gate | GitHub REST API, incremental OAuth scopes |
 | 6c | **Gmail** (draft-first, send with approval), **Google Calendar** | Google APIs (free) via OAuth |

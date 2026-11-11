@@ -19,7 +19,8 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
   whether users see the model's thinking notes, provider status
 - 🔑 GitHub sign-in kept as a backup login for administrators only
 - 🖥️ Optional local models (Ollama) called directly from your browser
-- 🌗 Light/dark/system themes and a responsive mobile layout
+- 🌗 A polished, original interface: light/dark/system themes, chat search, collapsible sidebar, edit your last
+  message, source links under answers, and a responsive mobile layout
 - 💸 **No paid services, no credit card, no automatic billing**
 
 > Status: **Phase 6a (live information) complete**, on top of multi-user accounts and the admin panel. Documents /

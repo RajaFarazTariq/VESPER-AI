@@ -11,6 +11,7 @@ import {
   insertMessage,
   listMessages,
   updateConversation,
+  updateLastUserMessage,
 } from "../db/conversations";
 import { listMemories } from "../db/memories";
 import { D1ProviderStateStore } from "../db/provider-state";
@@ -39,11 +40,16 @@ const chatSchema = z
     message: z.string().max(MAX_MESSAGE_CHARS, `Messages are limited to ${MAX_MESSAGE_CHARS} characters.`).optional(),
     model: z.string().trim().min(1).max(250).optional(),
     regenerate: z.boolean().optional(),
+    /** Replace the last user message with `message` and answer it again. */
+    edit: z.boolean().optional(),
     /** The browser's IANA time zone, e.g. "Asia/Karachi". Unknown values are ignored (UTC is used). */
     timeZone: z.string().max(64).optional(),
   })
   .refine((d) => (d.regenerate ? Boolean(d.conversationId) : Boolean(d.message?.trim())), {
     message: "A non-empty message is required (or conversationId with regenerate).",
+  })
+  .refine((d) => !d.edit || (Boolean(d.conversationId) && !d.regenerate), {
+    message: "Editing needs a conversationId (and can't be combined with regenerate).",
   });
 
 const localCompleteSchema = z.object({
@@ -92,7 +98,7 @@ async function enforceDailyLimit(db: D1Database, user: SessionUser, defaultLimit
 async function prepareTurn(
   c: Context<AppEnv>,
   user: SessionUser,
-  input: { conversationId?: string; message?: string; regenerate?: boolean },
+  input: { conversationId?: string; message?: string; regenerate?: boolean; edit?: boolean },
   selection: string,
   extras: { tools: AgentTool[]; adminInstructions: string; timeZone: string | undefined },
 ): Promise<{ conversation: ConversationDto; isNew: boolean; userMessage: MessageDto; context: ReturnType<typeof buildContext> }> {
@@ -115,6 +121,12 @@ async function prepareTurn(
     const last = history[history.length - 1];
     if (!last || last.role !== "user") throw badRequest("There is no user message to regenerate a reply for.");
     userMessage = last;
+  } else if (input.edit) {
+    // Edit: the last user message gets the new text and the old reply is replaced.
+    await deleteTrailingAssistantMessages(db, conversation.id);
+    const edited = await updateLastUserMessage(db, conversation.id, input.message!.trim());
+    if (!edited) throw badRequest("There is no message to edit in this conversation.");
+    userMessage = edited;
   } else {
     userMessage = await insertMessage(db, conversation.id, { role: "user", content: input.message!.trim() });
   }

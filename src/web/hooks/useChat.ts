@@ -109,10 +109,18 @@ export function useChat(options: Options) {
 
   /** Cloud providers: stream through our API. Returns false if the message was rejected outright. */
   const runRemote = useCallback(
-    async (body: { conversationId?: string; message?: string; model: string; regenerate?: boolean }): Promise<boolean> => {
+    async (body: { conversationId?: string; message?: string; model: string; regenerate?: boolean; edit?: boolean }): Promise<boolean> => {
       const tempUserId = `local-user-${Date.now()}`;
       const assistantId = `local-assistant-${Date.now()}`;
+      let before: UiMessage[] = [];
       setMessages((prev) => {
+        before = prev;
+        if (body.edit) {
+          // Show the edited text at once; the server confirms it with a user_message event.
+          const base = withoutTrailingAssistant(prev);
+          const lastUser = base.length - 1;
+          return [...base.map((m, i) => (i === lastUser ? { ...m, content: body.message ?? m.content } : m)), placeholder(assistantId)];
+        }
         const base = body.regenerate ? withoutTrailingAssistant(prev) : prev;
         const user: UiMessage[] = body.message
           ? [{ ...placeholder(tempUserId), role: "user", content: body.message, streaming: false }]
@@ -134,7 +142,7 @@ export function useChat(options: Options) {
             optionsRef.current.onConversationCreated(event.conversation);
             break;
           case "user_message":
-            setMessages((prev) => prev.map((m) => (m.id === tempUserId ? event.message : m)));
+            setMessages((prev) => prev.map((m) => (m.id === tempUserId || m.id === event.message.id ? event.message : m)));
             break;
           case "attempt":
             patch(assistantId, (m) => ({ ...m, provider: event.provider, model: event.model }));
@@ -194,8 +202,8 @@ export function useChat(options: Options) {
         settle();
         const message = error instanceof ApiError ? error.message : "Something went wrong.";
         if (!started) {
-          // Rejected before anything was stored: undo the optimistic messages.
-          setMessages((prev) => prev.filter((m) => m.id !== assistantId && m.id !== tempUserId));
+          // Rejected before anything was stored: undo the optimistic change (an edit restores the old text and reply).
+          setMessages((prev) => (body.edit ? before : prev.filter((m) => m.id !== assistantId && m.id !== tempUserId)));
           optionsRef.current.onError(message);
           return false;
         }
@@ -212,7 +220,7 @@ export function useChat(options: Options) {
 
   /** Local Ollama models: the browser talks to Ollama, the server stores the turn. */
   const runLocal = useCallback(
-    async (body: { conversationId?: string; message?: string; model: string; regenerate?: boolean }): Promise<boolean> => {
+    async (body: { conversationId?: string; message?: string; model: string; regenerate?: boolean; edit?: boolean }): Promise<boolean> => {
       let prepared;
       try {
         prepared = await api.localPrepare(body);
@@ -227,7 +235,11 @@ export function useChat(options: Options) {
         optionsRef.current.onConversationCreated(prepared.conversation);
       }
       setMessages((prev) => {
-        const base = body.regenerate ? withoutTrailingAssistant(prev) : [...prev, prepared.userMessage];
+        const base = body.regenerate
+          ? withoutTrailingAssistant(prev)
+          : body.edit
+            ? withoutTrailingAssistant(prev).map((m) => (m.id === prepared.userMessage.id ? prepared.userMessage : m))
+            : [...prev, prepared.userMessage];
         return [...base, placeholder(assistantId, "ollama", modelName)];
       });
 
@@ -300,5 +312,15 @@ export function useChat(options: Options) {
     [conversationId, runLocal, runRemote],
   );
 
-  return { conversationId, messages, loading, streaming, send, regenerate, stop, load, reset };
+  /** Replace the last message you sent with new text and get a fresh answer. */
+  const edit = useCallback(
+    (text: string, model: string) => {
+      if (!conversationId) return Promise.resolve(false);
+      const body = { conversationId, message: text, edit: true, model };
+      return model.startsWith("ollama:") ? runLocal(body) : runRemote(body);
+    },
+    [conversationId, runLocal, runRemote],
+  );
+
+  return { conversationId, messages, loading, streaming, send, regenerate, edit, stop, load, reset };
 }

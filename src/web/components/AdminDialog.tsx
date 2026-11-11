@@ -41,14 +41,14 @@ export function AdminDialog({ currentUserId, models, refreshingModels, onRefresh
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 backdrop-blur-[3px] sm:items-center sm:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
         ref={dialog}
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="admin-title"
-        className="flex max-h-[92vh] w-full max-w-3xl flex-col rounded-t-2xl border border-[var(--border)] bg-[var(--bg)] shadow-2xl outline-none sm:rounded-2xl"
+        className="rise-in flex max-h-[92vh] w-full max-w-3xl flex-col rounded-t-3xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--shadow-lg)] outline-none sm:rounded-3xl"
       >
         <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-5 py-3">
           <h2 id="admin-title" className="text-lg font-semibold">

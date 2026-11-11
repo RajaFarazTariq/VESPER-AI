@@ -13,7 +13,7 @@ requirement: no paid services, no card on file, no paid fallback).
 | Owner | Raja Faraz Tariq (GitHub **RajaFarazTariq**). Personal project, not office work |
 | Repo | https://github.com/RajaFarazTariq/VESPER-AI (private, branch `main`) |
 | Live app | https://ai-assistant.vesper-ai.workers.dev |
-| Health check | https://ai-assistant.vesper-ai.workers.dev/api/health (expects `version` 0.7.0+) |
+| Health check | https://ai-assistant.vesper-ai.workers.dev/api/health (expects `version` 0.8.0+) |
 | Cloudflare | Free plan. Worker name `ai-assistant`, workers.dev subdomain `vesper-ai` |
 | D1 database | `ai-assistant`, id `726f21f4-8ef4-40b5-86ea-3676f2545c84` (not secret) |
 | Sign-in (everyone) | Google OAuth client, callback `https://ai-assistant.vesper-ai.workers.dev/api/auth/google/callback` (Google app in *Testing* mode: only listed test users can sign in) |
@@ -84,8 +84,24 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | Math rendering (KaTeX → MathML, lazy-loaded) + stronger "use calculator" prompt | ✅ live (verified 2026-11-11) |
 | **6.0 Multi-user + admin** (Google sign-in, admin panel, daily limits, block, sign-ups switch) | ✅ live (v0.6.0, commit `41a770b`); Google setup done; live checks 1–2 passed (Google admin sign-in linked to the old account; admin panel) |
 | **6.1 Clean replies, model list, time zone, UI fixes** | ✅ live (v0.6.1, commit `b41e514`); live checks 1–5 passed, 6 partly (counting), block / sign-ups / GitHub backup not yet re-checked live |
-| **6a Live information** (web search, read page, weather, Wikipedia, currency, sources) | ✅ built & tested locally (143 tests; browser 22/22 with the real keyless services); **owner: Tavily key → Cloudflare, push, live check** |
-| **Next: UI redesign (owner's brief, 2026-11-11), then admin-managed RAG knowledge base, then 6b GitHub** | ⏳ |
+| **6a Live information** (web search, read page, weather, Wikipedia, currency, sources) | ✅ live (v0.7.0, commit `758f0b0`); owner adding `TAVILY_API_KEY`; live check pending |
+| **UI redesign (v0.8.0)**: new design system, sidebar, welcome screen, composer, messages, Edit last message | ✅ built; typecheck/tests/build pass; short browser pass (desktop + mobile, light + dark); **owner: push** |
+| **Next: admin-managed RAG knowledge base, then 6b GitHub** | ⏳ |
+
+**Design system (v0.8.0)** — keep new UI consistent with it:
+- All colours, surfaces, borders and shadows are CSS variables in `src/web/styles.css` (`--bg`, `--bg-elevated`,
+  `--text-soft`, `--text-faint`, `--accent`, `--accent-soft`, `--accent-2`, `--user-bubble`, `--shadow-sm/md/lg`…),
+  defined for light (`:root`) and dark (`.dark`). Never hard-code colours in components.
+- Signature classes: `dusk-glow` (welcome/sign-in background), `dusk-text` (gradient greeting word), `shimmer-text`
+  ("Thinking…"), `rise-in` (entry animation). Animations are disabled for `prefers-reduced-motion`.
+- System fonts only (`--font-sans`, `--font-display`): the CSP allows fonts from the site itself, no web fonts.
+- Logo: `public/favicon.svg` (evening-star mark, indigo→violet). Radii: cards `rounded-2xl`, dialogs `rounded-3xl`,
+  composer `rounded-[26px]`, pills `rounded-full`.
+- Layout: `Sidebar.tsx` (search, date groups, collapsible rail saved in localStorage `vesper-sidebar-collapsed`,
+  account menu with Settings/Admin/Theme/Sign out); welcome screen + docked composer in `App.tsx`; `Composer.tsx`
+  holds the model picker (`placement="up"`) and `ToolsButton`; `MessageItem.tsx` (assistant mark, actions, Edit on
+  the last user message → `POST /api/chat` with `edit: true`).
+- Not built (no fake buttons): file/image upload, voice, projects, knowledge base, agents.
 
 **Options (the roadmap PDF puts knowledge/reliability before integrations, so 6a comes first):**
 - **6b GitHub**: read repos/files/issues/PRs; create issues, comments and PRs behind an **Approve/Reject gate**
@@ -99,7 +115,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 143 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 144 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
@@ -111,6 +127,9 @@ Browser checks were done with headless Edge via `playwright-core` installed in a
 - **`git commit` → "could not open '.git/COMMIT_EDITMSG': Permission denied"** (2026-11-11): every file inside `.git`
   had the Windows *Hidden* attribute, and git can't overwrite hidden files. Fix (in the project folder):
   `attrib -h ".git\*" /s /d` (the `.git` folder itself stays hidden, which is normal).
+- **Local `wrangler dev` returns 404 for `/` after `npm run build`/`npm run check`**: the build empties and recreates
+  `dist/`, and a running `wrangler dev` doesn't pick that up. Restart `wrangler dev` after building. (Not an issue in
+  production: deploys upload the built files.)
 - **Focus styles live in `@layer base`** (styles.css). Unlayered CSS beats Tailwind utilities, so a global
   `:focus-visible` rule outside the layer overrode `outline-none` and drew a box inside the message box.
 - **Database changes must never delete user data.** Migrations may only ADD (columns, tables, indexes).

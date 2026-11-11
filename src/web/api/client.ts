@@ -107,7 +107,7 @@ export const api = {
       request<{ settings: AppSettingsDto }>("/api/admin/settings", { method: "PUT", body: JSON.stringify(patch) }),
   },
 
-  localPrepare: (body: { conversationId?: string; message?: string; regenerate?: boolean; model: string }) =>
+  localPrepare: (body: { conversationId?: string; message?: string; regenerate?: boolean; edit?: boolean; model: string }) =>
     request<LocalPrepareResponse>("/api/chat/local/prepare", {
       method: "POST",
       body: JSON.stringify({ ...body, ...browserTimeZone() }),
@@ -127,7 +127,7 @@ export const api = {
  * Throws ApiError if the request is rejected before streaming starts.
  */
 export async function streamChat(
-  body: { conversationId?: string; message?: string; model: string; regenerate?: boolean },
+  body: { conversationId?: string; message?: string; model: string; regenerate?: boolean; edit?: boolean },
   onEvent: (event: ChatStreamEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {

@@ -46,11 +46,14 @@ export function LoginPage({ config, onSignedIn }: { config: PublicConfigDto; onS
   const [devError, setDevError] = useState<string | null>(null);
 
   return (
-    <main className="flex min-h-full items-center justify-center p-6">
-      <div className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--bg)] p-8 shadow-sm">
-        <img src="/favicon.svg" alt="" className="mx-auto h-12 w-12" />
-        <h1 className="mt-4 text-center text-2xl font-semibold">{config.appName}</h1>
-        <p className="mt-2 text-center text-sm text-[var(--text-soft)]">A multi-model AI assistant. Sign in or create an account to start chatting.</p>
+    <main className="relative flex min-h-full items-center justify-center overflow-hidden p-6">
+      <div className="dusk-glow pointer-events-none absolute inset-0" aria-hidden />
+      <div className="rise-in relative w-full max-w-sm rounded-3xl border border-[var(--border)] bg-[var(--bg-elevated)] p-8 shadow-[var(--shadow-lg)]">
+        <img src="/favicon.svg" alt="" className="mx-auto h-14 w-14 rounded-2xl shadow-[var(--shadow-md)]" />
+        <h1 className="mt-5 text-center font-[family-name:var(--font-display)] text-[28px] font-semibold tracking-tight">{config.appName}</h1>
+        <p className="mt-2 text-center text-[15px] leading-relaxed text-[var(--text-soft)]">
+          Your intelligent assistant for answers, research and everyday tasks. Sign in or create an account to start.
+        </p>
 
         {authError ? (
           <p role="alert" className="mt-5 rounded-lg bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
@@ -61,7 +64,7 @@ export function LoginPage({ config, onSignedIn }: { config: PublicConfigDto; onS
         {config.googleLogin ? (
           <a
             href="/api/auth/google/login"
-            className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-4 py-2.5 text-sm font-medium text-[#1f1f1f] hover:bg-gray-50"
+            className="mt-7 flex w-full items-center justify-center gap-2.5 rounded-xl border border-[var(--border-strong)] bg-white px-4 py-3 text-sm font-medium text-[#1f1f1f] shadow-[var(--shadow-sm)] transition-shadow hover:shadow-[var(--shadow-md)]"
           >
             <GoogleMark /> Continue with Google
           </a>

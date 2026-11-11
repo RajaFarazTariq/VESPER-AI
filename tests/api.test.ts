@@ -298,6 +298,25 @@ describe("chat", () => {
     ]);
   });
 
+  it("edits the last message: replaces its text and the old reply", async () => {
+    const cookie = await login();
+    let n = 0;
+    mockFetch(() => sseResponse([`reply ${++n}`]));
+    const first = await call("/api/chat", { method: "POST", body: JSON.stringify({ message: "original" }), cookie, env: PROVIDERS });
+    const conversationId = (parseEvents(first.text)[0] as Extract<ChatStreamEvent, { type: "conversation" }>).conversation.id;
+    const edited = await call("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ conversationId, message: "edited text", edit: true }),
+      cookie,
+      env: PROVIDERS,
+    });
+    expect(parseEvents(edited.text).at(-1)?.type).toBe("done");
+    const detail = await call(`/api/conversations/${conversationId}`, { cookie });
+    expect(detail.json.messages.map((m: { role: string; content: string }) => `${m.role}:${m.content}`)).toEqual(["user:edited text", "assistant:reply 2"]);
+    const bad = await call("/api/chat", { method: "POST", body: JSON.stringify({ message: "x", edit: true }), cookie, env: PROVIDERS });
+    expect(bad.response.status).toBe(400);
+  });
+
   it("returns 503 and creates nothing when no provider is configured", async () => {
     const cookie = await login();
     const { response, json } = await call("/api/chat", { method: "POST", body: JSON.stringify({ message: "hi" }), cookie });

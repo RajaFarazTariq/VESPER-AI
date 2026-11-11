@@ -7,9 +7,12 @@ import { explainOllamaError, listOllamaModels } from "../lib/ollama";
 import { getThemePreference, setThemePreference, type ThemePreference } from "../lib/theme";
 
 // Provider status moved to the admin panel (AdminDialog), since only the administrator manages keys.
-type Tab = "general" | "tools" | "memory" | "local" | "appearance";
+export type SettingsTab = "general" | "tools" | "memory" | "local" | "appearance";
+type Tab = SettingsTab;
 
 interface Props {
+  /** Which tab to show first (e.g. "tools" from the composer's Tools button). */
+  initialTab?: SettingsTab;
   settings: UserSettings;
   models: ModelsResponse | null;
   ollamaModels: string[] | null;
@@ -19,8 +22,8 @@ interface Props {
 
 const MAX_INSTRUCTIONS = 4000;
 
-export function SettingsDialog({ settings, models, ollamaModels, onClose, onSaved }: Props) {
-  const [tab, setTab] = useState<Tab>("general");
+export function SettingsDialog({ initialTab = "general", settings, models, ollamaModels, onClose, onSaved }: Props) {
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [draft, setDraft] = useState<UserSettings>(settings);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,14 +96,14 @@ export function SettingsDialog({ settings, models, ollamaModels, onClose, onSave
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 backdrop-blur-[3px] sm:items-center sm:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
         ref={dialog}
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
-        className="flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-2xl border border-[var(--border)] bg-[var(--bg)] shadow-2xl outline-none sm:rounded-2xl"
+        className="rise-in flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-3xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--shadow-lg)] outline-none sm:rounded-3xl"
       >
         <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-5 py-3">
           <h2 id="settings-title" className="text-lg font-semibold">

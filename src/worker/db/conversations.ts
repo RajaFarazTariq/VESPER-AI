@@ -216,6 +216,17 @@ export async function insertMessage(db: D1Database, conversationId: string, m: N
 }
 
 /** Remove assistant messages after the last user message (used by "regenerate"). */
+/**
+ * "Edit": replace the text of the conversation's last user message (its id and time stay the same).
+ * Call after deleteTrailingAssistantMessages, then generate a new reply. Returns null if there is none.
+ */
+export async function updateLastUserMessage(db: D1Database, conversationId: string, content: string): Promise<MessageDto | null> {
+  const last = (await listMessages(db, conversationId, 1))[0];
+  if (!last || last.role !== "user") return null;
+  await db.prepare("UPDATE messages SET content = ?1 WHERE id = ?2 AND conversation_id = ?3").bind(content, last.id, conversationId).run();
+  return { ...last, content };
+}
+
 export async function deleteTrailingAssistantMessages(db: D1Database, conversationId: string): Promise<void> {
   await db
     .prepare(

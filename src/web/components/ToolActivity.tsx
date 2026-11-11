@@ -2,7 +2,7 @@ import { BookOpen, Bookmark, BookmarkMinus, Calculator, ChevronRight, CircleAler
 import { useState } from "react";
 import type { SourceDto, ToolEventDto } from "../../shared/types";
 
-const ICONS: Record<string, typeof Wrench> = {
+export const TOOL_ICONS: Record<string, typeof Wrench> = {
   calculator: Calculator,
   current_datetime: Clock,
   remember: Bookmark,
@@ -61,7 +61,7 @@ export function SourceList({ sources }: { sources: SourceDto[] }) {
 
 function ToolRow({ tool }: { tool: ToolEventDto }) {
   const [open, setOpen] = useState(false);
-  const Icon = tool.status === "running" ? Loader2 : tool.status === "error" ? CircleAlert : (ICONS[tool.name] ?? Wrench);
+  const Icon = tool.status === "running" ? Loader2 : tool.status === "error" ? CircleAlert : (TOOL_ICONS[tool.name] ?? Wrench);
   const hasArgs = Object.keys(tool.args).length > 0;
   return (
     <div className="text-xs">
@@ -104,7 +104,7 @@ const PLAIN: Record<string, [running: string, done: string]> = {
 };
 
 function PlainToolLine({ tool }: { tool: ToolEventDto }) {
-  const Icon = tool.status === "running" ? Loader2 : tool.status === "error" ? CircleAlert : (ICONS[tool.name] ?? Wrench);
+  const Icon = tool.status === "running" ? Loader2 : tool.status === "error" ? CircleAlert : (TOOL_ICONS[tool.name] ?? Wrench);
   const [running, done] = PLAIN[tool.name] ?? [`${tool.label}…`, tool.label];
   const text = tool.status === "running" ? running : tool.status === "error" ? `${tool.label}: didn't work` : done;
   return (
