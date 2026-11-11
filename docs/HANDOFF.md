@@ -1,6 +1,52 @@
 # VESPER: handoff notes for a new working session
 
-Read this first when resuming work. Last updated: **2026-11-11**. No secrets are stored here.
+Read this first when resuming work. Last updated: **2026-11-11 (end of day)**. No secrets are stored here.
+
+## 0. ▶ Resume here (where we stopped on 2026-11-11)
+
+**State:** everything is pushed and live. GitHub `main` and the live site run **v0.8.0** (commit `940b218`, plus a
+small docs-only commit recording the deploy). Working tree clean except the owner's untracked roadmap PDF.
+
+**Done today, in order:** 6.0 multi-user + Google sign-in + admin panel (v0.6.0) → 6.1 clean user view, admin-picked
+model list, user time zone (v0.6.1) → 6a live information: web search, read page, weather, Wikipedia, currency with
+source links (v0.7.0) → full UI redesign (v0.8.0). Details per stage: section 5 below and docs/CONFIGURATION.md §7.
+
+**First thing to do next session (in this order):**
+1. Check the live health: `https://ai-assistant.vesper-ai.workers.dev/api/health` → expect `0.8.0`.
+2. Ask the owner whether he added the Cloudflare secret **`TAVILY_API_KEY`** (he said he would). He can see it in
+   Admin panel → App settings: "Used today: X of 30" means it's active; "Not active yet" means it's missing.
+3. **Live check with him, one step at a time** (send screenshots): the new UI with a real AI reply; web search
+   ("What are today's top tech news?" → sources under the answer); weather ("Weather in Lahore this week?");
+   currency; Wikipedia; the Edit button on his last message; user vs admin view (tester account in an Incognito window).
+4. Still never re-checked **live** (passed locally): Block / Unblock, Sign-ups open/closed switch, GitHub backup login.
+5. Then the next phase on the roadmap: **admin-managed knowledge base (RAG)**: the admin uploads documents, users
+   get answers with citations (Workers AI embeddings + Vectorize free tier; files in D1, since R2 needs a card).
+   Check current free limits first. After that: 6b GitHub integration (approval gate), then Gmail/Calendar/Telegram.
+
+**Open decisions / known limits:** Edit works on the last user message only; chat search matches loaded titles only;
+not built (so no buttons): file/image upload, voice, projects, knowledge base, agents. Open-Meteo's free tier is
+non-commercial (a public commercial launch would need their paid plan). Before opening the app to the public: check
+each AI provider's free-tier terms for serving other users (not done yet; fine for a few testers).
+
+**How the owner wants each task run (agreed in this session):**
+- Before starting: give a **numbered list of steps**; then report each step as done; say at once if a step fails
+  or is skipped; never work around problems quietly.
+- **Testing: minimal and to the point** (his explicit request): run only the essential checks for what changed,
+  fix obvious issues, report what's left. No exhaustive or repeated suites.
+- **Document every stage**: update this file, docs/CONFIGURATION.md (every setting/secret/service + the stage log)
+  and README/ARCHITECTURE as needed, and bump the version (`src/worker/version.ts`, package.json, package-lock.json).
+- He pushes himself. Give commands like:
+  `git add --all -- . ":(exclude)AI_Assistant_Feature_Roadmap.pdf"` → `git status` → `git commit -m "…"` →
+  `git -c credential.helper= push origin main` (git then asks Username `RajaFarazTariq` and the token as password).
+  Run them in the project folder, not in `C:\Projects` (his office projects live there).
+- After his push: watch `/api/health` until the new version shows, then confirm.
+- This is a **personal project**: don't save anything about it in the assistant's memory system; this file is the
+  memory. Don't touch his office work.
+
+**Local machine notes:** a wrangler dev server from 2026-11-10 still runs on port **8788** (not ours to stop).
+Browser test scripts and the mock sign-in server used this session lived in a temporary folder and are gone;
+recreate from the description in section 6 if needed (mock Google/GitHub OAuth + `npm run mock:llm`, then headless Edge
+via `playwright-core` installed outside the project).
 
 ## 1. What this is
 **VESPER** is the owner's ChatGPT-style AI assistant. Since v0.6.0 it's **multi-user**: anyone can sign up with
@@ -85,7 +131,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **6.0 Multi-user + admin** (Google sign-in, admin panel, daily limits, block, sign-ups switch) | ✅ live (v0.6.0, commit `41a770b`); Google setup done; live checks 1–2 passed (Google admin sign-in linked to the old account; admin panel) |
 | **6.1 Clean replies, model list, time zone, UI fixes** | ✅ live (v0.6.1, commit `b41e514`); live checks 1–5 passed, 6 partly (counting), block / sign-ups / GitHub backup not yet re-checked live |
 | **6a Live information** (web search, read page, weather, Wikipedia, currency, sources) | ✅ live (v0.7.0, commit `758f0b0`); owner adding `TAVILY_API_KEY`; live check pending |
-| **UI redesign (v0.8.0)**: new design system, sidebar, welcome screen, composer, messages, Edit last message | ✅ built; typecheck/tests/build pass; short browser pass (desktop + mobile, light + dark); **owner: push** |
+| **UI redesign (v0.8.0)**: new design system, sidebar, welcome screen, composer, messages, Edit last message | ✅ live (v0.8.0, commit `940b218`, verified 2026-11-11); live look with a real AI reply still to do |
 | **Next: admin-managed RAG knowledge base, then 6b GitHub** | ⏳ |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
