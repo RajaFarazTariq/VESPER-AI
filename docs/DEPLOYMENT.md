@@ -112,6 +112,7 @@ Get at least one; two or more make automatic fallback useful.
 | `GEMINI_API_KEY` | from Step 5 |
 | `OPENROUTER_API_KEY` | optional |
 | `MISTRAL_API_KEY` | optional |
+| `TAVILY_API_KEY` | optional: turns on web search. <https://app.tavily.com> → sign up (free, no card) → API keys → copy the `tvly-…` key |
 
 Click **Deploy** if the dashboard asks. Changes apply within seconds; no rebuild is needed. Later deployments from
 GitHub keep these values (`keep_vars` is set in `wrangler.jsonc`).

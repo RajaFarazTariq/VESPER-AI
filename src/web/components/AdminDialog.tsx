@@ -285,6 +285,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const [draft, setDraft] = useState<AppSettingsDto | null>(null);
   const [limitText, setLimitText] = useState("");
   const [tools, setTools] = useState<ToolInfoDto[]>([]);
+  const [searchText, setSearchText] = useState("");
+  const [webSearch, setWebSearch] = useState<{ keyConfigured: boolean; usedToday: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -294,7 +296,9 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         setSaved(r.settings);
         setDraft(r.settings);
         setLimitText(String(r.settings.defaultDailyLimit));
+        setSearchText(String(r.settings.webSearchDailyLimit));
         setTools(r.tools);
+        setWebSearch(r.webSearch);
       },
       (e: unknown) => setError(errorText(e, "Could not load settings.")),
     );
@@ -304,7 +308,13 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
 
   const limit = Number(limitText);
   const limitValid = limitText.trim() !== "" && Number.isInteger(limit) && limit >= 0 && limit <= 100_000;
-  const next: AppSettingsDto = { ...draft, defaultDailyLimit: limitValid ? limit : draft.defaultDailyLimit };
+  const searches = Number(searchText);
+  const searchValid = searchText.trim() !== "" && Number.isInteger(searches) && searches >= 0 && searches <= 1_000;
+  const next: AppSettingsDto = {
+    ...draft,
+    defaultDailyLimit: limitValid ? limit : draft.defaultDailyLimit,
+    webSearchDailyLimit: searchValid ? searches : draft.webSearchDailyLimit,
+  };
   const dirty = JSON.stringify(next) !== JSON.stringify(saved);
 
   const save = async () => {
@@ -317,6 +327,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       setSaved(settings);
       setDraft(settings);
       setLimitText(String(settings.defaultDailyLimit));
+      setSearchText(String(settings.webSearchDailyLimit));
       onNotice("App settings saved.", "info");
     } catch (e) {
       setError(errorText(e, "Could not save settings."));
@@ -361,6 +372,31 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
           {draft.botInstructions.length}/{MAX_INSTRUCTIONS}
         </div>
       </Field>
+      <Field
+        label="Web searches per day (whole app)"
+        hint="Shared by all users, admins included. Tavily's free plan is 1,000 searches a month, so 30 a day stays within it. 0 turns web search off. Resets at 00:00 UTC."
+      >
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            aria-label="Web searches per day"
+            className={`w-32 rounded-lg border bg-[var(--bg)] px-3 py-2 text-sm ${searchValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+          />
+          {webSearch ? (
+            webSearch.keyConfigured ? (
+              <span className="text-xs text-[var(--text-soft)]">
+                Used today: {webSearch.usedToday} of {saved.webSearchDailyLimit}
+              </span>
+            ) : (
+              <span className="text-xs text-amber-600 dark:text-amber-400">
+                Not active yet: add the <code>TAVILY_API_KEY</code> secret in Cloudflare.
+              </span>
+            )
+          ) : null}
+        </div>
+      </Field>
       <Field label="Tools available to everyone" hint="A tool switched off here is removed for all users, including you.">
         <div className="space-y-2">
           {tools.map((t) => (
@@ -376,6 +412,11 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
                 label={t.label}
                 hint={t.description}
               />
+              {!t.available ? (
+                <span className="ml-12 mt-1 inline-block rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-300">
+                  {t.name === "web_search" ? "Not available: needs the TAVILY_API_KEY secret (or searches per day is 0)" : "Not available on this server"}
+                </span>
+              ) : null}
             </div>
           ))}
         </div>
@@ -385,7 +426,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         <button
           type="button"
           onClick={() => void save()}
-          disabled={!dirty || !limitValid || saving}
+          disabled={!dirty || !limitValid || !searchValid || saving}
           className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-text)] disabled:opacity-40"
         >
           {saving ? "Saving…" : "Save"}

@@ -1,14 +1,14 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app-env";
-import { appSettingsSchema, getAppSettings, updateAppSettings } from "../db/app-settings";
+import { appSettingsSchema, getAppSettings, updateAppSettings, webSearchesToday } from "../db/app-settings";
 import { deleteUserSessions } from "../db/sessions";
 import { deleteUser, getUserById, getUserForAdmin, listUsersForAdmin, roleOf, updateUser } from "../db/users";
 import { getConfig } from "../env";
 import { AppError, notFound } from "../lib/errors";
 import { parseJson } from "../lib/validation";
 import { requireAdmin, requireUser } from "../middleware/auth";
-import { toolInfo } from "../tools/registry";
+import { toolInfo, webToolContext } from "../tools/registry";
 
 const userPatchSchema = z
   .object({
@@ -53,7 +53,19 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({ ok: true });
   })
 
-  .get("/settings", async (c) => c.json({ settings: await getAppSettings(c.env.DB, getConfig(c.env)), tools: toolInfo() }))
+  .get("/settings", async (c) => {
+    const config = getConfig(c.env);
+    const [settings, searchesUsed] = await Promise.all([getAppSettings(c.env.DB, config), webSearchesToday(c.env.DB)]);
+    const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, settings);
+    return c.json({
+      settings,
+      tools: toolInfo(web),
+      webSearch: {
+        keyConfigured: Boolean(web.tavilyApiKey),
+        usedToday: Math.min(searchesUsed, settings.webSearchDailyLimit),
+      },
+    });
+  })
 
   /** Partial update: only the fields sent are changed. */
   .put("/settings", async (c) => {

@@ -445,7 +445,17 @@ describe("phase 5: tools and memory over HTTP", () => {
     expect(done.message.tools?.[0]).toMatchObject({ name: "calculator", status: "done" });
 
     // The tool result went back to the model, and the system prompt mentions the tools.
-    expect(bodies[0].tools.map((t: any) => t.function.name)).toEqual(["calculator", "current_datetime", "remember", "forget"]);
+    // (No TAVILY_API_KEY in this test, so web_search isn't offered; the keyless live-information tools are.)
+    expect(bodies[0].tools.map((t: any) => t.function.name)).toEqual([
+      "calculator",
+      "current_datetime",
+      "remember",
+      "forget",
+      "read_page",
+      "weather",
+      "wikipedia",
+      "currency",
+    ]);
     expect(bodies[0].messages[0].content).toContain("Tools available");
     expect(bodies[1].messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: "call_1" });
 
@@ -528,7 +538,14 @@ describe("phase 5: tools and memory over HTTP", () => {
       ["current_datetime", "read"],
       ["remember", "write"],
       ["forget", "write"],
+      ["read_page", "read"],
+      ["weather", "read"],
+      ["wikipedia", "read"],
+      ["currency", "read"],
     ]);
+    // With a search key, web search is listed too.
+    const withKey = await call("/api/tools", { cookie, env: { TAVILY_API_KEY: "tvly-test" } });
+    expect(withKey.json.tools.map((t: any) => t.name)).toContain("web_search");
     const bad = await call("/api/settings", { method: "PUT", body: JSON.stringify({ disabledTools: "calculator" }), cookie });
     expect(bad.response.status).toBe(400);
     const ok = await call("/api/settings", { method: "PUT", body: JSON.stringify({ disabledTools: ["calculator"] }), cookie });

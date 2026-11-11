@@ -43,6 +43,12 @@ noted). Deploys from GitHub keep these, because `wrangler.jsonc` has `keep_vars:
 | `GEMINI_API_KEY` | Secret | AI provider #2 (Google Gemini free tier) | <https://aistudio.google.com/apikey> (Google AI Studio; keep it in a project **without billing**) | Phase 4 | Create a new key in AI Studio, save it here, delete the old key |
 | `APP_NAME` | Plain text | Name shown in the app and used in the assistant's instructions | `VESPER` | Phase 4 | Edit the value |
 
+### To add for v0.7.0 (live information)
+
+| Name | Type | What it does | Where it comes from | How to replace |
+|---|---|---|---|---|
+| `TAVILY_API_KEY` | Secret | Turns on **web search** for the assistant. Without it, web search is simply not offered (weather, Wikipedia, currency and page reading still work: they need no key) | <https://app.tavily.com> → API keys (free "Researcher" plan: 1,000 credits/month, no card; a basic search = 1 credit) | Create a new key in Tavily, save it here, delete the old key |
+
 ### Supported but not set (optional)
 
 | Name | What it would do | Default when not set |
@@ -84,6 +90,7 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 |---|---|---|
 | Sign-ups open | When off, nobody new can create an account; existing users still sign in | On |
 | Show the assistant's thinking notes to users | Off: users see only the answer (no "Reasoning" box). Tool use shows as one plain line ("Checked the date & time"); tool inputs/results and provider/model names are always hidden from users. Admins always see everything | Off |
+| Web searches per day (whole app) | Shared daily allowance for web search (all users, admins included), so Tavily's free 1,000/month can't run out. Shows "Used today: X of Y". 0 = web search off. Resets 00:00 UTC | 30 |
 | **Models** tab: models available to users | Users always have **Auto**; the admin adds up to 20 more, each with a friendly name (e.g. "Smart"). Users' model menu and Settings list only these; the server refuses any other model from a user. A user's saved default that is later removed becomes Auto | None (Auto only) |
 | Messages per user per day | Daily limit for everyone without a personal limit. Admins unlimited (but counted). Resets 00:00 UTC (05:00 PKT) | 30 |
 | Instructions for the assistant | Added to every user's conversations | Empty |
@@ -121,6 +128,16 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 - Groq (<https://console.groq.com>): free plan, no payment method.
 - Google AI Studio (<https://aistudio.google.com>): Gemini key in a project without billing.
 
+### Live-information services (v0.7.0; free terms checked 2026-11-11)
+| Service | Used for | Key | Free terms / notes |
+|---|---|---|---|
+| Tavily (<https://tavily.com>) | `web_search` | `TAVILY_API_KEY` | 1,000 credits/month, no card; basic search = 1 credit. Capped by "Web searches per day" (default 30) |
+| Direct fetch + Cloudflare HTMLRewriter | `read_page` | none | No third party. Only public http(s) pages; private/local addresses refused (every redirect re-checked); PDFs not supported |
+| Open-Meteo (<https://open-meteo.com>) | `weather` (geocoding + forecast) | none | Free for **non-commercial** use (10,000 calls/day); attribution required (CC BY 4.0), shown as a source. Commercial/public launch would need their paid plan |
+| Wikipedia (MediaWiki API + REST summary) | `wikipedia` | none | Free; requests identify the app with a User-Agent, as Wikimedia asks |
+| Frankfurter (<https://frankfurter.dev>) | `currency` | none | Free, no quotas; central-bank reference rates (`api.frankfurter.dev/v2`) |
+| Jina Reader | not used | — | Considered and dropped: keyless limit is 20 requests/minute **per IP**, and Cloudflare Workers share outgoing IPs |
+
 ---
 
 ## 6. Local office-PC items (temporary)
@@ -140,7 +157,8 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 | 2026-11-10 | Phase 5: tools + memory | Migration `0002_tools_and_memory.sql`. No new settings |
 | 2026-11-10 | Math rendering fix | No new settings |
 | 2026-11-11 | **Phase 6.0: multi-user + admin** | Google Cloud project VESPER-AI: Google Auth Platform configured (External, Testing), test users added, client "VESPER web" created. Worker secrets added: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, text `ADMIN_EMAILS`. Migration `0003_multi_user.sql` (add-only: new user columns, `app_settings`, `user_usage_daily`). New data-safety test guards every future migration. `ALLOWED_GITHUB_USERS` kept and now means "GitHub admins". Deployed as v0.6.0 (commit `41a770b`); live-checked: Google admin sign-in linked to the existing account, admin panel |
-| 2026-11-11 | **Phase 6.1: clean replies, model list, time zone** | No new Cloudflare/Google settings and no database migration. New admin-panel settings (stored in `app_settings`): "Show thinking notes to users" (default off) and the **Models** tab list (default empty = Auto only). The browser now sends its time zone name with each message (not stored). UI fixes: admin/settings tab bar no longer squashed; subtle keyboard focus ring |
+| 2026-11-11 | **Phase 6.1: clean replies, model list, time zone** | No new Cloudflare/Google settings and no database migration. New admin-panel settings (stored in `app_settings`): "Show thinking notes to users" (default off) and the **Models** tab list (default empty = Auto only). The browser now sends its time zone name with each message (not stored). UI fixes: admin/settings tab bar no longer squashed; subtle keyboard focus ring. Deployed as v0.6.1 (commit `b41e514`); live-checked: local date, memory, tester clean view, usage counting |
+| 2026-11-11 | **Phase 6a: live information** | New tools: web search (Tavily), read a page, weather (Open-Meteo), Wikipedia, currency (Frankfurter); answers show source links. New Cloudflare secret to add: `TAVILY_API_KEY`. New admin setting: "Web searches per day" (default 30). No database migration (the daily search counter uses the existing `rate_limits` table) |
 
 ---
 

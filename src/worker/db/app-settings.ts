@@ -23,6 +23,7 @@ export const appSettingsSchema = z.object({
     )
     .max(20)
     .refine((list) => new Set(list.map((m) => m.value)).size === list.length, "Each model can only be listed once"),
+  webSearchDailyLimit: z.number().int().min(0).max(1_000),
 });
 
 type Key = keyof AppSettingsDto;
@@ -36,7 +37,19 @@ export function defaultAppSettings(config: AppConfig): AppSettingsDto {
     disabledTools: [],
     showReasoningToUsers: false,
     userModels: [],
+    // Tavily's free plan is 1,000 searches a month: 30 a day stays under it.
+    webSearchDailyLimit: 30,
   };
+}
+
+/** Web searches already used today (UTC), from the shared counter the web_search tool increments. */
+export async function webSearchesToday(db: D1Database): Promise<number> {
+  const windowStart = Math.floor(Date.now() / 86_400_000) * 86_400_000;
+  const row = await db
+    .prepare("SELECT count, window_start FROM rate_limits WHERE key = ?1")
+    .bind("tool:web_search")
+    .first<{ count: number; window_start: number }>();
+  return row && row.window_start === windowStart ? row.count : 0;
 }
 
 /** Whether a regular user may use this model selection. Auto and local (browser-side) models are always allowed. */

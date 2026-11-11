@@ -99,7 +99,10 @@ export const api = {
     updateUser: (id: string, patch: { status?: "active" | "blocked"; dailyLimit?: number | null }) =>
       request<{ user: AdminUserDto }>(`/api/admin/users/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
     deleteUser: (id: string) => request<{ ok: true }>(`/api/admin/users/${encodeURIComponent(id)}`, { method: "DELETE" }),
-    settings: () => request<{ settings: AppSettingsDto; tools: ToolInfoDto[] }>("/api/admin/settings"),
+    settings: () =>
+      request<{ settings: AppSettingsDto; tools: ToolInfoDto[]; webSearch: { keyConfigured: boolean; usedToday: number } }>(
+        "/api/admin/settings",
+      ),
     updateSettings: (patch: Partial<AppSettingsDto>) =>
       request<{ settings: AppSettingsDto }>("/api/admin/settings", { method: "PUT", body: JSON.stringify(patch) }),
   },

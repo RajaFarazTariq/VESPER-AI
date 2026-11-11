@@ -49,8 +49,15 @@ async function runTool(
       throw new ToolInputError(parsed.error.issues.map((i) => `${i.path.join(".") || "args"}: ${i.message}`).join("; "));
     }
     const output = await tool.run(parsed.data, ctx);
+    const sources = (output.sources ?? []).filter((s) => /^https?:\/\//i.test(s.url)).slice(0, 10);
     return {
-      event: { ...base, args, status: "done", summary: output.summary.slice(0, 300) },
+      event: {
+        ...base,
+        args,
+        status: "done",
+        summary: output.summary.slice(0, 300),
+        ...(sources.length ? { sources: sources.map((s) => ({ title: s.title.slice(0, 200), url: s.url.slice(0, 2000) })) } : {}),
+      },
       content: output.content.slice(0, MAX_TOOL_RESULT_CHARS),
     };
   } catch (error) {

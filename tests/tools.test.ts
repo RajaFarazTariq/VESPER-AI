@@ -116,11 +116,15 @@ describe("tool-call streaming helpers", () => {
 
 describe("tool settings", () => {
   it("respects the master switch, per-tool switches and the memory switch", () => {
-    expect(enabledTools({ ...DEFAULT_SETTINGS }).map((t) => t.name)).toEqual(ALL_TOOLS.map((t) => t.name));
+    // Without a search key, web search isn't offered; with one, every tool is.
+    expect(enabledTools({ ...DEFAULT_SETTINGS }).map((t) => t.name)).toEqual(ALL_TOOLS.map((t) => t.name).filter((n) => n !== "web_search"));
+    const web = { userAgent: "test", tavilyApiKey: "k", webSearchDailyLimit: 30 };
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], web).map((t) => t.name)).toEqual(ALL_TOOLS.map((t) => t.name));
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { ...web, webSearchDailyLimit: 0 }).map((t) => t.name)).not.toContain("web_search");
     expect(enabledTools({ ...DEFAULT_SETTINGS, toolsEnabled: false })).toEqual([]);
     expect(enabledTools({ ...DEFAULT_SETTINGS, disabledTools: ["calculator"] }).map((t) => t.name)).not.toContain("calculator");
     const noMemory = enabledTools({ ...DEFAULT_SETTINGS, memoryEnabled: false }).map((t) => t.name);
-    expect(noMemory).toEqual(["calculator", "current_datetime"]);
+    expect(noMemory).toEqual(["calculator", "current_datetime", "read_page", "weather", "wikipedia", "currency"]);
   });
 
   it("puts memories and tool guidance into the system prompt", () => {
@@ -259,7 +263,7 @@ describe("runAgent", () => {
     const loop: Turn[] = Array.from({ length: 10 }, () => ({ calls: [call("current_datetime", {})] }));
     const groq = new ScriptedProvider("groq", loop);
     await agent([groq], { maxRounds: 2 });
-    expect(groq.requests.map((r) => r.tools?.length ?? 0)).toEqual([4, 4, 0]);
+    expect(groq.requests.map((r) => r.tools?.length ?? 0)).toEqual([ALL_TOOLS.length, ALL_TOOLS.length, 0]);
   });
 
   it("falls back mid-task and gives a tool-less provider a flattened transcript", async () => {

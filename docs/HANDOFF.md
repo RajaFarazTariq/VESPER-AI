@@ -13,7 +13,7 @@ requirement: no paid services, no card on file, no paid fallback).
 | Owner | Raja Faraz Tariq (GitHub **RajaFarazTariq**). Personal project, not office work |
 | Repo | https://github.com/RajaFarazTariq/VESPER-AI (private, branch `main`) |
 | Live app | https://ai-assistant.vesper-ai.workers.dev |
-| Health check | https://ai-assistant.vesper-ai.workers.dev/api/health (expects `version` 0.6.1+) |
+| Health check | https://ai-assistant.vesper-ai.workers.dev/api/health (expects `version` 0.7.0+) |
 | Cloudflare | Free plan. Worker name `ai-assistant`, workers.dev subdomain `vesper-ai` |
 | D1 database | `ai-assistant`, id `726f21f4-8ef4-40b5-86ea-3676f2545c84` (not secret) |
 | Sign-in (everyone) | Google OAuth client, callback `https://ai-assistant.vesper-ai.workers.dev/api/auth/google/callback` (Google app in *Testing* mode: only listed test users can sign in) |
@@ -37,8 +37,12 @@ requirement: no paid services, no card on file, no paid fallback).
 - **Router** (`src/worker/llm/router.ts`): plans auto/manual routes and retries transient errors once. Rate-limit and quota
   errors fall back to the next provider, with cooldowns stored in D1 (`provider_state`) and usage in `usage_daily`.
 - **Agent loop** (`src/worker/llm/agent.ts`): model → tools → model, max 5 rounds; the last round offers no tools.
-- **Tools** (`src/worker/tools/`): `calculator` (own safe parser), `current_datetime`, `remember`, `forget`.
-  Risk levels: `read` / `write` (own data).
+- **Tools** (`src/worker/tools/`): `calculator` (own safe parser), `current_datetime`, `remember`, `forget`, and since
+  v0.7.0 the live-information tools in `web.ts`: `web_search` (Tavily, needs `TAVILY_API_KEY`, capped per day),
+  `read_page` (direct fetch + HTMLRewriter), `weather` (Open-Meteo), `wikipedia`, `currency` (Frankfurter).
+  Outbound requests go through `net.ts` (timeouts, size caps, User-Agent, public-URL check on every redirect hop);
+  web text is wrapped as untrusted. Tools return `sources`, shown as links under answers (to users too).
+  Shared tool types are in `types.ts` (keeps registry ↔ tool files free of circular imports). Risk levels: `read` / `write` (own data).
 - **Memory**: `memories` table, injected into the system prompt; managed in Settings → Memory.
 - **Auth**: Google OAuth for everyone (open sign-up; admin can close sign-ups), GitHub OAuth for admins only. Admin role
   = verified email in `ADMIN_EMAILS` or GitHub username in `ADMIN_GITHUB_USERS` (falls back to the old
@@ -79,8 +83,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | Fix: tool task switching provider mid-way (Groq → Gemini) | ✅ pushed |
 | Math rendering (KaTeX → MathML, lazy-loaded) + stronger "use calculator" prompt | ✅ live (verified 2026-11-11) |
 | **6.0 Multi-user + admin** (Google sign-in, admin panel, daily limits, block, sign-ups switch) | ✅ live (v0.6.0, commit `41a770b`); Google setup done; live checks 1–2 passed (Google admin sign-in linked to the old account; admin panel) |
-| **6.1 Clean replies, model list, time zone, UI fixes** | ✅ built & tested locally (125 tests, browser 36/36 + 19/19); **owner: push, then finish live checks 3–8 + 6.1 items** |
-| **Next: 6a web search, then admin-managed RAG knowledge base, then 6b GitHub** | ⏳ (agreed order) |
+| **6.1 Clean replies, model list, time zone, UI fixes** | ✅ live (v0.6.1, commit `b41e514`); live checks 1–5 passed, 6 partly (counting), block / sign-ups / GitHub backup not yet re-checked live |
+| **6a Live information** (web search, read page, weather, Wikipedia, currency, sources) | ✅ built & tested locally (143 tests; browser 22/22 with the real keyless services); **owner: Tavily key → Cloudflare, push, live check** |
+| **Next: UI redesign (owner's brief, 2026-11-11), then admin-managed RAG knowledge base, then 6b GitHub** | ⏳ |
 
 **Options (the roadmap PDF puts knowledge/reliability before integrations, so 6a comes first):**
 - **6b GitHub**: read repos/files/issues/PRs; create issues, comments and PRs behind an **Approve/Reject gate**
@@ -94,7 +99,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 125 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 143 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

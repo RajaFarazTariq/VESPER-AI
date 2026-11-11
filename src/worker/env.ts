@@ -33,6 +33,10 @@ export interface Env {
   OPENROUTER_API_KEY?: string;
   MISTRAL_API_KEY?: string;
 
+  // --- Live information (optional) ---
+  /** Tavily web search (free plan: 1,000 credits/month). Without it, web search is simply not offered. */
+  TAVILY_API_KEY?: string;
+
   // --- Optional tuning ---
   APP_NAME?: string;
   PROVIDER_ORDER?: string;

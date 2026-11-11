@@ -25,7 +25,7 @@ import { presentEvent, presentMessage, viewerOf } from "../lib/present";
 import { getProviders } from "../llm/registry";
 import { runAgent } from "../llm/agent";
 import { planRoute } from "../llm/router";
-import { enabledTools, type AgentTool } from "../tools/registry";
+import { enabledTools, webToolContext, type AgentTool } from "../tools/registry";
 import { requireUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/security";
 
@@ -180,7 +180,8 @@ export const chatRoutes = new Hono<AppEnv>()
     // and before anything is written, so a refused message leaves no half-created chat.
     await enforceDailyLimit(c.env.DB, user, appSettings.defaultDailyLimit);
 
-    const tools = enabledTools(user.settings, appSettings.disabledTools);
+    const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, appSettings);
+    const tools = enabledTools(user.settings, appSettings.disabledTools, web);
     const timeZone = normalizeTimeZone(body.timeZone);
     const turn = await prepareTurn(c, user, body, selection, { tools, adminInstructions: appSettings.botInstructions, timeZone });
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
@@ -216,7 +217,15 @@ export const chatRoutes = new Hono<AppEnv>()
           providers,
           messages: turn.context,
           tools,
-          toolContext: { db: c.env.DB, userId: user.id, settings: user.settings, now: new Date(), ...(timeZone ? { timeZone } : {}) },
+          toolContext: {
+            db: c.env.DB,
+            userId: user.id,
+            settings: user.settings,
+            now: new Date(),
+            web,
+            signal: abort.signal,
+            ...(timeZone ? { timeZone } : {}),
+          },
           maxTokens: config.maxOutputTokens,
           signal: abort.signal,
           store,

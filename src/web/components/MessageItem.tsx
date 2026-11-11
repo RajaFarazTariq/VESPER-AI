@@ -3,7 +3,7 @@ import { memo, useState } from "react";
 import type { UiMessage } from "../hooks/useChat";
 import { providerLabel } from "../lib/format";
 import { CopyButton, Markdown } from "./Markdown";
-import { ToolActivity } from "./ToolActivity";
+import { collectSources, SourceList, ToolActivity } from "./ToolActivity";
 
 interface Props {
   message: UiMessage;
@@ -55,6 +55,8 @@ export const MessageItem = memo(function MessageItem({ message, isLast, canRetry
           <Markdown text={message.content} />
         </div>
       ) : null}
+
+      {!message.streaming ? <SourceList sources={collectSources(message.tools)} /> : null}
 
       {failed && message.error ? (
         <div className="flex flex-col gap-2 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/5 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">

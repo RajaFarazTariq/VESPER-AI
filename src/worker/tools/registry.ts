@@ -1,45 +1,13 @@
 import { z } from "zod";
-import type { ToolInfoDto, UserSettings } from "../../shared/types";
+import type { AppSettingsDto, ToolInfoDto, UserSettings } from "../../shared/types";
+import { VERSION } from "../version";
 import { addMemory, deleteMemory, MemoryLimitError } from "../db/memories";
 import { CalcError, evaluate } from "./calculator";
+import { define, ToolInputError, type AgentTool, type WebToolContext } from "./types";
+import { WEB_TOOLS } from "./web";
 
-export interface ToolContext {
-  db: D1Database;
-  userId: string;
-  settings: UserSettings;
-  now: Date;
-  /** The user's IANA time zone from their browser (validated), used as the default for date/time. */
-  timeZone?: string;
-}
-
-export interface ToolOutput {
-  /** What the model sees. */
-  content: string;
-  /** One line for the UI. */
-  summary: string;
-}
-
-/** A tool the model may call. Parameters are plain JSON Schema (portable across providers). */
-export interface AgentTool {
-  name: string;
-  label: string;
-  description: string;
-  risk: "read" | "write";
-  requiresMemory: boolean;
-  parameters: Record<string, unknown>;
-  schema: z.ZodType;
-  run(args: unknown, ctx: ToolContext): Promise<ToolOutput>;
-}
-
-/** A tool failure the model should see and can recover from (bad input, not found…). */
-export class ToolInputError extends Error {}
-
-function define<S extends z.ZodType>(tool: Omit<AgentTool, "schema" | "run"> & {
-  schema: S;
-  run(args: z.infer<S>, ctx: ToolContext): Promise<ToolOutput>;
-}): AgentTool {
-  return tool as unknown as AgentTool;
-}
+// Shared types live in ./types; re-exported so existing imports keep working.
+export { ToolInputError, type AgentTool, type ToolContext, type ToolOutput, type WebToolContext } from "./types";
 
 const calculator = define({
   name: "calculator",
@@ -150,14 +118,41 @@ const forget = define({
   },
 });
 
-export const ALL_TOOLS: AgentTool[] = [calculator, datetime, remember, forget];
+export const ALL_TOOLS: AgentTool[] = [calculator, datetime, remember, forget, ...WEB_TOOLS];
 
-export const toolInfo = (): ToolInfoDto[] =>
-  ALL_TOOLS.map((t) => ({ name: t.name, label: t.label, description: t.description, risk: t.risk, requiresMemory: t.requiresMemory }));
+const isAvailable = (t: AgentTool, web: WebToolContext | undefined) => (t.isAvailable ? t.isAvailable(web) : true);
 
-/** Tools available for this user's settings, minus any the admin switched off for everyone. */
-export function enabledTools(settings: UserSettings, disabledForEveryone: readonly string[] = []): AgentTool[] {
+/** What the live-information tools need: request identity, the search key (if set) and today's cap. */
+export function webToolContext(
+  env: { TAVILY_API_KEY?: string },
+  appName: string,
+  origin: string,
+  settings: Pick<AppSettingsDto, "webSearchDailyLimit">,
+): WebToolContext {
+  const key = env.TAVILY_API_KEY?.trim();
+  return {
+    userAgent: `${appName.replace(/[^\w.-]/g, "") || "Assistant"}/${VERSION} (+${origin})`,
+    ...(key ? { tavilyApiKey: key } : {}),
+    webSearchDailyLimit: settings.webSearchDailyLimit,
+  };
+}
+
+/** Every tool, with whether it can run on this server (e.g. web search needs TAVILY_API_KEY). */
+export const toolInfo = (web?: WebToolContext): ToolInfoDto[] =>
+  ALL_TOOLS.map((t) => ({
+    name: t.name,
+    label: t.label,
+    description: t.description,
+    risk: t.risk,
+    requiresMemory: t.requiresMemory,
+    available: isAvailable(t, web),
+  }));
+
+/** Tools offered this turn: the user's choices, minus any the admin switched off, minus unavailable ones. */
+export function enabledTools(settings: UserSettings, disabledForEveryone: readonly string[] = [], web?: WebToolContext): AgentTool[] {
   if (!settings.toolsEnabled) return [];
   const disabled = new Set([...settings.disabledTools, ...disabledForEveryone]);
-  return ALL_TOOLS.filter((t) => !disabled.has(t.name) && (!t.requiresMemory || settings.memoryEnabled));
+  return ALL_TOOLS.filter(
+    (t) => !disabled.has(t.name) && (!t.requiresMemory || settings.memoryEnabled) && isAvailable(t, web),
+  );
 }

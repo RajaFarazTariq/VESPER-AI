@@ -1,13 +1,63 @@
-import { Bookmark, BookmarkMinus, Calculator, ChevronRight, CircleAlert, Clock, Loader2, Wrench } from "lucide-react";
+import { BookOpen, Bookmark, BookmarkMinus, Calculator, ChevronRight, CircleAlert, Clock, CloudSun, Coins, FileText, Loader2, Search, Wrench } from "lucide-react";
 import { useState } from "react";
-import type { ToolEventDto } from "../../shared/types";
+import type { SourceDto, ToolEventDto } from "../../shared/types";
 
 const ICONS: Record<string, typeof Wrench> = {
   calculator: Calculator,
   current_datetime: Clock,
   remember: Bookmark,
   forget: BookmarkMinus,
+  web_search: Search,
+  read_page: FileText,
+  weather: CloudSun,
+  wikipedia: BookOpen,
+  currency: Coins,
 };
+
+/** Every source used for a reply, once each, in the order the tools found them. */
+export function collectSources(tools: ToolEventDto[] | null | undefined): SourceDto[] {
+  const seen = new Set<string>();
+  const out: SourceDto[] = [];
+  for (const tool of tools ?? []) {
+    for (const source of tool.sources ?? []) {
+      if (!/^https?:\/\//i.test(source.url) || seen.has(source.url)) continue;
+      seen.add(source.url);
+      out.push(source);
+    }
+  }
+  return out;
+}
+
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+};
+
+/** Numbered source links under an answer (shown to everyone). */
+export function SourceList({ sources }: { sources: SourceDto[] }) {
+  if (sources.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs" aria-label="Sources">
+      <span className="text-[var(--text-soft)]">Sources:</span>
+      {sources.map((s, i) => (
+        <a
+          key={s.url}
+          href={s.url}
+          target="_blank"
+          rel="noopener noreferrer nofollow"
+          title={`${s.title}\n${s.url}`}
+          className="inline-flex max-w-[16rem] items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+        >
+          <span className="shrink-0 font-medium">{i + 1}</span>
+          <span className="truncate">{hostOf(s.url)}</span>
+        </a>
+      ))}
+    </div>
+  );
+}
 
 function ToolRow({ tool }: { tool: ToolEventDto }) {
   const [open, setOpen] = useState(false);
@@ -46,6 +96,11 @@ const PLAIN: Record<string, [running: string, done: string]> = {
   current_datetime: ["Checking the date & time…", "Checked the date & time"],
   remember: ["Saving to memory…", "Saved to memory"],
   forget: ["Updating memory…", "Removed from memory"],
+  web_search: ["Searching the web…", "Searched the web"],
+  read_page: ["Reading a page…", "Read a page"],
+  weather: ["Checking the weather…", "Checked the weather"],
+  wikipedia: ["Looking it up on Wikipedia…", "Looked it up on Wikipedia"],
+  currency: ["Checking exchange rates…", "Checked exchange rates"],
 };
 
 function PlainToolLine({ tool }: { tool: ToolEventDto }) {

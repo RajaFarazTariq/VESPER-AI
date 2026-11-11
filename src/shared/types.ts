@@ -50,6 +50,8 @@ export interface AppSettingsDto {
   showReasoningToUsers: boolean;
   /** Models regular users may pick (besides Auto), with friendly names. Admins can pick any model. */
   userModels: UserModelOption[];
+  /** Web searches allowed per UTC day for the whole app (protects the free search quota). 0 = web search off. */
+  webSearchDailyLimit: number;
 }
 
 /** A model the admin made available to users, e.g. { value: "groq:openai/gpt-oss-120b", label: "Smart" }. */
@@ -95,6 +97,14 @@ export interface ToolEventDto {
   status: "running" | "done" | "error";
   /** Short human-readable outcome shown in the UI. */
   summary: string | null;
+  /** Where the information came from (web pages, Wikipedia, weather/currency services). Shown to everyone. */
+  sources?: SourceDto[];
+}
+
+/** A cited source: shown as a numbered link under the answer. */
+export interface SourceDto {
+  title: string;
+  url: string;
 }
 
 /** A tool as listed in Settings. */
@@ -105,6 +115,8 @@ export interface ToolInfoDto {
   /** "read": only looks things up. "write": changes data in your own account. */
   risk: "read" | "write";
   requiresMemory: boolean;
+  /** False when the server lacks what it needs (e.g. web search without TAVILY_API_KEY). */
+  available: boolean;
 }
 
 export interface MemoryDto {

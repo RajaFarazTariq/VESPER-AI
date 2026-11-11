@@ -11,8 +11,9 @@ import { conversationRoutes } from "./routes/conversations";
 import { memoryRoutes, toolRoutes } from "./routes/memories";
 import { modelRoutes } from "./routes/models";
 import { settingsRoutes } from "./routes/settings";
+import { VERSION } from "./version";
 
-export const VERSION = "0.6.1";
+export { VERSION };
 
 export const app = new Hono<AppEnv>();
 

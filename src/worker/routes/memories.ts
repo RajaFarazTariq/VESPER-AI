@@ -7,7 +7,7 @@ import { addMemory, deleteAllMemories, deleteMemory, listMemories, MAX_MEMORY_CH
 import { AppError, notFound } from "../lib/errors";
 import { parseJson } from "../lib/validation";
 import { requireUser } from "../middleware/auth";
-import { toolInfo } from "../tools/registry";
+import { toolInfo, webToolContext } from "../tools/registry";
 
 export const memoryRoutes = new Hono<AppEnv>()
   .use(requireUser)
@@ -33,8 +33,10 @@ export const memoryRoutes = new Hono<AppEnv>()
 
   .delete("/", async (c) => c.json({ deleted: await deleteAllMemories(c.env.DB, c.get("user").id) }));
 
-/** Tools users can switch on/off in Settings; tools the admin disabled for everyone aren't listed. */
+/** Tools users can switch on/off in Settings; tools the admin disabled or that can't run here aren't listed. */
 export const toolRoutes = new Hono<AppEnv>().use(requireUser).get("/", async (c) => {
-  const { disabledTools } = await getAppSettings(c.env.DB, getConfig(c.env));
-  return c.json({ tools: toolInfo().filter((t) => !disabledTools.includes(t.name)) });
+  const config = getConfig(c.env);
+  const settings = await getAppSettings(c.env.DB, config);
+  const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, settings);
+  return c.json({ tools: toolInfo(web).filter((t) => t.available && !settings.disabledTools.includes(t.name)) });
 });

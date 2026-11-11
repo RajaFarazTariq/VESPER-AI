@@ -7,6 +7,8 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
 - 💬 Streaming chat with Markdown, code highlighting and tables; a **clean, ChatGPT-like view for users** (model
   reasoning, tool details and model names are shown to the admin only)
 - 🛠️ Tool-using agent: exact calculator, date/time in **each user's own time zone**, long-term memory
+- 🌐 **Live information** with source links: web search (Tavily, free plan, daily-capped), reading web pages,
+  weather (Open-Meteo), Wikipedia, and currency rates (Frankfurter); web content is treated as untrusted data
 - 🧠 Long-term memory you control: view, add and delete in Settings → Memory
 - 🔁 Automatic free-provider fallback with cooldowns, retries and clear error messages
 - 🎛️ Model picker: users choose Auto or models the admin picked (with friendly names); the admin sees every live model
@@ -20,8 +22,8 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
 - 🌗 Light/dark/system themes and a responsive mobile layout
 - 💸 **No paid services, no credit card, no automatic billing**
 
-> Status: **Phase 6.1 (multi-user accounts, admin panel, clean user view, model list) complete.** Web search, documents and integrations (GitHub,
-> Gmail, Calendar, Telegram) come in later phases. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> Status: **Phase 6a (live information) complete**, on top of multi-user accounts and the admin panel. Documents /
+> knowledge base and integrations (GitHub, Gmail, Calendar, Telegram) come in later phases. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
@@ -112,6 +114,7 @@ Settings → Variables and Secrets** (type *Secret* for anything sensitive). Loc
 | `GEMINI_API_KEY` | recommended | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 | `OPENROUTER_API_KEY` | optional | [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
 | `MISTRAL_API_KEY` | optional | [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys) |
+| `TAVILY_API_KEY` | optional | Turns on web search: [app.tavily.com](https://app.tavily.com) (free 1,000 searches/month; capped per day in the admin panel) |
 | `APP_NAME` | no | Display name (default `Assistant`) |
 | `PROVIDER_ORDER` | no | Auto-fallback order (default `groq,gemini,openrouter,mistral,workers-ai`) |
 | `GROQ_MODEL`, `GEMINI_MODEL`, `OPENROUTER_MODEL`, `MISTRAL_MODEL`, `WORKERS_AI_MODEL` | no | Default model per provider used by Auto |
