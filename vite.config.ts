@@ -16,8 +16,10 @@ export default defineConfig({
   server: {
     port: 5173,
     // During development the API runs in `wrangler dev` on port 8787.
+    // The web app's own source in src/web/api/ is also served under /api/ (e.g. /api/client.ts),
+    // so .ts/.tsx module requests stay with Vite; everything else under /api/ goes to the Worker.
     proxy: {
-      "/api": { target: "http://127.0.0.1:8787", changeOrigin: false },
+      "^/api/(?!.*\\.tsx?(?:\\?|$))": { target: "http://127.0.0.1:8787", changeOrigin: false },
     },
   },
 });

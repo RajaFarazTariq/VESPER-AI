@@ -159,6 +159,46 @@ body {
   }
 }
 
+/* ---------- Sign-in page ----------
+ * Split layout. The form side follows the app theme (tokens above). The brand panel, shown on wide
+ * screens only, is always dark: the logo inside fine orbit lines. Static, no decorative animation. */
+.auth-showcase {
+  --sc-bg: #0b0b10;
+  --sc-text: #ececf3;
+  --sc-soft: #a3a3b6;
+  --sc-ring: #ffffff;
+  --sc-accent: #a197ff;
+  background:
+    radial-gradient(70% 55% at 50% 42%, rgb(91 76 240 / 0.1), transparent 70%),
+    var(--sc-bg);
+  color: var(--sc-text);
+  color-scheme: dark;
+}
+.auth-orbit {
+  fill: none;
+  stroke: var(--sc-ring);
+  stroke-width: 1;
+}
+.auth-orbit-1 {
+  stroke-opacity: 0.13;
+}
+.auth-orbit-2 {
+  stroke-opacity: 0.08;
+}
+.auth-orbit-3 {
+  stroke-opacity: 0.06;
+  stroke-dasharray: 2 6;
+}
+.auth-planet {
+  fill: var(--sc-accent);
+}
+.auth-planet-faint {
+  fill-opacity: 0.45;
+}
+.auth-halo {
+  background: radial-gradient(closest-side, rgb(91 76 240 / 0.38), rgb(177 76 232 / 0.1) 60%, transparent);
+}
+
 /* ---------- Markdown rendering for assistant messages ---------- */
 .md {
   line-height: 1.75;

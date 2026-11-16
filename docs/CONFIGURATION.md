@@ -146,6 +146,7 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 |---|---|---|
 | GitHub fine-grained access token (VESPER-AI repo only) | **Not stored on the PC.** The owner keeps it elsewhere and supplies it at push time: `git -c credential.helper= push https://<TOKEN>@github.com/RajaFarazTariq/VESPER-AI.git main` (the `-c credential.helper=` part stops Windows' Git Credential Manager from silently saving the token) | Since 2026-11-11 the `origin` URL is plain `https://github.com/RajaFarazTariq/VESPER-AI.git` (token removed). If Git Credential Manager ever offers to save it, decline; check Windows Credential Manager for a `git:https://github.com` entry. When the project is done, delete the token on GitHub (Settings → Developer settings → Fine-grained tokens) |
 | Local test data | `.wrangler/` in the project folder (git-ignored) | Safe to delete |
+| Local settings for `npm run dev` | `.dev.vars` in the project folder (git-ignored, created 2026-11-17) | Username login on localhost (`admin` = admin) and empty lines for the owner's own AI/Tavily keys, pasted by him, never via chat. Delete it when local testing is done so no keys stay on the PC |
 
 ---
 
@@ -160,6 +161,7 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 | 2026-11-11 | **Phase 6.1: clean replies, model list, time zone** | No new Cloudflare/Google settings and no database migration. New admin-panel settings (stored in `app_settings`): "Show thinking notes to users" (default off) and the **Models** tab list (default empty = Auto only). The browser now sends its time zone name with each message (not stored). UI fixes: admin/settings tab bar no longer squashed; subtle keyboard focus ring. Deployed as v0.6.1 (commit `b41e514`); live-checked: local date, memory, tester clean view, usage counting |
 | 2026-11-11 | **Phase 6a: live information** | New tools: web search (Tavily), read a page, weather (Open-Meteo), Wikipedia, currency (Frankfurter); answers show source links. New Cloudflare secret to add: `TAVILY_API_KEY`. New admin setting: "Web searches per day" (default 30). No database migration (the daily search counter uses the existing `rate_limits` table). Deployed as v0.7.0 (commit `758f0b0`) |
 | 2026-11-11 | **UI redesign (v0.8.0)** | No new settings, secrets or migrations. New look (design tokens in `styles.css`, new logo), sidebar search/collapse/account menu, welcome screen, composer with model picker and Tools button, Edit last message (`edit` flag on `/api/chat`). The browser remembers the collapsed sidebar in localStorage (`vesper-sidebar-collapsed`). Deployed as v0.8.0 (commit `940b218`) |
+| 2026-11-17 | **Sign-in page redesign (v0.8.1)** | No new settings, secrets or migrations. Professional split layout: sign-in form on the left (follows the app theme), dark brand panel on wide screens (logo in orbit lines, headline). The third-party-AI notice was removed from the sign-in page at the owner's request. Local-dev fix: `vite.config.ts` no longer proxies the app's own `/api/*.ts` source files to the Worker (that left `npm run dev` on a blank page) |
 
 ---
 

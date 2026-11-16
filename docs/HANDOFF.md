@@ -1,27 +1,31 @@
 # VESPER: handoff notes for a new working session
 
-Read this first when resuming work. Last updated: **2026-11-11 (end of day)**. No secrets are stored here.
+Read this first when resuming work. Last updated: **2026-11-17**. No secrets are stored here.
 
-## 0. ▶ Resume here (where we stopped on 2026-11-11)
+## 0. ▶ Resume here (where we stopped on 2026-11-17)
 
-**State:** everything is pushed and live. GitHub `main` and the live site run **v0.8.0** (commit `940b218`, plus a
-small docs-only commit recording the deploy). Working tree clean except the owner's untracked roadmap PDF.
+**State:** **v0.8.1** (sign-in page redesign) was handed to the owner to commit and push on 2026-11-17; the live site
+ran v0.8.0 (commit `940b218`) until then. Check `/api/health` → expect `0.8.1`.
 
-**Done today, in order:** 6.0 multi-user + Google sign-in + admin panel (v0.6.0) → 6.1 clean user view, admin-picked
-model list, user time zone (v0.6.1) → 6a live information: web search, read page, weather, Wikipedia, currency with
-source links (v0.7.0) → full UI redesign (v0.8.0). Details per stage: section 5 below and docs/CONFIGURATION.md §7.
+**Done on 2026-11-17:** sign-in page redesigned as a professional split layout (the owner rejected a playful "night
+sky" version first; see the design rule in section 5); the third-party-AI notice was removed from the sign-in page at
+his request; the local `npm run dev` blank page was fixed (Vite proxy, section 7); `.dev.vars` prepared for local
+testing with his own keys. Confirmed live: **`TAVILY_API_KEY` is active** (the admin sees 9 tools and the
+"Live web search" chip).
 
 **First thing to do next session (in this order):**
-1. Check the live health: `https://ai-assistant.vesper-ai.workers.dev/api/health` → expect `0.8.0`.
-2. Ask the owner whether he added the Cloudflare secret **`TAVILY_API_KEY`** (he said he would). He can see it in
-   Admin panel → App settings: "Used today: X of 30" means it's active; "Not active yet" means it's missing.
-3. **Live check with him, one step at a time** (send screenshots): the new UI with a real AI reply; web search
-   ("What are today's top tech news?" → sources under the answer); weather ("Weather in Lahore this week?");
-   currency; Wikipedia; the Edit button on his last message; user vs admin view (tester account in an Incognito window).
-4. Still never re-checked **live** (passed locally): Block / Unblock, Sign-ups open/closed switch, GitHub backup login.
-5. Then the next phase on the roadmap: **admin-managed knowledge base (RAG)**: the admin uploads documents, users
-   get answers with citations (Workers AI embeddings + Vectorize free tier; files in D1, since R2 needs a card).
-   Check current free limits first. After that: 6b GitHub integration (approval gate), then Gmail/Calendar/Telegram.
+1. Health check → `0.8.1`; the owner checks the new sign-in page live and signs in once with Google.
+2. Open questions for him: (a) add a one-line privacy notice under the message box, replacing the removed one?
+   (b) carry the professional sign-in style across the whole app (welcome screen, composer, sidebar, admin panel)?
+3. Local testing with real AI: he pastes his own keys into `.dev.vars` himself (never via chat), then restart the
+   local servers. Without keys the local chat can't answer.
+4. **Live checks still pending** (one step at a time, with screenshots): web search, weather, currency, Wikipedia
+   answers with sources; Edit on the last message; user vs admin view (tester in Incognito); Block / Unblock;
+   Sign-ups open/closed switch; GitHub backup login.
+5. Then the next phase: **admin-managed knowledge base (RAG)**: the admin uploads documents, users get answers with
+   citations. Workers AI and Vectorize don't run in local dev without a Cloudflare login on this PC, which works
+   against "test locally, push once"; compare with Gemini embeddings + vectors stored in D1 (fully local). Check
+   current free limits first. After that: 6b GitHub integration (approval gate), then Gmail/Calendar/Telegram.
 
 **Open decisions / known limits:** Edit works on the last user message only; chat search matches loaded titles only;
 not built (so no buttons): file/image upload, voice, projects, knowledge base, agents. Open-Meteo's free tier is
@@ -43,10 +47,9 @@ each AI provider's free-tier terms for serving other users (not done yet; fine f
 - This is a **personal project**: don't save anything about it in the assistant's memory system; this file is the
   memory. Don't touch his office work.
 
-**Local machine notes:** a wrangler dev server from 2026-11-10 still runs on port **8788** (not ours to stop).
-Browser test scripts and the mock sign-in server used this session lived in a temporary folder and are gone;
-recreate from the description in section 6 if needed (mock Google/GitHub OAuth + `npm run mock:llm`, then headless Edge
-via `playwright-core` installed outside the project).
+**Local machine notes:** the old wrangler server on port 8788 (2026-11-10) is gone. On 2026-11-17 the local servers ran
+as `wrangler dev` on 8787 (with placeholder sign-in IDs, section 7) and `vite` on 5173. Screenshot scripts lived in a
+temporary folder and are gone; recreate from section 7 if needed.
 
 ## 1. What this is
 **VESPER** is the owner's ChatGPT-style AI assistant. Since v0.6.0 it's **multi-user**: anyone can sign up with
@@ -57,9 +60,9 @@ requirement: no paid services, no card on file, no paid fallback).
 | Item | Value |
 |---|---|
 | Owner | Raja Faraz Tariq (GitHub **RajaFarazTariq**). Personal project, not office work |
-| Repo | https://github.com/RajaFarazTariq/VESPER-AI (private, branch `main`) |
+| Repo | https://github.com/RajaFarazTariq/VESPER-AI (**public** since about 2026-11-17, branch `main`; files and full history scanned for secrets that day: none) |
 | Live app | https://ai-assistant.vesper-ai.workers.dev |
-| Health check | https://ai-assistant.vesper-ai.workers.dev/api/health (expects `version` 0.8.0+) |
+| Health check | https://ai-assistant.vesper-ai.workers.dev/api/health (expects `version` 0.8.1+) |
 | Cloudflare | Free plan. Worker name `ai-assistant`, workers.dev subdomain `vesper-ai` |
 | D1 database | `ai-assistant`, id `726f21f4-8ef4-40b5-86ea-3676f2545c84` (not secret) |
 | Sign-in (everyone) | Google OAuth client, callback `https://ai-assistant.vesper-ai.workers.dev/api/auth/google/callback` (Google app in *Testing* mode: only listed test users can sign in) |
@@ -132,6 +135,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **6.1 Clean replies, model list, time zone, UI fixes** | ✅ live (v0.6.1, commit `b41e514`); live checks 1–5 passed, 6 partly (counting), block / sign-ups / GitHub backup not yet re-checked live |
 | **6a Live information** (web search, read page, weather, Wikipedia, currency, sources) | ✅ live (v0.7.0, commit `758f0b0`); owner adding `TAVILY_API_KEY`; live check pending |
 | **UI redesign (v0.8.0)**: new design system, sidebar, welcome screen, composer, messages, Edit last message | ✅ live (v0.8.0, commit `940b218`, verified 2026-11-11); live look with a real AI reply still to do |
+| **Sign-in page redesign (v0.8.1)**: professional split layout, brand panel; notice removed; local dev fix | ✅ handed to the owner to push 2026-11-17; live check pending |
 | **Next: admin-managed RAG knowledge base, then 6b GitHub** | ⏳ |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -148,6 +152,12 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
   holds the model picker (`placement="up"`) and `ToolsButton`; `MessageItem.tsx` (assistant mark, actions, Edit on
   the last user message → `POST /api/chat` with `edit: true`).
 - Not built (no fake buttons): file/image upload, voice, projects, knowledge base, agents.
+- **Owner's design rule (2026-11-17): professional, enterprise-grade, globally competitive.** No playful decoration
+  (stars, typing animations, gradient text, glow effects, oversized rounded cards); restrained colour, standard 8px
+  corners, clear hierarchy, minimal motion. Applies to new UI work.
+- **Sign-in page (v0.8.1)** (`LoginPage.tsx`): split layout. The form side uses the app tokens (follows light/dark); the
+  brand panel (wide screens only) is always dark with its own tokens (`.auth-showcase`, `--sc-*` in `styles.css`):
+  the logo inside fine SVG orbit lines, headline "Clear answers. Trusted sources.". Static, no animation.
 
 **Options (the roadmap PDF puts knowledge/reliability before integrations, so 6a comes first):**
 - **6b GitHub**: read repos/files/issues/PRs; create issues, comments and PRs behind an **Approve/Reject gate**
@@ -191,11 +201,25 @@ Browser checks were done with headless Edge via `playwright-core` installed in a
 - **Groq free tier is 8K tokens/min**, so two-step tool tasks can hit 429 and fall back. That's expected.
 - **CSP is strict** (`public/_headers`: no inline styles, fonts 'self' only). That's why KaTeX outputs MathML with no KaTeX CSS.
 - **Windows: stopping a background task leaves `workerd.exe`/`node` children running** on the port. Check
-  `netstat -ano | findstr 8787` and stop those PIDs.
+  `netstat -ano | findstr 8787` and stop those PIDs. Stopping only `workerd.exe` isn't enough: its parent wrangler
+  `node` process restarts it on the same port, and two servers on 8787 make every request hang. Stop the whole
+  tree: `taskkill /PID <wrangler node pid> /T /F` (2026-11-17).
+- **`npm run dev` showed a blank page** (fixed 2026-11-17): Vite's `/api` proxy also caught `/api/client.ts`, the app's
+  own source file in `src/web/api/`, and sent it to the Worker (404). The proxy key in `vite.config.ts` is now a regex
+  that leaves `.ts`/`.tsx` requests to Vite.
+- **Previewing the real sign-in buttons locally:** start the API with
+  `npx wrangler dev --port 8787 --local --var GOOGLE_CLIENT_ID:local-preview --var GOOGLE_CLIENT_SECRET:local-preview`
+  (GitHub likewise) plus `npx vite`. The buttons then show, but don't click them (placeholder IDs).
+- **Phone-width screenshots:** headless Edge won't make a window narrower than ~500px, so `--window-size=390,…`
+  silently lays out at ~500px. Use DevTools-protocol emulation (`Emulation.setDeviceMetricsOverride`, mobile: true;
+  `Emulation.setEmulatedMedia` for dark mode) via Node's built-in `WebSocket` with `--remote-debugging-port`.
 - Shell heredocs/Python one-liners turned `\n` escapes into real newlines; write multi-line code with a file editor instead.
 - Model IDs and free limits change often: lists are fetched live; defaults can be overridden with `*_MODEL` variables.
 - The OpenRouter guard (`:free` only) and "no paid provider in code" are the zero-cost guarantees. Keep them.
 
 ## 8. Housekeeping the owner planned
 - Delete the GitHub fine-grained token (VESPER-AI only) and its Windows Credential Manager entry when the project is done.
+- **Replace the current GitHub token** (it was pasted into a chat on 2026-11-17; it expires 2026-12-09): delete it on
+  GitHub and create a new fine-grained token (VESPER-AI only, Contents: read and write).
+- Delete `.dev.vars` when local testing is done, so no keys stay on the PC.
 - The local project folder on the office PC can be deleted at any time; everything lives in GitHub + Cloudflare.

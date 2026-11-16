@@ -39,6 +39,40 @@ const AUTH_ERRORS: Record<string, string> = {
   github_unreachable: "Couldn't reach GitHub. Please try again in a moment.",
 };
 
+
+// ---------------------------------------------------------------------------
+// Brand panel (wide screens only): the logo inside fine orbit lines, one headline, one line of text.
+// ---------------------------------------------------------------------------
+
+function BrandPanel() {
+  return (
+    <aside className="auth-showcase relative hidden flex-1 items-center justify-center overflow-hidden lg:flex">
+      <div className="relative flex flex-col items-center px-12 text-center">
+        <div className="relative grid h-[340px] w-[340px] place-items-center" aria-hidden="true">
+          <svg viewBox="0 0 340 340" className="absolute inset-0 h-full w-full">
+            <circle className="auth-orbit auth-orbit-1" cx="170" cy="170" r="80" />
+            <circle className="auth-orbit auth-orbit-2" cx="170" cy="170" r="124" />
+            <circle className="auth-orbit auth-orbit-3" cx="170" cy="170" r="168" />
+            <circle className="auth-planet" cx="263.5" cy="90.3" r="3.5" />
+            <circle className="auth-planet auth-planet-faint" cx="25.7" cy="254" r="3" />
+            <circle className="auth-planet auth-planet-faint" cx="94.8" cy="142.6" r="2.5" />
+          </svg>
+          <div className="auth-halo absolute h-[220px] w-[220px] rounded-full" />
+          <img src="/favicon.svg" alt="" className="relative h-[88px] w-[88px] rounded-[22px] shadow-[0_18px_40px_-12px_rgb(0_0_0/0.7)]" />
+        </div>
+        <h2 className="mt-8 font-[family-name:var(--font-display)] text-[32px] font-semibold leading-tight tracking-[-0.025em]">
+          Clear answers. Trusted sources.
+        </h2>
+        <p className="mt-3 max-w-[400px] text-balance text-[15px] leading-relaxed text-[var(--sc-soft)]">
+          Research, live information and precise calculations, all in one assistant.
+        </p>
+      </div>
+    </aside>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
 export function LoginPage({ config, onSignedIn }: { config: PublicConfigDto; onSignedIn: () => void }) {
   const params = new URLSearchParams(window.location.search);
   const authError = params.get("auth_error");
@@ -46,94 +80,105 @@ export function LoginPage({ config, onSignedIn }: { config: PublicConfigDto; onS
   const [devError, setDevError] = useState<string | null>(null);
 
   return (
-    <main className="relative flex min-h-full items-center justify-center overflow-hidden p-6">
-      <div className="dusk-glow pointer-events-none absolute inset-0" aria-hidden />
-      <div className="rise-in relative w-full max-w-sm rounded-3xl border border-[var(--border)] bg-[var(--bg-elevated)] p-8 shadow-[var(--shadow-lg)]">
-        <img src="/favicon.svg" alt="" className="mx-auto h-14 w-14 rounded-2xl shadow-[var(--shadow-md)]" />
-        <h1 className="mt-5 text-center font-[family-name:var(--font-display)] text-[28px] font-semibold tracking-tight">{config.appName}</h1>
-        <p className="mt-2 text-center text-[15px] leading-relaxed text-[var(--text-soft)]">
-          Your intelligent assistant for answers, research and everyday tasks. Sign in or create an account to start.
-        </p>
+    <div className="flex min-h-full bg-[var(--bg)] text-[var(--text)]">
+      <main className="flex min-h-full w-full flex-col px-6 py-6 sm:px-10 lg:w-[540px] lg:shrink-0 lg:border-r lg:border-[var(--border)] lg:px-14 xl:w-[600px]">
+        <header className="flex items-center gap-2.5">
+          <img src="/favicon.svg" alt="" className="h-7 w-7 rounded-lg" />
+          <span className="text-[15px] font-semibold tracking-tight">{config.appName}</span>
+        </header>
 
-        {authError ? (
-          <p role="alert" className="mt-5 rounded-lg bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
-            {AUTH_ERRORS[authError] ?? "Sign-in failed. Please try again."}
-          </p>
-        ) : null}
-
-        {config.googleLogin ? (
-          <a
-            href="/api/auth/google/login"
-            className="mt-7 flex w-full items-center justify-center gap-2.5 rounded-xl border border-[var(--border-strong)] bg-white px-4 py-3 text-sm font-medium text-[#1f1f1f] shadow-[var(--shadow-sm)] transition-shadow hover:shadow-[var(--shadow-md)]"
-          >
-            <GoogleMark /> Continue with Google
-          </a>
-        ) : null}
-
-        {config.githubLogin ? (
-          config.googleLogin ? (
-            <p className="mt-4 text-center text-xs text-[var(--text-soft)]">
-              Administrator?{" "}
-              <a href="/api/auth/github/login" className="inline-flex items-center gap-1 font-medium text-[var(--accent)] hover:underline">
-                Sign in with GitHub
-              </a>
+        <div className="flex flex-1 items-center py-12">
+          <div className="mx-auto w-full max-w-[380px]">
+            <h1 className="font-[family-name:var(--font-display)] text-[28px] font-semibold tracking-[-0.02em]">Sign in to {config.appName}</h1>
+            <p className="mt-2 text-[14.5px] leading-relaxed text-[var(--text-soft)]">
+              New here? Your account is created automatically the first time you sign in.
             </p>
-          ) : (
-            <a
-              href="/api/auth/github/login"
-              className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-[#24292f] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#32383f] dark:bg-white dark:text-[#24292f] dark:hover:bg-gray-200"
-            >
-              <GitHubMark /> Continue with GitHub (administrator)
-            </a>
-          )
-        ) : null}
 
-        {!config.googleLogin && !config.githubLogin ? (
-          <p className="mt-6 rounded-lg bg-[var(--bg-soft)] px-3 py-2 text-sm text-[var(--text-soft)]">
-            Sign-in isn't configured yet. Set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> (and optionally the GitHub
-            ones) on the server. See the README.
-          </p>
-        ) : null}
+            {authError ? (
+              <p role="alert" className="mt-6 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-3.5 py-2.5 text-sm text-[var(--danger)]">
+                {AUTH_ERRORS[authError] ?? "Sign-in failed. Please try again."}
+              </p>
+            ) : null}
 
-        <p className="mt-6 text-center text-[11px] leading-relaxed text-[var(--text-soft)]">
-          Replies come from free third-party AI services, and some of them may use conversations to improve their models. Please don't share
-          passwords or other sensitive information.
-        </p>
+            {config.googleLogin ? (
+              <a
+                href="/api/auth/google/login"
+                className="mt-8 flex h-11 w-full items-center justify-center gap-3 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-4 text-[14.5px] font-medium shadow-[var(--shadow-sm)] transition-colors hover:bg-[var(--bg-hover)]"
+              >
+                <GoogleMark /> Continue with Google
+              </a>
+            ) : null}
 
-        {config.devLogin ? (
-          <form
-            className="mt-6 border-t border-[var(--border)] pt-5"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setDevError(null);
-              try {
-                await api.devLogin(devName.trim());
-                window.history.replaceState(null, "", "/");
-                onSignedIn();
-              } catch (error) {
-                setDevError(error instanceof ApiError ? error.message : "Login failed.");
-              }
-            }}
-          >
-            <label className="block text-xs font-medium text-[var(--text-soft)]" htmlFor="dev-login">
-              Local development login (localhost only)
-            </label>
-            <div className="mt-1.5 flex gap-2">
-              <input
-                id="dev-login"
-                value={devName}
-                onChange={(e) => setDevName(e.target.value)}
-                placeholder="any username"
-                className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
-              />
-              <button type="submit" className="rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-[var(--accent-text)]">
-                Sign in
-              </button>
-            </div>
-            {devError ? <p className="mt-2 text-xs text-[var(--danger)]">{devError}</p> : null}
-          </form>
-        ) : null}
-      </div>
-    </main>
+            {config.githubLogin ? (
+              config.googleLogin ? (
+                <p className="mt-4 text-center text-[13px] text-[var(--text-soft)]">
+                  Administrator?{" "}
+                  <a href="/api/auth/github/login" className="font-medium text-[var(--accent)] hover:underline">
+                    Sign in with GitHub
+                  </a>
+                </p>
+              ) : (
+                <a
+                  href="/api/auth/github/login"
+                  className="mt-8 flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-4 text-[14.5px] font-medium shadow-[var(--shadow-sm)] transition-colors hover:bg-[var(--bg-hover)]"
+                >
+                  <GitHubMark /> Continue with GitHub (administrators)
+                </a>
+              )
+            ) : null}
+
+            {!config.googleLogin && !config.githubLogin ? (
+              <p className="mt-8 rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] px-3.5 py-2.5 text-sm text-[var(--text-soft)]">
+                Sign-in isn't configured yet. Set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> (and optionally the GitHub
+                ones) on the server. See the README.
+              </p>
+            ) : null}
+
+            {config.devLogin ? (
+              <form
+                className="mt-8 rounded-lg border border-dashed border-[var(--border-strong)] p-4"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setDevError(null);
+                  try {
+                    await api.devLogin(devName.trim());
+                    window.history.replaceState(null, "", "/");
+                    onSignedIn();
+                  } catch (error) {
+                    setDevError(error instanceof ApiError ? error.message : "Login failed.");
+                  }
+                }}
+              >
+                <label className="block text-xs font-medium text-[var(--text-soft)]" htmlFor="dev-login">
+                  Local development login (localhost only)
+                </label>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    id="dev-login"
+                    value={devName}
+                    onChange={(e) => setDevName(e.target.value)}
+                    placeholder="any username"
+                    className="h-10 min-w-0 flex-1 rounded-lg border border-[var(--border-strong)] bg-[var(--bg)] px-3 text-sm outline-none focus:border-[var(--accent)]"
+                  />
+                  <button
+                    type="submit"
+                    className="h-10 rounded-lg bg-[var(--accent)] px-4 text-sm font-medium text-[var(--accent-text)] transition-colors hover:bg-[var(--accent-strong)]"
+                  >
+                    Sign in
+                  </button>
+                </div>
+                {devError ? <p className="mt-2 text-xs text-[var(--danger)]">{devError}</p> : null}
+              </form>
+            ) : null}
+          </div>
+        </div>
+
+        <footer className="text-xs text-[var(--text-faint)]">
+          © {new Date().getFullYear()} {config.appName}
+        </footer>
+      </main>
+
+      <BrandPanel />
+    </div>
   );
 }
