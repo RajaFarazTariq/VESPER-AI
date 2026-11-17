@@ -4,39 +4,43 @@ Read this first when resuming work. Last updated: **2026-11-17**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-17)
 
-**State:** **v0.9.0 (knowledge base, Part 1)** was handed to the owner to push on 2026-11-17 (before that, v0.8.1 was
-live and live-checked). After his push: health → `0.9.0`, then he uploads a real PDF in Admin → Knowledge on the live
-site and asks a question about it (that's the first real check of the re-ranker and of answers with citations).
-
-**Knowledge base (v0.9.0), in short:** Admin panel → Knowledge: folders; upload PDF/Word/TXT/MD/CSV (read in the
-browser, text only stored); "Add web page"; space meter (~15,000 pages free). Every user's assistant gets the tool
-`search_knowledge` once a document is ready and cites "(document, page X)". Design and limits: docs/ARCHITECTURE.md §5c.
-**Part 2 (agreed, not built): daily automatic refresh of saved web pages** (cron already exists; 5 cron triggers free).
-Also fixed in 0.9.0: the model menu ran off the top of the screen (it now measures the room inside its scroll area).
-
-**Done on 2026-11-17:** sign-in page redesigned as a professional split layout (the owner rejected a playful "night
-sky" version first; see the design rule in section 5); the third-party-AI notice was removed from the sign-in page at
-his request; the local `npm run dev` blank page was fixed (Vite proxy, section 7); `.dev.vars` prepared for local
-testing with his own keys. Confirmed live: **`TAVILY_API_KEY` is active** (the admin sees 9 tools and the
-"Live web search" chip).
+**State:** **v0.9.0 is live** (knowledge base Part 1 + model-menu fix; commit `19434d7`, pushed by the owner and
+verified 2026-11-17: `/api/health` → `0.9.0`, database ok; the new `/api/admin/knowledge` endpoint answers 401 when
+signed out, i.e. it's deployed and migration `0004` applied). GitHub `main` = live, plus this docs-only update
+(push it with the next change if it isn't on GitHub yet). **Not yet tried on live by the owner** (he stopped for the day).
 
 **First thing to do next session (in this order):**
-1. Health check → `0.8.1` (or newer). Ask whether the owner replaced the GitHub token (see section 8).
-2. Decided 2026-11-17: **no** privacy notice under the message box (leave it), and the rest of the app UI stays as it
-   is for now (the professional style applies to the sign-in page and to new UI work).
-3. Local testing with real AI: he pastes his own keys into `.dev.vars` himself (never via chat), then restart the
-   local servers. Without keys the local chat can't answer.
-4. **Live checks still pending** (one step at a time, with screenshots): web search, weather, currency, Wikipedia
-   answers with sources; Edit on the last message; user vs admin view (tester in Incognito); Block / Unblock;
-   Sign-ups open/closed switch; GitHub backup login.
-5. Knowledge base Part 1 is built (v0.9.0). Next: **Part 2, daily refresh of saved web pages**; then per the roadmap PDF:
-   deep-research mode, answer quality (👍/👎 + verification), smarter memory, then 6b GitHub (approval gate),
-   Gmail/Calendar/Telegram. The owner wants **no setup on any PC**: everything is done from the live site.
+1. Health check → `0.9.0` (or newer). Ask whether he **replaced the GitHub token** (it was pasted into a chat on
+   2026-11-17, see section 8).
+2. **Live test of the knowledge base, one step at a time with his screenshots:** Admin panel → Knowledge → New folder
+   (name + short description) → Upload files (a real PDF; wait for "Added (N pages)") → New chat → ask something the
+   PDF answers → expect "Searched the knowledge base" and a citation "(File.pdf, page N)" plus a document chip under
+   the answer. This is the first real check of the Workers AI re-ranker and of answers with citations (locally only
+   keyword order could be tested). If answers miss obvious passages, check the admin view of the tool call (query used,
+   passages found) before changing anything.
+3. Then **Knowledge base Part 2 (agreed, not built): daily automatic refresh of saved web pages** (the daily cron
+   already exists; re-read web documents in small batches within the 10 ms CPU / 50-query limits; replace a page's
+   passages only when the text changed).
+4. After that, per the roadmap PDF: deep-research mode, answer quality (👍/👎 + verification), smarter memory, then
+   6b GitHub (approval gate), Gmail/Calendar/Telegram.
+5. Still never checked **live** (low priority): web search/weather/currency/Wikipedia answers, Edit on the last
+   message, user vs admin view, Block / Unblock, Sign-ups switch, GitHub backup login.
+
+**Knowledge base (v0.9.0), in short:** Admin panel → Knowledge: folders; upload PDF/Word (.docx)/TXT/MD/CSV (read in
+the admin's browser, only text stored, files not kept); "Add web page" (read once by the server); space meter
+(~15,000 pages free). Every user's assistant gets the tool `search_knowledge` once a document is ready; it cites
+"(document, page X)". Full design, limits and why no Vectorize: docs/ARCHITECTURE.md §5c. Not supported yet: scanned
+PDFs (no OCR), .xlsx/.doc (save as CSV/.docx).
+
+**Decisions made 2026-11-17:** sign-in page = professional split layout (playful "night sky" rejected; design rule in
+section 5); **no** privacy notice anywhere (removed from the sign-in page, not added under the message box); the rest of
+the app UI stays as it is for now; knowledge base built zero-setup (FTS5 + re-ranker, no Vectorize); **no setup on any
+PC**: everything the owner does happens on the live site. Confirmed live: `TAVILY_API_KEY` is active.
 
 **Open decisions / known limits:** Edit works on the last user message only; chat search matches loaded titles only;
-not built (so no buttons): file/image upload, voice, projects, knowledge base, agents. Open-Meteo's free tier is
-non-commercial (a public commercial launch would need their paid plan). Before opening the app to the public: check
-each AI provider's free-tier terms for serving other users (not done yet; fine for a few testers).
+not built (so no buttons): image upload in chat, voice, projects, agents. Open-Meteo's free tier is non-commercial (a
+public commercial launch would need their paid plan). Before opening the app to the public: check each AI provider's
+free-tier terms for serving other users (not done yet; fine for a few testers).
 
 **How the owner wants each task run (agreed in this session):**
 - Before starting: give a **numbered list of steps**; then report each step as done; say at once if a step fails
@@ -50,12 +54,16 @@ each AI provider's free-tier terms for serving other users (not done yet; fine f
   `git -c credential.helper= push origin main` (git then asks Username `RajaFarazTariq` and the token as password).
   Run them in the project folder, not in `C:\Projects` (his office projects live there).
 - After his push: watch `/api/health` until the new version shows, then confirm.
-- This is a **personal project**: don't save anything about it in the assistant's memory system; this file is the
-  memory. Don't touch his office work.
+- This is a **personal project**: don't save anything about it in the assistant's memory system, and no EOD/history
+  logging; this file is the memory. Don't touch his office work.
+- Explain in **easy, plain words** (no jargon); he asked for that explicitly. Work **fast**: he prefers short status
+  updates and few round-trips. Never ask him to paste a token or key into the chat.
+- **UI style:** professional, enterprise-grade (see the design rule in section 5).
 
-**Local machine notes:** the old wrangler server on port 8788 (2026-11-10) is gone. On 2026-11-17 the local servers ran
-as `wrangler dev` on 8787 (with placeholder sign-in IDs, section 7) and `vite` on 5173. Screenshot scripts lived in a
-temporary folder and are gone; recreate from section 7 if needed.
+**Local machine notes:** at the end of 2026-11-17 the local dev servers were stopped. `.dev.vars` exists in the project
+folder (git-ignored) with empty key lines and `DEV_LOGIN=true` / `ADMIN_GITHUB_USERS=admin`; the owner may paste his own
+keys there for local real-AI testing; delete it when done. Screenshot/browser-test scripts lived in a temporary folder
+and are gone; how to recreate them is in section 7 (DevTools-protocol emulation via Node's built-in WebSocket).
 
 ## 1. What this is
 **VESPER** is the owner's ChatGPT-style AI assistant. Since v0.6.0 it's **multi-user**: anyone can sign up with
@@ -142,7 +150,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **6a Live information** (web search, read page, weather, Wikipedia, currency, sources) | ✅ live (v0.7.0, commit `758f0b0`); owner adding `TAVILY_API_KEY`; live check pending |
 | **UI redesign (v0.8.0)**: new design system, sidebar, welcome screen, composer, messages, Edit last message | ✅ live (v0.8.0, commit `940b218`, verified 2026-11-11); live look with a real AI reply still to do |
 | **Sign-in page redesign (v0.8.1)**: professional split layout, brand panel; notice removed; local dev fix | ✅ live (v0.8.1, commit `59f34c8`); live-checked 2026-11-17: new page shows, Google sign-in lands in the app as admin |
-| **Knowledge base Part 1 (v0.9.0)**: folders, uploads (PDF/Word/TXT/MD/CSV), web pages, FTS5 + re-ranker, citations; model-menu fix | ✅ built and tested 2026-11-17 (154 tests; real-browser upload of a PDF + .docx under the live CSP); handed to the owner to push |
+| **Knowledge base Part 1 (v0.9.0)**: folders, uploads (PDF/Word/TXT/MD/CSV), web pages, FTS5 + re-ranker, citations; model-menu fix | ✅ live (v0.9.0, commit `19434d7`, deployed 2026-11-17; 154 tests; real-browser upload of a PDF + .docx under the live CSP); **owner's live test pending** |
 | **Next: knowledge base Part 2 (daily web-page refresh), then roadmap items** | ⏳ |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -158,7 +166,8 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
   account menu with Settings/Admin/Theme/Sign out); welcome screen + docked composer in `App.tsx`; `Composer.tsx`
   holds the model picker (`placement="up"`) and `ToolsButton`; `MessageItem.tsx` (assistant mark, actions, Edit on
   the last user message → `POST /api/chat` with `edit: true`).
-- Not built (no fake buttons): file/image upload, voice, projects, knowledge base, agents.
+- Not built (no fake buttons): image upload in chat, voice, projects, agents. (Document upload exists only in the
+  admin panel → Knowledge, since v0.9.0.)
 - **Owner's design rule (2026-11-17): professional, enterprise-grade, globally competitive.** No playful decoration
   (stars, typing animations, gradient text, glow effects, oversized rounded cards); restrained colour, standard 8px
   corners, clear hierarchy, minimal motion. Applies to new UI work.
@@ -184,7 +193,11 @@ npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
 Local `.env` for keyless dev: `ADMIN_GITHUB_USERS=<name>`, `DEV_LOGIN=true`, `WORKERS_AI_ENABLED=false`,
 `GROQ_API_KEY=mock`, `GROQ_BASE_URL=http://127.0.0.1:8790/groq` (Gemini likewise with `/gemini`).
-Browser checks were done with headless Edge via `playwright-core` installed in a temp folder, not in the project.
+Browser checks (since 2026-11-17): headless Edge driven over the DevTools protocol with Node's built-in `WebSocket`
+(no packages): `--remote-debugging-port`, `Emulation.setDeviceMetricsOverride` (phone sizes), `DOM.setFileInputFiles`
+(uploads), `Runtime.evaluate` with `fetch('/api/auth/dev-login', …)` to sign in. To test under the live CSP, run
+`npm run build` and use `wrangler dev` on :8787 (it applies `public/_headers`); restart wrangler after each build.
+Apply new migrations locally first: `npx wrangler d1 migrations apply DB --local`.
 
 ## 7. Gotchas learned the hard way
 - **`git commit` → "could not open '.git/COMMIT_EDITMSG': Permission denied"** (2026-11-11): every file inside `.git`
