@@ -103,6 +103,32 @@ from Ollama directly, then `/api/chat/local/complete` stores the reply. The serv
 - Tool activity is stored on the assistant message (`messages.tools`, JSON) and shown in the UI. Later turns replay only
   the final text, not the tool transcript, which keeps prompts small for free-tier token limits.
 
+## 5c. Knowledge base (v0.9.0)
+
+- **Storage** (migration `0004_knowledge_base.sql`, add-only): `kb_collections` (folders) → `kb_documents` → `kb_chunks`
+  (passages of ~1,200 chars with a location: "page 12", "section “Leave”", "rows 2–41"), plus an FTS5 index
+  `kb_chunks_fts` (external content, `porter unicode61` tokenizer) kept in step by triggers. Deletes cascade.
+  Only extracted text is stored, never the files (R2 needs a card; D1 rows are capped at 2 MB).
+- **Upload** (admin panel → Knowledge, `KnowledgeTab.tsx`): the browser reads the file (`web/lib/extract.ts`: pdf.js
+  page by page, mammoth for .docx → Markdown-like text with headings, CSV with the header repeated per block), splits it
+  with `shared/chunking.ts`, then calls `POST /api/admin/knowledge/documents` → `…/:id/chunks` (≤50 passages per
+  request, idempotent by `(document, seq)`) → `…/:id/complete`. Reason: the free Workers plan allows ~10 ms CPU per
+  request, far too little to parse PDFs on the server. pdf.js and mammoth are lazy-loaded chunks; pdf.js runs with
+  `useWasm: false` (the CSP has no `wasm-unsafe-eval`). Web pages: `POST /api/admin/knowledge/web` reads the page on
+  the server with the same safe fetcher as `read_page` (`fetchPageText`), max 100k chars.
+- **Limits** (`db/knowledge.ts`): 50M chars in total (~15,000 pages, ~100–150 MB of D1 with the index), 3M chars /
+  5,000 passages per document, 50 folders, 500 documents per folder, 1,000 PDF pages / 50 MB per file. The admin panel
+  shows a space meter; uploads beyond the budget are refused with a plain message (nothing is ever billed).
+- **Search** (`tools/knowledge.ts`, tool `search_knowledge`, offered to everyone only when a document is ready): FTS5
+  `MATCH` with the query's words OR-ed and quoted (no user text is FTS syntax), BM25 order, 30 candidates →
+  `@cf/baai/bge-reranker-base` re-orders by meaning (≈4 Neurons per search; falls back to keyword order on error or
+  locally) → best 6 passages, wrapped as untrusted data, with sources `{title, location}` shown as document chips.
+  The system prompt names the folders (with descriptions) and asks for inline citations "(document, location)".
+- **Why not vectors (Vectorize)?** It needs an index created outside the app (a setup step) and caps the free tier at
+  5M stored dimensions (~3,000 pages). Keyword recall + re-ranking + the model choosing search words works with zero
+  setup and holds 5× more. Semantic recall can be added later if keyword recall proves too narrow.
+- **Backups:** `wrangler d1 export` can't export virtual (FTS5) tables; Time Travel (point-in-time restore) still works.
+
 ## 6. Security model
 
 | Threat | Control |
@@ -152,6 +178,9 @@ tools are blocked once untrusted content is in context.
 - Workers AI can't be tested locally without a Cloudflare login, and Workers AI response formats vary by model (both
   known formats are handled).
 - The JS bundle is ~190 KB gzipped (syntax highlighting is most of it). Fine for now; it can be code-split later.
+- Knowledge base: scanned PDFs (images without a text layer) can't be read (no OCR yet); PDFs that need CMaps (some
+  CJK/Arabic-script fonts) may extract poorly; no Excel (.xlsx) or old Word (.doc), save as CSV/.docx; keyword
+  recall can miss passages that use completely different words (the model is told to retry with synonyms).
 
 ## 9. Roadmap
 

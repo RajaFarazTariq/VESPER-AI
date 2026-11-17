@@ -9,6 +9,10 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
 - 🛠️ Tool-using agent: exact calculator, date/time in **each user's own time zone**, long-term memory
 - 🌐 **Live information** with source links: web search (Tavily, free plan, daily-capped), reading web pages,
   weather (Open-Meteo), Wikipedia, and currency rates (Frankfurter); web content is treated as untrusted data
+- 📚 **Knowledge base**: the admin uploads PDF, Word (.docx), text, Markdown and CSV files (or adds web pages) into
+  folders; everyone's assistant answers from them and cites "document, page X". Files are read in the admin's
+  browser and only their text is stored (about 15,000 pages fit in the free database). Search = full-text (FTS5)
+  plus Workers AI's free re-ranker
 - 🧠 Long-term memory you control: view, add and delete in Settings → Memory
 - 🔁 Automatic free-provider fallback with cooldowns, retries and clear error messages
 - 🎛️ Model picker: users choose Auto or models the admin picked (with friendly names); the admin sees every live model
@@ -23,8 +27,8 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
   message, source links under answers, and a responsive mobile layout
 - 💸 **No paid services, no credit card, no automatic billing**
 
-> Status: **Phase 6a (live information) complete**, on top of multi-user accounts and the admin panel. Documents /
-> knowledge base and integrations (GitHub, Gmail, Calendar, Telegram) come in later phases. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> Status: **Knowledge base (v0.9.0) complete**, on top of live information, multi-user accounts and the admin panel.
+> Scheduled refresh of saved web pages, then integrations (GitHub, Gmail, Calendar, Telegram) come next. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 

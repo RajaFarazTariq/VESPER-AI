@@ -3,11 +3,19 @@ import type { AppSettingsDto, ToolInfoDto, UserSettings } from "../../shared/typ
 import { VERSION } from "../version";
 import { addMemory, deleteMemory, MemoryLimitError } from "../db/memories";
 import { CalcError, evaluate } from "./calculator";
-import { define, ToolInputError, type AgentTool, type WebToolContext } from "./types";
+import { searchKnowledge } from "./knowledge";
+import { define, ToolInputError, type AgentTool, type ToolServerState, type WebToolContext } from "./types";
 import { WEB_TOOLS } from "./web";
 
 // Shared types live in ./types; re-exported so existing imports keep working.
-export { ToolInputError, type AgentTool, type ToolContext, type ToolOutput, type WebToolContext } from "./types";
+export {
+  ToolInputError,
+  type AgentTool,
+  type ToolContext,
+  type ToolOutput,
+  type ToolServerState,
+  type WebToolContext,
+} from "./types";
 
 const calculator = define({
   name: "calculator",
@@ -118,9 +126,9 @@ const forget = define({
   },
 });
 
-export const ALL_TOOLS: AgentTool[] = [calculator, datetime, remember, forget, ...WEB_TOOLS];
+export const ALL_TOOLS: AgentTool[] = [calculator, datetime, remember, forget, ...WEB_TOOLS, searchKnowledge];
 
-const isAvailable = (t: AgentTool, web: WebToolContext | undefined) => (t.isAvailable ? t.isAvailable(web) : true);
+const isAvailable = (t: AgentTool, server: ToolServerState) => (t.isAvailable ? t.isAvailable(server) : true);
 
 /** What the live-information tools need: request identity, the search key (if set) and today's cap. */
 export function webToolContext(
@@ -137,22 +145,26 @@ export function webToolContext(
   };
 }
 
-/** Every tool, with whether it can run on this server (e.g. web search needs TAVILY_API_KEY). */
-export const toolInfo = (web?: WebToolContext): ToolInfoDto[] =>
+/** Every tool, with whether it can run on this server (web search needs TAVILY_API_KEY; the knowledge base needs documents). */
+export const toolInfo = (server: ToolServerState = {}): ToolInfoDto[] =>
   ALL_TOOLS.map((t) => ({
     name: t.name,
     label: t.label,
     description: t.description,
     risk: t.risk,
     requiresMemory: t.requiresMemory,
-    available: isAvailable(t, web),
+    available: isAvailable(t, server),
   }));
 
 /** Tools offered this turn: the user's choices, minus any the admin switched off, minus unavailable ones. */
-export function enabledTools(settings: UserSettings, disabledForEveryone: readonly string[] = [], web?: WebToolContext): AgentTool[] {
+export function enabledTools(
+  settings: UserSettings,
+  disabledForEveryone: readonly string[] = [],
+  server: ToolServerState = {},
+): AgentTool[] {
   if (!settings.toolsEnabled) return [];
   const disabled = new Set([...settings.disabledTools, ...disabledForEveryone]);
   return ALL_TOOLS.filter(
-    (t) => !disabled.has(t.name) && (!t.requiresMemory || settings.memoryEnabled) && isAvailable(t, web),
+    (t) => !disabled.has(t.name) && (!t.requiresMemory || settings.memoryEnabled) && isAvailable(t, server),
   );
 }

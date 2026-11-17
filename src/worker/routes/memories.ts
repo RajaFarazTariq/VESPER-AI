@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app-env";
 import { getAppSettings } from "../db/app-settings";
+import { hasSearchableKnowledge } from "../db/knowledge";
 import { getConfig } from "../env";
 import { addMemory, deleteAllMemories, deleteMemory, listMemories, MAX_MEMORY_CHARS, MemoryLimitError } from "../db/memories";
 import { AppError, notFound } from "../lib/errors";
@@ -36,7 +37,7 @@ export const memoryRoutes = new Hono<AppEnv>()
 /** Tools users can switch on/off in Settings; tools the admin disabled or that can't run here aren't listed. */
 export const toolRoutes = new Hono<AppEnv>().use(requireUser).get("/", async (c) => {
   const config = getConfig(c.env);
-  const settings = await getAppSettings(c.env.DB, config);
+  const [settings, knowledgeReady] = await Promise.all([getAppSettings(c.env.DB, config), hasSearchableKnowledge(c.env.DB)]);
   const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, settings);
-  return c.json({ tools: toolInfo(web).filter((t) => t.available && !settings.disabledTools.includes(t.name)) });
+  return c.json({ tools: toolInfo({ web, knowledgeReady }).filter((t) => t.available && !settings.disabledTools.includes(t.name)) });
 });

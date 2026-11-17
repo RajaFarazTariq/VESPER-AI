@@ -5,6 +5,11 @@ import type {
   AppSettingsDto,
   ChatStreamEvent,
   ConversationDto,
+  KnowledgeChunkInput,
+  KnowledgeCollectionDto,
+  KnowledgeDocKind,
+  KnowledgeDocumentDto,
+  KnowledgeUsageDto,
   LocalPrepareResponse,
   MemoryDto,
   MessageDto,
@@ -105,6 +110,38 @@ export const api = {
       ),
     updateSettings: (patch: Partial<AppSettingsDto>) =>
       request<{ settings: AppSettingsDto }>("/api/admin/settings", { method: "PUT", body: JSON.stringify(patch) }),
+
+    knowledge: {
+      list: () => request<{ collections: KnowledgeCollectionDto[]; usage: KnowledgeUsageDto }>("/api/admin/knowledge"),
+      createCollection: (body: { name: string; description: string }) =>
+        request<{ collection: KnowledgeCollectionDto }>("/api/admin/knowledge/collections", { method: "POST", body: JSON.stringify(body) }),
+      updateCollection: (id: string, patch: { name?: string; description?: string }) =>
+        request<{ ok: true }>(`/api/admin/knowledge/collections/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+      deleteCollection: (id: string) =>
+        request<{ ok: true }>(`/api/admin/knowledge/collections/${encodeURIComponent(id)}`, { method: "DELETE" }),
+      createDocument: (body: {
+        collectionId: string;
+        title: string;
+        kind: Exclude<KnowledgeDocKind, "web">;
+        pages: number | null;
+        expectedChunks: number;
+        totalChars: number;
+      }) => request<{ document: KnowledgeDocumentDto }>("/api/admin/knowledge/documents", { method: "POST", body: JSON.stringify(body) }),
+      addChunks: (documentId: string, chunks: KnowledgeChunkInput[]) =>
+        request<{ document: KnowledgeDocumentDto }>(`/api/admin/knowledge/documents/${encodeURIComponent(documentId)}/chunks`, {
+          method: "POST",
+          body: JSON.stringify({ chunks }),
+        }),
+      completeDocument: (documentId: string) =>
+        request<{ document: KnowledgeDocumentDto }>(`/api/admin/knowledge/documents/${encodeURIComponent(documentId)}/complete`, {
+          method: "POST",
+          body: "{}",
+        }),
+      deleteDocument: (documentId: string) =>
+        request<{ ok: true }>(`/api/admin/knowledge/documents/${encodeURIComponent(documentId)}`, { method: "DELETE" }),
+      addWebPage: (collectionId: string, url: string) =>
+        request<{ document: KnowledgeDocumentDto }>("/api/admin/knowledge/web", { method: "POST", body: JSON.stringify({ collectionId, url }) }),
+    },
   },
 
   localPrepare: (body: { conversationId?: string; message?: string; regenerate?: boolean; edit?: boolean; model: string }) =>

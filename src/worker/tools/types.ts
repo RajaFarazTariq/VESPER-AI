@@ -13,6 +13,15 @@ export interface ToolContext {
   web?: WebToolContext;
   /** The chat's abort signal (Stop button / closed tab), so slow lookups stop too. */
   signal?: AbortSignal;
+  /** Workers AI binding (the knowledge base uses its re-ranker); absent in local dev and tests. */
+  ai?: Ai;
+}
+
+/** What the server has right now, for tools that depend on it (a key, a daily quota, documents). */
+export interface ToolServerState {
+  web?: WebToolContext;
+  /** At least one knowledge-base document is ready to search. */
+  knowledgeReady?: boolean;
 }
 
 export interface WebToolContext {
@@ -39,8 +48,8 @@ export interface AgentTool {
   description: string;
   risk: "read" | "write";
   requiresMemory: boolean;
-  /** Needs a server-side key or setting (e.g. web search needs TAVILY_API_KEY); omitted = always available. */
-  isAvailable?(web: WebToolContext | undefined): boolean;
+  /** Needs something on the server (web search: TAVILY_API_KEY; knowledge base: documents); omitted = always available. */
+  isAvailable?(server: ToolServerState): boolean;
   parameters: Record<string, unknown>;
   schema: z.ZodType;
   run(args: unknown, ctx: ToolContext): Promise<ToolOutput>;

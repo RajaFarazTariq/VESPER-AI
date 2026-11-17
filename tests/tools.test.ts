@@ -17,7 +17,123 @@ import {
   type ToolCall,
 } from "../src/worker/llm/types";
 import { CalcError, evaluate } from "../src/worker/tools/calculator";
-import { ALL_TOOLS, enabledTools } from "../src/worker/tools/registry";
+import { ALL_TOOLS, enabledTools, type ToolContext } from "../src/worker/tools/registry";
+import { chunkUnits } from "../src/shared/chunking";
+import {
+  addChunks,
+  buildMatchQuery,
+  completeDocument,
+  createCollection,
+  createDocument,
+  deleteDocument,
+  MAX_KNOWLEDGE_CHARS,
+  type KnowledgeHit,
+} from "../src/worker/db/knowledge";
+import { rerank } from "../src/worker/tools/knowledge";
+
+describe("knowledge base search", () => {
+  const tool = ALL_TOOLS.find((t) => t.name === "search_knowledge")!;
+  const ctx = (): ToolContext => ({ db: env.DB, userId: "u1", settings: { ...DEFAULT_SETTINGS }, now: new Date() });
+
+  async function addPdf(folder: string, title: string, pages: string[], finish = true) {
+    const collection = await createCollection(env.DB, { name: folder, description: "" });
+    const chunks = chunkUnits(pages.map((text, i) => ({ location: `page ${i + 1}`, text })));
+    const doc = await createDocument(env.DB, {
+      collectionId: collection.id,
+      title,
+      kind: "pdf",
+      pages: pages.length,
+      expectedChunks: chunks.length,
+      totalChars: chunks.reduce((n, c) => n + c.text.length, 0),
+    });
+    await addChunks(env.DB, doc.id, chunks);
+    if (finish) await completeDocument(env.DB, doc.id);
+    return doc;
+  }
+
+  it("finds passages by key words (word stems too) and cites the document and page", async () => {
+    await addPdf("Policies", "Handbook.pdf", [
+      "Welcome to the company handbook.",
+      "Annual leave: employees get 24 days of paid leave per year. Unused days can be carried over until March.",
+      "Salaries are paid on the 25th of each month.",
+    ]);
+    const out = await tool.run({ query: "How many leaves do employees get?" }, ctx());
+    expect(out.summary).toBe("Found 1 passage in 1 document");
+    expect(out.content).toContain("24 days of paid leave");
+    expect(out.content).toContain("Untrusted content from the knowledge base");
+    expect(out.sources).toEqual([{ title: "Handbook.pdf", location: "page 2" }]);
+
+    const none = await tool.run({ query: "quantum chromodynamics" }, ctx());
+    expect(none.summary).toMatch(/^Nothing found/);
+    expect(none.sources).toBeUndefined();
+  });
+
+  it("searches only finished documents, honours the folder filter and forgets deleted documents", async () => {
+    await addPdf("Unfinished", "Draft.pdf", ["Parking rules: visitors park in zone B."], false);
+    const doc = await addPdf("Facilities", "Building.pdf", ["Parking rules: staff park in zone A."]);
+    const all = await tool.run({ query: "parking zone" }, ctx());
+    expect(all.content).toContain("zone A");
+    expect(all.content).not.toContain("zone B");
+    expect((await tool.run({ query: "parking zone", folder: "Policies" }, ctx())).summary).toMatch(/^Nothing found/);
+    expect((await tool.run({ query: "parking zone", folder: "facilities" }, ctx())).content).toContain("zone A");
+    await deleteDocument(env.DB, doc.id);
+    expect((await tool.run({ query: "parking zone" }, ctx())).summary).toMatch(/^Nothing found/);
+  });
+
+  it("refuses documents beyond the free space and incomplete uploads", async () => {
+    const collection = await createCollection(env.DB, { name: "Big", description: "" });
+    await expect(
+      createDocument(env.DB, { collectionId: collection.id, title: "x", kind: "txt", expectedChunks: 1, totalChars: MAX_KNOWLEDGE_CHARS + 1 }),
+    ).rejects.toThrow(/too large|full/);
+    const doc = await createDocument(env.DB, { collectionId: collection.id, title: "two.txt", kind: "txt", expectedChunks: 2, totalChars: 20 });
+    await addChunks(env.DB, doc.id, [{ seq: 0, location: "", text: "first part" }]);
+    await addChunks(env.DB, doc.id, [{ seq: 0, location: "", text: "first part" }]); // a retried batch is harmless
+    await expect(completeDocument(env.DB, doc.id)).rejects.toThrow(/incomplete \(1 of 2/);
+    await expect(addChunks(env.DB, doc.id, [{ seq: 5, location: "", text: "x" }])).rejects.toThrow(/out of range/);
+    await addChunks(env.DB, doc.id, [{ seq: 1, location: "", text: "second part" }]);
+    expect((await completeDocument(env.DB, doc.id)).status).toBe("ready");
+  });
+
+  it("re-orders candidates with the re-ranker, and keeps keyword order when it fails", async () => {
+    const hit = (n: number): KnowledgeHit => ({
+      chunkId: n,
+      text: `passage ${n}`,
+      location: "",
+      documentId: "d",
+      title: "t",
+      kind: "txt",
+      sourceUrl: null,
+      collection: "c",
+    });
+    const hits = [hit(0), hit(1), hit(2)];
+    const good = { run: async () => ({ response: [{ id: 0, score: 0.2 }, { id: 2, score: 0.9 }] }) } as unknown as Ai;
+    expect((await rerank(good, "q", hits, 2)).map((h) => h.chunkId)).toEqual([2, 0]);
+    const broken = {
+      run: async () => {
+        throw new Error("boom");
+      },
+    } as unknown as Ai;
+    expect((await rerank(broken, "q", hits, 2)).map((h) => h.chunkId)).toEqual([0, 1]);
+    expect((await rerank(undefined, "q", hits, 5)).map((h) => h.chunkId)).toEqual([0, 1, 2]);
+  });
+
+  it("builds safe full-text queries from any text", () => {
+    expect(buildMatchQuery('What is the "leave" OR policy* NEAR(x)?')).toBe('"leave" OR "policy" OR "near"'); // 1-letter words dropped
+    expect(buildMatchQuery("the")).toBe('"the"'); // only common words: search them anyway
+    expect(buildMatchQuery("?! --")).toBeNull();
+  });
+
+  it("names the folders in the system prompt and asks for citations", () => {
+    const prompt = buildSystemPrompt({
+      appName: "VESPER",
+      customInstructions: "",
+      tools: ["search_knowledge"],
+      knowledge: [{ name: "Policies", description: "HR rules" }],
+    });
+    expect(prompt).toContain("• Policies — HR rules");
+    expect(prompt).toContain("(Handbook.pdf, page 12)");
+  });
+});
 
 describe("calculator", () => {
   it.each([
@@ -116,11 +232,13 @@ describe("tool-call streaming helpers", () => {
 
 describe("tool settings", () => {
   it("respects the master switch, per-tool switches and the memory switch", () => {
-    // Without a search key, web search isn't offered; with one, every tool is.
-    expect(enabledTools({ ...DEFAULT_SETTINGS }).map((t) => t.name)).toEqual(ALL_TOOLS.map((t) => t.name).filter((n) => n !== "web_search"));
+    // Without a search key, web search isn't offered; without documents, the knowledge base isn't; with both, every tool is.
+    const all = ALL_TOOLS.map((t) => t.name);
+    expect(enabledTools({ ...DEFAULT_SETTINGS }).map((t) => t.name)).toEqual(all.filter((n) => n !== "web_search" && n !== "search_knowledge"));
     const web = { userAgent: "test", tavilyApiKey: "k", webSearchDailyLimit: 30 };
-    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], web).map((t) => t.name)).toEqual(ALL_TOOLS.map((t) => t.name));
-    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { ...web, webSearchDailyLimit: 0 }).map((t) => t.name)).not.toContain("web_search");
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web }).map((t) => t.name)).toEqual(all.filter((n) => n !== "search_knowledge"));
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true }).map((t) => t.name)).toEqual(all);
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web: { ...web, webSearchDailyLimit: 0 } }).map((t) => t.name)).not.toContain("web_search");
     expect(enabledTools({ ...DEFAULT_SETTINGS, toolsEnabled: false })).toEqual([]);
     expect(enabledTools({ ...DEFAULT_SETTINGS, disabledTools: ["calculator"] }).map((t) => t.name)).not.toContain("calculator");
     const noMemory = enabledTools({ ...DEFAULT_SETTINGS, memoryEnabled: false }).map((t) => t.name);

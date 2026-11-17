@@ -612,3 +612,62 @@ describe("6.1 admin-picked model list for users", () => {
     expect(s).toMatchObject({ signupsOpen: false, showReasoningToUsers: true, userModels: [{ value: "groq:m", label: "M" }] });
   });
 });
+
+describe("0.9 knowledge base (admin panel → Knowledge)", () => {
+  it("is admin-only; uploads in batches; adds web pages; users get the search tool and the folder list in chat", async () => {
+    const admin = await devLogin("octocat");
+    const user = await devLogin("someone");
+    expect((await call("/api/admin/knowledge", { cookie: user })).response.status).toBe(403);
+
+    const created = await call("/api/admin/knowledge/collections", { method: "POST", body: JSON.stringify({ name: "Policies", description: "HR rules" }), cookie: admin });
+    expect(created.response.status).toBe(201);
+    const folder = created.json.collection.id as string;
+    expect((await call("/api/admin/knowledge/collections", { method: "POST", body: JSON.stringify({ name: "policies" }), cookie: admin })).response.status).toBe(409);
+
+    const doc = await call("/api/admin/knowledge/documents", {
+      method: "POST",
+      body: JSON.stringify({ collectionId: folder, title: "Handbook.pdf", kind: "pdf", pages: 2, expectedChunks: 2, totalChars: 60 }),
+      cookie: admin,
+    });
+    expect(doc.response.status).toBe(201);
+    const id = doc.json.document.id as string;
+    const send = (chunks: unknown[]) => call(`/api/admin/knowledge/documents/${id}/chunks`, { method: "POST", body: JSON.stringify({ chunks }), cookie: admin });
+    expect((await send([{ seq: 0, location: "page 1", text: "Annual leave is 24 days per year." }])).response.status).toBe(200);
+    expect((await call(`/api/admin/knowledge/documents/${id}/complete`, { method: "POST", body: "{}", cookie: admin })).response.status).toBe(409);
+    expect((await send([{ seq: 1, location: "page 2", text: "Salaries are paid monthly." }])).json.document.chunkCount).toBe(2);
+    const done = await call(`/api/admin/knowledge/documents/${id}/complete`, { method: "POST", body: "{}", cookie: admin });
+    expect(done.json.document).toMatchObject({ status: "ready", chunkCount: 2, pages: 2 });
+
+    extraHandler = (url) =>
+      url === "https://example.com/faq"
+        ? new Response("<html><head><title>Leave FAQ</title></head><body><nav>menu</nav><p>Leave requests need two weeks notice.</p></body></html>", {
+            headers: { "content-type": "text/html" },
+          })
+        : new Response("no", { status: 404 });
+    installFetch();
+    const web = await call("/api/admin/knowledge/web", { method: "POST", body: JSON.stringify({ collectionId: folder, url: "https://example.com/faq" }), cookie: admin });
+    expect(web.response.status, web.text).toBe(201);
+    expect(web.json.document).toMatchObject({ title: "Leave FAQ", kind: "web", status: "ready", sourceUrl: "https://example.com/faq" });
+    const local = await call("/api/admin/knowledge/web", { method: "POST", body: JSON.stringify({ collectionId: folder, url: "http://localhost/x" }), cookie: admin });
+    expect(local.response.status).toBe(400);
+
+    const list = await call("/api/admin/knowledge", { cookie: admin });
+    expect(list.json.collections[0].documents).toHaveLength(2);
+    expect(list.json.usage.chars).toBeGreaterThan(0);
+
+    // Users can now switch the tool in Settings, and chat offers it with the folder named.
+    expect((await call("/api/tools", { cookie: user })).json.tools.map((t: { name: string }) => t.name)).toContain("search_knowledge");
+    let sent: any = null;
+    extraHandler = (url, init) => {
+      if (init?.method === "POST" && url.endsWith("/chat/completions")) sent = JSON.parse(String(init.body));
+      return sseResponse("ok");
+    };
+    installFetch();
+    expect((await call("/api/chat", { method: "POST", body: JSON.stringify({ message: "How much leave do I get?" }), cookie: user })).response.status).toBe(200);
+    expect(sent.tools.map((t: { function: { name: string } }) => t.function.name)).toContain("search_knowledge");
+    expect(sent.messages[0].content).toContain("• Policies — HR rules");
+
+    expect((await call(`/api/admin/knowledge/collections/${folder}`, { method: "DELETE", cookie: admin })).response.status).toBe(200);
+    expect((await call("/api/admin/knowledge", { cookie: admin })).json.usage).toMatchObject({ chars: 0, documents: 0 });
+  });
+});

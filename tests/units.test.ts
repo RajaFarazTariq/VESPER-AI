@@ -180,3 +180,27 @@ describe("normalizeMath", () => {
     expect(normalizeMath(input)).toBe(input);
   });
 });
+
+describe("knowledge chunking", () => {
+  it("packs lines into passages that never cross pages, with a small overlap", async () => {
+    const { chunkUnits } = await import("../src/shared/chunking");
+    const page = Array.from({ length: 40 }, (_, i) => `Line ${i} of the page has some words in it to fill space.`).join("\n");
+    const chunks = chunkUnits([{ location: "page 1", text: page }, { location: "page 2", text: "Short page." }]);
+    expect(chunks.map((c) => [c.seq, c.location])).toEqual([[0, "page 1"], [1, "page 1"], [2, "page 2"]]);
+    expect(chunks[1]!.text).toContain(chunks[0]!.text.split("\n").pop()!);
+    const long = chunkUnits([{ location: "", text: "x".repeat(5_000) }]);
+    expect(long.every((c) => c.text.length <= 1_800)).toBe(true);
+    expect(long.reduce((n, c) => n + c.text.length, 0)).toBe(5_000);
+  });
+
+  it("cuts Markdown into sections and CSV into row blocks that repeat the header", async () => {
+    const { csvRecords, csvUnits, markdownUnits } = await import("../src/shared/chunking");
+    expect(markdownUnits("Intro\n# Leave\nText\n## Pay *rates*\nMore").map((u) => u.location)).toEqual(["", "section “Leave”", "section “Pay rates”"]);
+    expect(csvRecords('a,b\n"x\ny",z\r\n')).toEqual(["a,b", '"x\ny",z']);
+    const units = csvUnits("name,city\n" + Array.from({ length: 100 }, (_, i) => `"Person, ${i}",City ${i}`).join("\n"));
+    expect(units.length).toBeGreaterThan(1);
+    expect(units.every((u) => u.text.startsWith("name,city\n"))).toBe(true);
+    expect(units[0]!.location).toMatch(/^rows 2–\d+$/);
+    expect(units[units.length - 1]!.location).toMatch(/–101$/);
+  });
+});

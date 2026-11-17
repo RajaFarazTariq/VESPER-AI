@@ -49,14 +49,22 @@ async function runTool(
       throw new ToolInputError(parsed.error.issues.map((i) => `${i.path.join(".") || "args"}: ${i.message}`).join("; "));
     }
     const output = await tool.run(parsed.data, ctx);
-    const sources = (output.sources ?? []).filter((s) => /^https?:\/\//i.test(s.url)).slice(0, 10);
+    // Web sources need an http(s) link; knowledge-base documents have a title (and location) instead.
+    const sources = (output.sources ?? [])
+      .filter((s) => (s.url ? /^https?:\/\//i.test(s.url) : s.title.trim().length > 0))
+      .slice(0, 10)
+      .map((s) => ({
+        title: s.title.slice(0, 200),
+        ...(s.url ? { url: s.url.slice(0, 2000) } : {}),
+        ...(s.location ? { location: s.location.slice(0, 120) } : {}),
+      }));
     return {
       event: {
         ...base,
         args,
         status: "done",
         summary: output.summary.slice(0, 300),
-        ...(sources.length ? { sources: sources.map((s) => ({ title: s.title.slice(0, 200), url: s.url.slice(0, 2000) })) } : {}),
+        ...(sources.length ? { sources } : {}),
       },
       content: output.content.slice(0, MAX_TOOL_RESULT_CHARS),
     };

@@ -101,10 +101,57 @@ export interface ToolEventDto {
   sources?: SourceDto[];
 }
 
-/** A cited source: shown as a numbered link under the answer. */
+/**
+ * A cited source, shown under the answer: a numbered link for web pages, or a document chip such as
+ * "Handbook.pdf · page 12" for knowledge-base documents (their files aren't stored, so no link).
+ */
 export interface SourceDto {
   title: string;
-  url: string;
+  /** http(s) link. Absent for knowledge-base files. */
+  url?: string;
+  /** Where in a document, e.g. "page 12" (knowledge-base sources). */
+  location?: string;
+}
+
+// ------------------------------------------------------------------ Knowledge base (admin panel → Knowledge)
+
+export type KnowledgeDocKind = "pdf" | "docx" | "txt" | "md" | "csv" | "web";
+
+export interface KnowledgeDocumentDto {
+  id: string;
+  collectionId: string;
+  title: string;
+  kind: KnowledgeDocKind;
+  sourceUrl: string | null;
+  /** "uploading" = not finished (an interrupted upload); only "ready" documents are searched. */
+  status: "uploading" | "ready";
+  pages: number | null;
+  chunkCount: number;
+  charCount: number;
+  createdAt: number;
+}
+
+export interface KnowledgeCollectionDto {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: number;
+  documents: KnowledgeDocumentDto[];
+}
+
+export interface KnowledgeUsageDto {
+  /** Characters of stored text, and the free-tier budget for the whole knowledge base. */
+  chars: number;
+  maxChars: number;
+  documents: number;
+}
+
+/** One passage of a document, prepared in the browser (files) or on the server (web pages). */
+export interface KnowledgeChunkInput {
+  seq: number;
+  /** e.g. "page 12", "section “Leave policy”", "rows 2–41" (may be empty). */
+  location: string;
+  text: string;
 }
 
 /** A tool as listed in Settings. */

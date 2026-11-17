@@ -13,6 +13,7 @@ import {
   updateConversation,
   updateLastUserMessage,
 } from "../db/conversations";
+import { searchableCollections } from "../db/knowledge";
 import { listMemories } from "../db/memories";
 import { D1ProviderStateStore } from "../db/provider-state";
 import { getAppSettings, userMayUseModel } from "../db/app-settings";
@@ -100,7 +101,12 @@ async function prepareTurn(
   user: SessionUser,
   input: { conversationId?: string; message?: string; regenerate?: boolean; edit?: boolean },
   selection: string,
-  extras: { tools: AgentTool[]; adminInstructions: string; timeZone: string | undefined },
+  extras: {
+    tools: AgentTool[];
+    adminInstructions: string;
+    timeZone: string | undefined;
+    knowledge?: { name: string; description: string }[];
+  },
 ): Promise<{ conversation: ConversationDto; isNew: boolean; userMessage: MessageDto; context: ReturnType<typeof buildContext> }> {
   const db = c.env.DB;
   const config = getConfig(c.env);
@@ -146,6 +152,7 @@ async function prepareTurn(
     ...(memories ? { memories } : {}),
     tools: extras.tools.map((t) => t.name),
     ...(extras.timeZone ? { timeZone: extras.timeZone } : {}),
+    ...(extras.knowledge ? { knowledge: extras.knowledge } : {}),
   });
   return { conversation, isNew, userMessage, context: buildContext(system, history, config.maxContextChars) };
 }
@@ -193,9 +200,15 @@ export const chatRoutes = new Hono<AppEnv>()
     await enforceDailyLimit(c.env.DB, user, appSettings.defaultDailyLimit);
 
     const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, appSettings);
-    const tools = enabledTools(user.settings, appSettings.disabledTools, web);
+    const knowledge = await searchableCollections(c.env.DB);
+    const tools = enabledTools(user.settings, appSettings.disabledTools, { web, knowledgeReady: knowledge.length > 0 });
     const timeZone = normalizeTimeZone(body.timeZone);
-    const turn = await prepareTurn(c, user, body, selection, { tools, adminInstructions: appSettings.botInstructions, timeZone });
+    const turn = await prepareTurn(c, user, body, selection, {
+      tools,
+      adminInstructions: appSettings.botInstructions,
+      timeZone,
+      ...(tools.some((t) => t.name === "search_knowledge") ? { knowledge } : {}),
+    });
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
     const encoder = new TextEncoder();
@@ -237,6 +250,7 @@ export const chatRoutes = new Hono<AppEnv>()
             web,
             signal: abort.signal,
             ...(timeZone ? { timeZone } : {}),
+            ...(c.env.AI ? { ai: c.env.AI } : {}),
           },
           maxTokens: config.maxOutputTokens,
           signal: abort.signal,

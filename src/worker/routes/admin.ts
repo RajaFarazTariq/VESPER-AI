@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app-env";
 import { appSettingsSchema, getAppSettings, updateAppSettings, webSearchesToday } from "../db/app-settings";
+import { hasSearchableKnowledge } from "../db/knowledge";
 import { deleteUserSessions } from "../db/sessions";
 import { deleteUser, getUserById, getUserForAdmin, listUsersForAdmin, roleOf, updateUser } from "../db/users";
 import { getConfig } from "../env";
@@ -55,11 +56,15 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .get("/settings", async (c) => {
     const config = getConfig(c.env);
-    const [settings, searchesUsed] = await Promise.all([getAppSettings(c.env.DB, config), webSearchesToday(c.env.DB)]);
+    const [settings, searchesUsed, knowledgeReady] = await Promise.all([
+      getAppSettings(c.env.DB, config),
+      webSearchesToday(c.env.DB),
+      hasSearchableKnowledge(c.env.DB),
+    ]);
     const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, settings);
     return c.json({
       settings,
-      tools: toolInfo(web),
+      tools: toolInfo({ web, knowledgeReady }),
       webSearch: {
         keyConfigured: Boolean(web.tavilyApiKey),
         usedToday: Math.min(searchesUsed, settings.webSearchDailyLimit),

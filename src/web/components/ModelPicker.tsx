@@ -20,11 +20,36 @@ const formatContext = (n?: number) => (n ? (n >= 1000 ? `${Math.round(n / 1000)}
 export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError, onRefresh, refreshing, placement = "down" }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  // Which side the menu opens on and how tall it may be, measured on open so it never runs off-screen.
+  const [layout, setLayout] = useState<{ up: boolean; maxHeight: number }>({ up: placement === "up", maxHeight: 480 });
   const root = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    const measure = () => {
+      const rect = root.current?.getBoundingClientRect();
+      if (!rect) return;
+      // The menu is cut off by the nearest scrolling/clipping container (e.g. the welcome screen's
+      // scroll area below the top bar), so measure the room inside that, not the whole window.
+      let clip: DOMRect | null = null;
+      for (let el = root.current?.parentElement; el; el = el.parentElement) {
+        if (/(auto|scroll|hidden)/.test(getComputedStyle(el).overflowY)) {
+          clip = el.getBoundingClientRect();
+          break;
+        }
+      }
+      const top = Math.max(0, clip?.top ?? 0);
+      const bottom = Math.min(window.innerHeight, clip?.bottom ?? window.innerHeight);
+      const above = rect.top - top - 12;
+      const below = bottom - rect.bottom - 12;
+      // Keep the requested side when it has room; otherwise use the side with more space.
+      const up = placement === "up" ? above >= 320 || above >= below : below < 320 && above > below;
+      const room = up ? above : below;
+      setLayout({ up, maxHeight: Math.max(160, Math.min(room, Math.round(window.innerHeight * 0.7))) });
+    };
+    measure();
+    window.addEventListener("resize", measure);
     const onDown = (e: MouseEvent) => {
       if (root.current && !root.current.contains(e.target as Node)) setOpen(false);
     };
@@ -35,8 +60,9 @@ export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", measure);
     };
-  }, [open]);
+  }, [open, placement]);
 
   const q = query.trim().toLowerCase();
   const groups = useMemo(() => {
@@ -91,12 +117,13 @@ export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError
 
       {open ? (
         <div
-          className={`absolute left-0 z-30 w-[min(88vw,380px)] rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] p-1.5 shadow-[var(--shadow-lg)] ${
-            placement === "up" ? "bottom-full mb-2" : "mt-1"
+          className={`absolute left-0 z-30 flex w-[min(88vw,380px)] flex-col rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] p-1.5 shadow-[var(--shadow-lg)] ${
+            layout.up ? "bottom-full mb-2" : "top-full mt-1"
           }`}
+          style={{ maxHeight: layout.maxHeight }}
         >
           {userModels ? (
-            <div className="max-h-[60vh] overflow-y-auto thin-scroll" role="listbox">
+            <div className="min-h-0 flex-1 overflow-y-auto thin-scroll" role="listbox">
               <button
                 type="button"
                 role="option"
@@ -122,7 +149,7 @@ export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError
             </div>
           ) : (
           <>
-          <div className="mb-1 flex items-center gap-1.5 px-1">
+          <div className="mb-1 flex shrink-0 items-center gap-1.5 px-1">
             <div className="flex flex-1 items-center gap-1.5 rounded-md bg-[var(--bg-soft)] px-2">
               <Search size={14} className="text-[var(--text-soft)]" />
               <input
@@ -143,7 +170,7 @@ export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError
               <RefreshCw size={14} className={refreshing ? "animate-spin" : undefined} />
             </button>
           </div>
-          <div className="max-h-[60vh] overflow-y-auto thin-scroll" role="listbox">
+          <div className="min-h-0 flex-1 overflow-y-auto thin-scroll" role="listbox">
             {!q ? (
               <button
                 type="button"

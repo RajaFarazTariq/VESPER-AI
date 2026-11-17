@@ -3,9 +3,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AdminUserDto, AppSettingsDto, ModelsResponse, ToolInfoDto, UserModelOption } from "../../shared/types";
 import { api, ApiError } from "../api/client";
 import { formatRelative } from "../lib/format";
+import { KnowledgeTab } from "./KnowledgeTab";
 import { Field, Toggle } from "./SettingsDialog";
 
-type Tab = "users" | "settings" | "models" | "providers";
+type Tab = "users" | "settings" | "models" | "knowledge" | "providers";
 
 interface Props {
   currentUserId: string;
@@ -37,6 +38,7 @@ export function AdminDialog({ currentUserId, models, refreshingModels, onRefresh
     ["users", "Users"],
     ["settings", "App settings"],
     ["models", "Models"],
+    ["knowledge", "Knowledge"],
     ["providers", "Providers"],
   ];
 
@@ -80,6 +82,7 @@ export function AdminDialog({ currentUserId, models, refreshingModels, onRefresh
           {tab === "users" ? <UsersTab currentUserId={currentUserId} onNotice={onNotice} /> : null}
           {tab === "settings" ? <SettingsTab onNotice={onNotice} /> : null}
           {tab === "models" ? <ModelsTab models={models} onNotice={onNotice} /> : null}
+          {tab === "knowledge" ? <KnowledgeTab onNotice={onNotice} /> : null}
           {tab === "providers" ? <ProvidersTab models={models} refreshing={refreshingModels} onRefresh={onRefreshModels} /> : null}
         </div>
       </div>

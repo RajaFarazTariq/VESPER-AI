@@ -4,8 +4,15 @@ Read this first when resuming work. Last updated: **2026-11-17**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-17)
 
-**State:** **v0.8.1** (sign-in page redesign) was handed to the owner to commit and push on 2026-11-17; the live site
-ran v0.8.0 (commit `940b218`) until then. Check `/api/health` → expect `0.8.1`.
+**State:** **v0.9.0 (knowledge base, Part 1)** was handed to the owner to push on 2026-11-17 (before that, v0.8.1 was
+live and live-checked). After his push: health → `0.9.0`, then he uploads a real PDF in Admin → Knowledge on the live
+site and asks a question about it (that's the first real check of the re-ranker and of answers with citations).
+
+**Knowledge base (v0.9.0), in short:** Admin panel → Knowledge: folders; upload PDF/Word/TXT/MD/CSV (read in the
+browser, text only stored); "Add web page"; space meter (~15,000 pages free). Every user's assistant gets the tool
+`search_knowledge` once a document is ready and cites "(document, page X)". Design and limits: docs/ARCHITECTURE.md §5c.
+**Part 2 (agreed, not built): daily automatic refresh of saved web pages** (cron already exists; 5 cron triggers free).
+Also fixed in 0.9.0: the model menu ran off the top of the screen (it now measures the room inside its scroll area).
 
 **Done on 2026-11-17:** sign-in page redesigned as a professional split layout (the owner rejected a playful "night
 sky" version first; see the design rule in section 5); the third-party-AI notice was removed from the sign-in page at
@@ -14,18 +21,17 @@ testing with his own keys. Confirmed live: **`TAVILY_API_KEY` is active** (the a
 "Live web search" chip).
 
 **First thing to do next session (in this order):**
-1. Health check → `0.8.1`; the owner checks the new sign-in page live and signs in once with Google.
-2. Open questions for him: (a) add a one-line privacy notice under the message box, replacing the removed one?
-   (b) carry the professional sign-in style across the whole app (welcome screen, composer, sidebar, admin panel)?
+1. Health check → `0.8.1` (or newer). Ask whether the owner replaced the GitHub token (see section 8).
+2. Decided 2026-11-17: **no** privacy notice under the message box (leave it), and the rest of the app UI stays as it
+   is for now (the professional style applies to the sign-in page and to new UI work).
 3. Local testing with real AI: he pastes his own keys into `.dev.vars` himself (never via chat), then restart the
    local servers. Without keys the local chat can't answer.
 4. **Live checks still pending** (one step at a time, with screenshots): web search, weather, currency, Wikipedia
    answers with sources; Edit on the last message; user vs admin view (tester in Incognito); Block / Unblock;
    Sign-ups open/closed switch; GitHub backup login.
-5. Then the next phase: **admin-managed knowledge base (RAG)**: the admin uploads documents, users get answers with
-   citations. Workers AI and Vectorize don't run in local dev without a Cloudflare login on this PC, which works
-   against "test locally, push once"; compare with Gemini embeddings + vectors stored in D1 (fully local). Check
-   current free limits first. After that: 6b GitHub integration (approval gate), then Gmail/Calendar/Telegram.
+5. Knowledge base Part 1 is built (v0.9.0). Next: **Part 2, daily refresh of saved web pages**; then per the roadmap PDF:
+   deep-research mode, answer quality (👍/👎 + verification), smarter memory, then 6b GitHub (approval gate),
+   Gmail/Calendar/Telegram. The owner wants **no setup on any PC**: everything is done from the live site.
 
 **Open decisions / known limits:** Edit works on the last user message only; chat search matches loaded titles only;
 not built (so no buttons): file/image upload, voice, projects, knowledge base, agents. Open-Meteo's free tier is
@@ -135,8 +141,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **6.1 Clean replies, model list, time zone, UI fixes** | ✅ live (v0.6.1, commit `b41e514`); live checks 1–5 passed, 6 partly (counting), block / sign-ups / GitHub backup not yet re-checked live |
 | **6a Live information** (web search, read page, weather, Wikipedia, currency, sources) | ✅ live (v0.7.0, commit `758f0b0`); owner adding `TAVILY_API_KEY`; live check pending |
 | **UI redesign (v0.8.0)**: new design system, sidebar, welcome screen, composer, messages, Edit last message | ✅ live (v0.8.0, commit `940b218`, verified 2026-11-11); live look with a real AI reply still to do |
-| **Sign-in page redesign (v0.8.1)**: professional split layout, brand panel; notice removed; local dev fix | ✅ handed to the owner to push 2026-11-17; live check pending |
-| **Next: admin-managed RAG knowledge base, then 6b GitHub** | ⏳ |
+| **Sign-in page redesign (v0.8.1)**: professional split layout, brand panel; notice removed; local dev fix | ✅ live (v0.8.1, commit `59f34c8`); live-checked 2026-11-17: new page shows, Google sign-in lands in the app as admin |
+| **Knowledge base Part 1 (v0.9.0)**: folders, uploads (PDF/Word/TXT/MD/CSV), web pages, FTS5 + re-ranker, citations; model-menu fix | ✅ built and tested 2026-11-17 (154 tests; real-browser upload of a PDF + .docx under the live CSP); handed to the owner to push |
+| **Next: knowledge base Part 2 (daily web-page refresh), then roadmap items** | ⏳ |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
 - All colours, surfaces, borders and shadows are CSS variables in `src/web/styles.css` (`--bg`, `--bg-elevated`,

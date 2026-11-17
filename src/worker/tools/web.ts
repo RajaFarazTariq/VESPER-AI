@@ -32,7 +32,7 @@ const webSearch = define({
     "Returns up to 5 results with title, URL and a text snippet. Use read_page to read a result in full when the snippet isn't enough.",
   risk: "read",
   requiresMemory: false,
-  isAvailable: (web) => Boolean(web?.tavilyApiKey) && (web?.webSearchDailyLimit ?? 0) > 0,
+  isAvailable: ({ web }) => Boolean(web?.tavilyApiKey) && (web?.webSearchDailyLimit ?? 0) > 0,
   parameters: {
     type: "object",
     properties: {
@@ -136,6 +136,59 @@ export async function htmlToText(html: string): Promise<{ title: string; text: s
   return { title: decodeEntities(title).replace(/\s+/g, " ").trim(), text };
 }
 
+/**
+ * Open a public web page and return its title and readable text. Every redirect hop is checked
+ * again (public http(s) addresses only). Used by read_page and by the knowledge base's
+ * "Add web page". Failures are ToolInputErrors with a plain explanation.
+ */
+export async function fetchPageText(
+  raw: string,
+  options: { userAgent: string; signal?: AbortSignal; maxBytes?: number },
+): Promise<{ url: URL; title: string; text: string; truncated: boolean }> {
+  let url = checkPublicUrl(raw);
+  let response: Response | null = null;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    try {
+      response = await fetch(url.href, {
+        redirect: "manual",
+        headers: { "User-Agent": options.userAgent, Accept: "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5" },
+        signal: options.signal
+          ? AbortSignal.any([AbortSignal.timeout(DEFAULT_TIMEOUT_MS), options.signal])
+          : AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+      });
+    } catch {
+      throw new FetchFailed(`Couldn't open ${url.hostname} (no answer or too slow).`);
+    }
+    const location = response.headers.get("location");
+    if (response.status >= 300 && response.status < 400 && location) {
+      await response.body?.cancel().catch(() => {});
+      if (hop === MAX_REDIRECTS) throw new FetchFailed("The page redirected too many times.");
+      url = checkPublicUrl(new URL(location, url).href); // every hop is checked again
+      continue;
+    }
+    break;
+  }
+  if (!response) throw new FetchFailed("Couldn't open the page.");
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw new FetchFailed(`The page returned an error (HTTP ${response.status}).`);
+  }
+  const type = (response.headers.get("content-type") ?? "").toLowerCase();
+  if (type.includes("pdf")) {
+    await response.body?.cancel().catch(() => {});
+    throw new ToolInputError("That's a PDF file. Reading PDFs from the web isn't supported yet.");
+  }
+  const isHtml = !type || type.includes("html") || type.includes("xml");
+  if (!isHtml && !type.startsWith("text/")) {
+    await response.body?.cancel().catch(() => {});
+    throw new ToolInputError(`That address isn't a readable web page (it's ${type.split(";")[0]}).`);
+  }
+  const { text: body, truncated } = await readLimited(response, options.maxBytes ?? 1_500_000);
+  const page = isHtml ? await htmlToText(body) : { title: "", text: body.trim() };
+  if (!page.text) throw new ToolInputError("The page has no readable text (it may need JavaScript or a login).");
+  return { url, title: page.title, text: page.text, truncated };
+}
+
 const readPage = define({
   name: "read_page",
   label: "Read a web page",
@@ -151,49 +204,12 @@ const readPage = define({
   },
   schema: z.object({ url: z.string().trim().min(8).max(2000) }),
   async run({ url: raw }, ctx) {
-    let url = checkPublicUrl(raw);
-    let response: Response | null = null;
-    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      try {
-        response = await fetch(url.href, {
-          redirect: "manual",
-          headers: { "User-Agent": userAgent(ctx), Accept: "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5" },
-          signal: ctx.signal ? AbortSignal.any([AbortSignal.timeout(DEFAULT_TIMEOUT_MS), ctx.signal]) : AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
-        });
-      } catch {
-        throw new FetchFailed(`Couldn't open ${url.hostname} (no answer or too slow).`);
-      }
-      const location = response.headers.get("location");
-      if (response.status >= 300 && response.status < 400 && location) {
-        await response.body?.cancel().catch(() => {});
-        if (hop === MAX_REDIRECTS) throw new FetchFailed("The page redirected too many times.");
-        url = checkPublicUrl(new URL(location, url).href); // every hop is checked again
-        continue;
-      }
-      break;
-    }
-    if (!response) throw new FetchFailed("Couldn't open the page.");
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
-      throw new FetchFailed(`The page returned an error (HTTP ${response.status}).`);
-    }
-    const type = (response.headers.get("content-type") ?? "").toLowerCase();
-    if (type.includes("pdf")) {
-      await response.body?.cancel().catch(() => {});
-      throw new ToolInputError("That's a PDF file. Reading PDFs isn't supported yet.");
-    }
-    const isHtml = !type || type.includes("html") || type.includes("xml");
-    if (!isHtml && !type.startsWith("text/")) {
-      await response.body?.cancel().catch(() => {});
-      throw new ToolInputError(`That address isn't a readable web page (it's ${type.split(";")[0]}).`);
-    }
-    const { text: body, truncated: bodyCut } = await readLimited(response, 1_500_000);
-    const page = isHtml ? await htmlToText(body) : { title: "", text: body.trim() };
-    if (!page.text) throw new ToolInputError("The page has no readable text (it may need JavaScript or a login).");
+    const page = await fetchPageText(raw, { userAgent: userAgent(ctx), ...(ctx.signal ? { signal: ctx.signal } : {}) });
+    const { url } = page;
     const title = clip(page.title || url.hostname, 150);
     const text = page.text.length > PAGE_TEXT_CHARS ? `${page.text.slice(0, PAGE_TEXT_CHARS)}…` : page.text;
     return {
-      content: wrapUntrusted(url.hostname, { url: url.href, title, text, cut_off: bodyCut || page.text.length > PAGE_TEXT_CHARS }),
+      content: wrapUntrusted(url.hostname, { url: url.href, title, text, cut_off: page.truncated || page.text.length > PAGE_TEXT_CHARS }),
       summary: `Read "${clip(title, 80)}"`,
       sources: [{ title, url: url.href }],
     };

@@ -1,4 +1,4 @@
-import { BookOpen, Bookmark, BookmarkMinus, Calculator, ChevronRight, CircleAlert, Clock, CloudSun, Coins, FileText, Loader2, Search, Wrench } from "lucide-react";
+import { BookOpen, Bookmark, BookmarkMinus, Calculator, ChevronRight, CircleAlert, Clock, CloudSun, Coins, FileText, Library, Loader2, Search, Wrench } from "lucide-react";
 import { useState } from "react";
 import type { SourceDto, ToolEventDto } from "../../shared/types";
 
@@ -12,6 +12,7 @@ export const TOOL_ICONS: Record<string, typeof Wrench> = {
   weather: CloudSun,
   wikipedia: BookOpen,
   currency: Coins,
+  search_knowledge: Library,
 };
 
 /** Every source used for a reply, once each, in the order the tools found them. */
@@ -20,8 +21,11 @@ export function collectSources(tools: ToolEventDto[] | null | undefined): Source
   const out: SourceDto[] = [];
   for (const tool of tools ?? []) {
     for (const source of tool.sources ?? []) {
-      if (!/^https?:\/\//i.test(source.url) || seen.has(source.url)) continue;
-      seen.add(source.url);
+      // Web pages need an http(s) link; knowledge-base documents are identified by title + location.
+      if (source.url !== undefined && !/^https?:\/\//i.test(source.url)) continue;
+      const key = source.url ? `${source.url}|${source.location ?? ""}` : `doc:${source.title}|${source.location ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push(source);
     }
   }
@@ -42,19 +46,31 @@ export function SourceList({ sources }: { sources: SourceDto[] }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-xs" aria-label="Sources">
       <span className="text-[var(--text-soft)]">Sources:</span>
-      {sources.map((s, i) => (
-        <a
-          key={s.url}
-          href={s.url}
-          target="_blank"
-          rel="noopener noreferrer nofollow"
-          title={`${s.title}\n${s.url}`}
-          className="inline-flex max-w-[16rem] items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
-        >
-          <span className="shrink-0 font-medium">{i + 1}</span>
-          <span className="truncate">{hostOf(s.url)}</span>
-        </a>
-      ))}
+      {sources.map((s, i) =>
+        s.url ? (
+          <a
+            key={`${s.url}|${s.location ?? ""}`}
+            href={s.url}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            title={`${s.title}\n${s.url}`}
+            className="inline-flex max-w-[16rem] items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+          >
+            <span className="shrink-0 font-medium">{i + 1}</span>
+            <span className="truncate">{hostOf(s.url)}</span>
+          </a>
+        ) : (
+          <span
+            key={`doc:${s.title}|${s.location ?? ""}`}
+            title={s.location ? `${s.title}, ${s.location}` : s.title}
+            className="inline-flex max-w-[18rem] items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--text-soft)]"
+          >
+            <span className="shrink-0 font-medium">{i + 1}</span>
+            <FileText size={11} className="shrink-0" />
+            <span className="truncate">{s.location ? `${s.title} · ${s.location}` : s.title}</span>
+          </span>
+        ),
+      )}
     </div>
   );
 }
@@ -101,6 +117,7 @@ const PLAIN: Record<string, [running: string, done: string]> = {
   weather: ["Checking the weather…", "Checked the weather"],
   wikipedia: ["Looking it up on Wikipedia…", "Looked it up on Wikipedia"],
   currency: ["Checking exchange rates…", "Checked exchange rates"],
+  search_knowledge: ["Searching the knowledge base…", "Searched the knowledge base"],
 };
 
 function PlainToolLine({ tool }: { tool: ToolEventDto }) {
