@@ -5,7 +5,7 @@ import { executeRoute, planRoute, type RouteTarget } from "../src/worker/llm/rou
 import { ProviderError, type Provider, type ProviderRequest, type StreamChunk } from "../src/worker/llm/types";
 
 type Behaviour =
-  | { kind: "ok"; text: string[] }
+  | { kind: "ok"; text: string[]; reasoning?: string[] }
   | { kind: "fail"; error: ProviderError }
   | { kind: "break-after"; text: string[]; error: ProviderError };
 
@@ -40,6 +40,7 @@ class FakeProvider implements Provider {
     this.calls++;
     if (behaviour.kind === "fail") throw behaviour.error;
     return (async function* () {
+      if (behaviour.kind === "ok") for (const r of behaviour.reasoning ?? []) yield { type: "reasoning", text: r } as StreamChunk;
       for (const t of behaviour.text) yield { type: "text", text: t } as StreamChunk;
       if (behaviour.kind === "break-after") throw behaviour.error;
       yield { type: "usage", inputTokens: 3, outputTokens: 4 } as StreamChunk;
@@ -213,6 +214,19 @@ describe("executeRoute", () => {
       { provider: "gemini", model: "m" },
     ]);
     expect(result.text).toBe("answer");
+  });
+
+  it("falls back when a model only sends thinking notes and no answer", async () => {
+    const groq = new FakeProvider("groq", [{ kind: "ok", text: [], reasoning: ["Need to search. Let's search."] }]);
+    const gemini = new FakeProvider("gemini", [{ kind: "ok", text: ["answer"] }]);
+    const { run } = setup([groq, gemini]);
+    const result = await run([
+      { provider: "groq", model: "g" },
+      { provider: "gemini", model: "m" },
+    ]);
+    expect(result.status).toBe("complete");
+    expect(result.text).toBe("answer");
+    expect(result.target).toEqual({ provider: "gemini", model: "m" });
   });
 
   it("stops without saving anything when aborted before output", async () => {

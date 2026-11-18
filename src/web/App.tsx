@@ -202,13 +202,15 @@ function ChatApp({
       .catch((e: unknown) => toast(e instanceof ApiError ? e.message : "Could not load conversations."));
   }, [loadModels, toast]);
 
-  // Tools this server offers (refreshed when settings change, since the user can switch tools off).
+  // Tools this server offers. Refreshed when settings change (the user can switch tools off) and when the admin
+  // panel closes (the first ready document adds the knowledge base; the admin can switch tools off for everyone).
   useEffect(() => {
+    if (adminOpen) return;
     api.tools().then(
       (r) => setToolList(r.tools),
       () => setToolList([]),
     );
-  }, [settings]);
+  }, [settings, adminOpen]);
   const activeTools = useMemo(() => {
     if (toolList === null) return null;
     if (!settings.toolsEnabled) return [];

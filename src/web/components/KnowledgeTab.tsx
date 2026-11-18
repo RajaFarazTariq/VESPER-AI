@@ -157,7 +157,7 @@ export function KnowledgeTab({ onNotice }: { onNotice: Notice }) {
           <div className="mt-3">
             <div className="flex justify-between text-xs text-[var(--text-soft)]">
               <span>
-                Space used: {percent < 1 && usage.chars > 0 ? "under 1" : Math.round(percent)}% (about {pagesOf(usage.chars).toLocaleString()} of{" "}
+                Space used: {percent < 1 && usage.chars > 0 ? "under 1" : Math.round(percent)}% (about {(usage.chars > 0 ? pagesOf(usage.chars) : 0).toLocaleString()} of{" "}
                 {Math.round(usage.maxChars / CHARS_PER_PAGE).toLocaleString()} pages)
               </span>
               <span>

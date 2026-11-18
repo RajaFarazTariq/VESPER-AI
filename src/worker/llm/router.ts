@@ -250,7 +250,8 @@ export async function executeRoute(input: {
             result.text += chunk.text;
             await input.events.text(chunk.text);
           } else if (chunk.type === "reasoning") {
-            produced = true;
+            // Thinking notes alone aren't the answer: a model that only "thinks" and then sends nothing
+            // (seen with Groq's gpt-oss) must still fall back to the next provider.
             result.reasoning += chunk.text;
             await input.events.reasoning(chunk.text);
           } else {

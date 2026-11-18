@@ -71,7 +71,8 @@ export const searchKnowledge = define({
   label: "Knowledge base",
   description:
     "Search the knowledge base: documents the administrator added (for example handbooks, policies, books, notes and saved web pages). " +
-    "Returns the most relevant passages with their document name and page or section. Use specific key words from the topic; " +
+    "Returns the most relevant passages with their document name and page or section. Check it before searching the web whenever a " +
+    "question relates to one of its folders. Use specific key words from the topic; " +
     "if nothing relevant comes back, try different words or synonyms before concluding the documents don't cover it.",
   risk: "read",
   requiresMemory: false,
