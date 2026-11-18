@@ -171,6 +171,21 @@ knowledge base for the admin's own material. Everything below is free (no extra 
   code/links are skipped; version numbers must match exactly. The result is an admin-only step "Number check" under
   the answer ("Not found in any source: 63%" or "All N numbers found"); `lib/present.ts` never sends it to users.
   The answer is never changed or regenerated.
+- **Official page check (v0.9.4)** (`officialPagePassages` in `tools/web.ts`): when the question names an
+  organisation, its own site is among the results (quality *official*), the question asks for a figure and that
+  result's snippet has none, the server reads the page itself (free page reader, 6 s limit) and attaches the 2–3 most
+  relevant passages (≤500 characters each, chosen by shared words + a bonus for figures) as `official_page_passages`.
+  Failures just mean no passages. R1 tells the model these are the official source.
+- **"Quoting X" labels (v0.9.4)** (`quotedOrganisations` in `tools/knowledge.ts`): passages such as "GitHub
+  reported…", "CEO of GitHub, said…" or "according to the World Health Organization" are labelled
+  `your document (quoting GitHub)`; authors ("Peng et al. [40] reported") and sentence starts are skipped. Rule R3b:
+  a document quoting X is second-hand for X's own figures, and X's own site wins.
+- **Plain document citations (v0.9.4)** (`plainDocumentLinks` in `web/lib/format.ts`): the browser shows any Markdown
+  link that names one of the answer's documents, or that doesn't point to a real web address, as plain text. Real
+  web links (web PDFs included) stay links. "Note:" lines only when sources give different figures (R4).
+- **Groq short wait (v0.9.4)** (`llm/router.ts`): on a Groq rate limit whose wait (Retry-After header, or "try again
+  in 6.5s" in the message) is 10 s or less, the router waits once and retries Groq; longer waits (usually 15–30 s for
+  the per-minute token limit) fall back to the next provider at once.
 - **Accuracy test** (`npm run accuracy`, `tests/accuracy/questions.json`): 18 real questions with expected answers
   and sources (conflict, documents-only, latest, official statistics, stable facts, calculation, live rate,
   no-answer). "Latest" expectations are read live from python.org, nodejs.org, kernel.org and Frankfurter at run time.

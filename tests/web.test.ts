@@ -194,6 +194,58 @@ describe("web_search tool", () => {
     expect(results[0].published).toBe("2023-02-14"); // older than the preferred year, still first
   });
 
+  describe("official page check", () => {
+    const OFFICIAL_URL = "https://github.blog/news/copilot-for-business";
+    const page = `<!doctype html><html><head><title>Copilot for Business</title></head><body><article>
+      <p>${"GitHub Copilot for Business is now available to organisations everywhere. ".repeat(4)}</p>
+      <p>Today, we're seeing an average of 46% of code being built using GitHub Copilot across all programming languages, and 61% among developers using Java.</p>
+      <p>${"Separate paragraph about plans for enterprises and onboarding guidance for admins. ".repeat(6)}</p>
+      </article></body></html>`;
+    const tavily = (officialSnippet: string) =>
+      json({
+        results: [
+          { title: "Stats site", url: "https://copilotstats.example.com/a", content: "Copilot writes 61% of Java code, says this site" },
+          { title: "GitHub blog", url: OFFICIAL_URL, content: officialSnippet },
+        ],
+      });
+    const web = (question: string) => ({ userAgent: "t", tavilyApiKey: "tvly-k", webSearchDailyLimit: 30, question });
+    const html = (body: string, status = 200) => new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
+
+    it("reads the organisation's own page when its snippet has no figure, and passes only 2–3 short passages", async () => {
+      const spy = mockFetch((url) => (url === "https://api.tavily.com/search" ? tavily("GitHub Copilot for Business is now available.") : html(page)));
+      const out = await tool("web_search").run(
+        { query: "GitHub Copilot Java share of code" },
+        ctx({ web: web("According to GitHub, what share of Java code does Copilot write?") }),
+      );
+      expect(spy.mock.calls.map(([u]) => String(u))).toContain(OFFICIAL_URL);
+      const official = JSON.parse(out.content).data.results.find((r: any) => r.url === OFFICIAL_URL);
+      expect(official.official_page_passages.length).toBeGreaterThan(0);
+      expect(official.official_page_passages.length).toBeLessThanOrEqual(3);
+      expect(official.official_page_passages.join(" ")).toContain("61% among developers using Java");
+      for (const p of official.official_page_passages) expect(p.length).toBeLessThanOrEqual(501);
+      expect(out.summary).toContain("read the official page github.blog");
+    });
+
+    it("doesn't read the page when its snippet already has the figure, when no organisation is named, or when the page fails", async () => {
+      const already = mockFetch((url) => (url === "https://api.tavily.com/search" ? tavily("46% overall and 61% for Java developers.") : html(page)));
+      await tool("web_search").run({ query: "GitHub Copilot Java share" }, ctx({ web: web("According to GitHub, how much Java code does Copilot write?") }));
+      expect(already.mock.calls.map(([u]) => String(u))).not.toContain(OFFICIAL_URL);
+      vi.restoreAllMocks();
+
+      const unnamed = mockFetch((url) => (url === "https://api.tavily.com/search" ? tavily("Copilot for Business is now available.") : html(page)));
+      await tool("web_search").run({ query: "Copilot Java share" }, ctx({ web: web("What share of Java code does Copilot write?") }));
+      expect(unnamed.mock.calls.map(([u]) => String(u))).not.toContain(OFFICIAL_URL); // github.blog isn't "official" here
+      vi.restoreAllMocks();
+
+      mockFetch((url) => (url === "https://api.tavily.com/search" ? tavily("GitHub Copilot for Business is now available.") : html("oops", 500)));
+      const out = await tool("web_search").run({ query: "GitHub Copilot Java share" }, ctx({ web: web("According to GitHub, what share of Java code does Copilot write?") }));
+      const results = JSON.parse(out.content).data.results;
+      expect(results).toHaveLength(2);
+      expect(results.some((r: any) => "official_page_passages" in r)).toBe(false);
+      expect(out.summary).not.toContain("read the official page");
+    });
+  });
+
   it("stops at the daily allowance for the whole app", async () => {
     const spy = mockFetch(() => json({ results: [] }));
     const capped = ctx({ web: { userAgent: "t", tavilyApiKey: "tvly-k", webSearchDailyLimit: 2 } });

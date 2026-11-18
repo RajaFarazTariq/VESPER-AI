@@ -12,7 +12,40 @@ import { pickOpenRouterDefault } from "../src/worker/llm/registry";
 import { cooldownFor, parseSelection } from "../src/worker/llm/router";
 import { classifyHttpError, parseRetryAfter, ProviderError } from "../src/worker/llm/types";
 import * as entry from "../src/worker/index";
-import { citedSources, tidyCitations } from "../src/web/lib/format";
+import { citedSources, plainDocumentLinks, tidyCitations } from "../src/web/lib/format";
+import { classifyHttpError as classifyError, retryAfterFromMessage } from "../src/worker/llm/types";
+
+describe("document citations are never links", () => {
+  const docs = ["AI in Software Engineering.pdf"];
+  it("shows a linked document citation as plain text, and any link that isn't a web address", () => {
+    expect(plainDocumentLinks("46% ([AI in Software Engineering.pdf, page 4](https://example.com/x)).", docs)).toBe(
+      "46% (AI in Software Engineering.pdf, page 4).",
+    );
+    expect(plainDocumentLinks("([AI in Software Engineering, page 4](#))", docs)).toBe("(AI in Software Engineering, page 4)");
+    expect(plainDocumentLinks("([notes](page-4))", docs)).toBe("(notes)");
+    // Seen in a real answer: the "link" points at the file name, spaces included.
+    expect(plainDocumentLinks("46% ([AI in Software Engineering.pdf, page 4](AI in Software Engineering.pdf)).", docs)).toBe(
+      "46% (AI in Software Engineering.pdf, page 4).",
+    );
+  });
+  it("keeps real web links, web PDFs included", () => {
+    const text =
+      '([Finance Division](https://www.finance.gov.pk/survey/12_Population.pdf)) and [GitHub blog](https://github.blog/x "GitHub")';
+    expect(plainDocumentLinks(text, docs)).toBe(text);
+  });
+});
+
+describe("Groq's 'try again in …' wait", () => {
+  it("reads the wait from the message when no header gives it", () => {
+    expect(retryAfterFromMessage("Rate limit reached … Please try again in 26.5125s. Need more tokens?")).toBe(26_513);
+    expect(retryAfterFromMessage("Please try again in 1m2.5s")).toBe(62_500);
+    expect(retryAfterFromMessage("Please try again in 450ms")).toBe(450);
+    expect(retryAfterFromMessage("Slow down")).toBeUndefined();
+    const body = JSON.stringify({ error: { message: "Rate limit reached for model on tokens per minute (TPM). Please try again in 6.5s." } });
+    expect(classifyError("Groq", 429, body, null).options.retryAfterMs).toBe(6_500);
+    expect(classifyError("Groq", 429, body, "12").options.retryAfterMs).toBe(12_000); // the header wins when present
+  });
+});
 import { appSettingsSchema } from "../src/worker/db/app-settings";
 import { presentEvent, presentMessage } from "../src/worker/lib/present";
 import { checkNumbers, numberCheckEvent } from "../src/worker/llm/number-check";

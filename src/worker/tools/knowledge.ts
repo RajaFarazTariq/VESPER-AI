@@ -22,6 +22,41 @@ const RERANK_TIMEOUT_MS = 8_000;
 
 type RerankOutput = { response?: { id?: number; score?: number }[] };
 
+// A capitalised name of up to five words ("GitHub", "World Health Organization", "Bank of England").
+const ORG = String.raw`[A-Z][\w&'.-]*(?:\s+(?:of\s+|for\s+|and\s+|the\s+)?[A-Z][\w&'.-]*){0,4}`;
+const QUOTE_VERBS = "reported|reports|found|finds|said|says|announced|announces|estimated|estimates|stated|states|revealed|reveals|claimed|claims|published|publishes|showed|shows";
+const NAME_THEN_VERB = new RegExp(String.raw`(?<![\w.])(${ORG})(?:'s)?,?\s+(?:\[\d+(?:\s*[,–-]\s*\d+)*\]\s+)?(?:has\s+|have\s+|had\s+|also\s+)?(?:${QUOTE_VERBS})\b`, "g");
+const ACCORDING_TO = new RegExp(String.raw`\b[Aa]ccording to (?:the\s+)?(${ORG})`, "g");
+/** Capitalised words that start sentences or name people's roles, not organisations. */
+const NOT_NAMES = new Set(
+  ("A An And As At But By For However In It Its On Our Recent Previous Prior Some Many Most Other Others Another Each " +
+    "Researchers Authors Study Studies Survey Results Table Figure Section Chapter The Their These They This Those We He She " +
+    "Early Later Finally First Second Third Overall Similarly Also Further").split(" "),
+);
+
+/**
+ * Organisations a document passage quotes: "GitHub reported…", "Thomas Dohmke, CEO of GitHub, said…",
+ * "according to the World Health Organization". Such a passage is second-hand for that organisation's own figures.
+ * People cited as authors ("Peng et al. [40] reported") aren't organisations and are skipped.
+ */
+export function quotedOrganisations(text: string): string[] {
+  const names = new Set<string>();
+  for (const m of [...text.matchAll(NAME_THEN_VERB), ...text.matchAll(ACCORDING_TO)]) {
+    let name = m[1]!.replace(/^(?:CEO|CTO|CFO|President|Director|Head|Chief|Founder|Chairman|Chair|Spokesperson|Minister)\s+of\s+(?:the\s+)?/, "").trim();
+    name = name.replace(/[.,]+$/, "");
+    const first = name.split(/\s+/)[0]!;
+    if (!name || NOT_NAMES.has(first) || name.length < 2) continue;
+    names.add(name);
+  }
+  return [...names].slice(0, 3);
+}
+
+/** The source label for a passage: "your document", or "your document (quoting GitHub)". */
+export function documentSourceLabel(text: string): string {
+  const quoted = quotedOrganisations(text);
+  return quoted.length ? `your document (quoting ${quoted.join(", ")})` : "your document";
+}
+
 /** Order passages by meaning (best first) with the re-ranker; falls back to the given order. */
 export async function rerank(ai: Ai | undefined, query: string, hits: KnowledgeHit[], top: number): Promise<KnowledgeHit[]> {
   if (!ai || hits.length <= 1) return hits.slice(0, top);
@@ -108,7 +143,7 @@ export const searchKnowledge = define({
     const best = await rerank(ctx.ai, query, candidates, limit ?? RESULTS);
     const results = best.map((h, i) => ({
       ref: i + 1,
-      source: "your document (the administrator's knowledge base)",
+      source: documentSourceLabel(h.text),
       document: h.title,
       ...(h.location ? { location: h.location } : {}),
       folder: h.collection,

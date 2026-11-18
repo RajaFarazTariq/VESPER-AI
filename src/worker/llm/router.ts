@@ -44,6 +44,8 @@ export interface RouteResult {
 
 const RETRYABLE_KINDS: ProviderErrorKind[] = ["rate_limit", "quota", "unavailable", "timeout", "network"];
 const MAX_RETRIES_PER_PROVIDER = 1;
+/** Groq rate limits that clear within this long are waited out once; longer ones fall back at once. */
+export const SHORT_RATE_LIMIT_WAIT_MS = 10_000;
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
 
@@ -283,6 +285,19 @@ export async function executeRoute(input: {
           return result;
         }
         lastError = error;
+        // Groq's per-minute token limit sometimes clears within seconds: a short wait keeps the stronger model.
+        // Longer waits (usually 15–30 s) switch to the next provider straight away rather than keep the user waiting.
+        const wait = error.options.retryAfterMs;
+        if (
+          error.kind === "rate_limit" &&
+          target.provider === "groq" &&
+          wait !== undefined &&
+          wait <= SHORT_RATE_LIMIT_WAIT_MS &&
+          attempt < MAX_RETRIES_PER_PROVIDER
+        ) {
+          await sleep(wait + 250);
+          continue;
+        }
         // Some models (e.g. certain free OpenRouter ones) reject function calling: retry once as plain chat.
         if (useTools && (error.kind === "bad_request" || error.kind === "not_found") && /tool|function/i.test(error.message)) {
           useTools = false;

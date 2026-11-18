@@ -374,9 +374,9 @@
           "pattern": "(?:couldn'?t|could not|can'?t|cannot|unable to|wasn'?t able|no (?:public|publicly|reliable|official|exact|specific)|not (?:publicly )?(?:available|published|disclosed|released|reported)|doesn'?t (?:publish|provide|release|report)|does not (?:publish|provide|release|report))"
         },
         {
-          "name": "no invented PR count",
+          "name": "no PR count claimed for 3 March 2026 itself",
           "type": "excludes",
-          "pattern": "\\b\\d[\\d,.]*\\s*(?:million|thousand|k|m)?\\s+(?:pull requests|PRs)\\b"
+          "pattern": "\\b3(?:rd)?\\s+March(?:\\s+2026)?\\b[^.]{0,120}?\\b\\d[\\d,.]*\\s*(?:million|thousand|k|m)?\\s+(?:pull requests|PRs)\\b|\\b\\d[\\d,.]*\\s*(?:million|thousand|k|m)?\\s+(?:pull requests|PRs)\\b[^.]{0,120}?\\b(?:on\\s+)?3(?:rd)?\\s+March"
         }
       ]
     }

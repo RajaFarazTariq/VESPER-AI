@@ -4,8 +4,24 @@ Read this first when resuming work. Last updated: **2026-11-19**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-19)
 
-**State:** **v0.9.2 is live** (commit `a665288`). **v0.9.3 "trusted sources" is ready locally, not pushed** (the
-owner said "don't push" until he has seen the report). If `/api/health` shows `0.9.3`, it's deployed.
+**State:** **v0.9.3 is live** (commit `f2a676b`, verified 2026-11-19: `/api/health` → `0.9.3`). **v0.9.4 is ready
+locally, not pushed yet** (if `/api/health` shows `0.9.4`, it's deployed).
+
+**v0.9.3 live re-test (2026-11-19, all answered by Gemini Flash-Lite after Groq's rate limit):** Python ✔️ 3.15.2
+from python.org; census ✔️ 241.49 million from PBS + Finance Division, Wikipedia's 247.5 million kept as a note;
+Copilot ⚠️ 46% right, but Java figures reversed: it called the PDF's 62% "GitHub's formal report" and put GitHub's
+real 61% in a note as "third-party blogs"; a github.com result was present but not opened; the PDF citation rendered
+as a link.
+
+**v0.9.4 (built 2026-11-19, owner's spec):** (1) the server reads the organisation's own page when the question names
+it, its result is present and its snippet lacks a figure, and passes only the 2–3 most relevant passages
+(`official_page_passages`); (2) document passages that quote an organisation are labelled "your document (quoting
+X)" + rule R3b (X's own site wins for X's figures); (3) document citations are never links (renderer) and "Note:"
+lines only for real disagreements; (A) Groq waits once if its rate-limit wait is ≤ 10 s, otherwise falls back at once
+(today's waits were 16–27 s, so this will rarely trigger). 184 tests. Accuracy: see "Accuracy scores".
+
+**Next (agreed): v0.9.5 = the full token-reduction plan**: one call, trimmed passages, private folders, cache,
+dates. Aim: make answers fit Groq's 8,000 tokens per minute so the stronger model can answer search questions.
 
 **v0.9.3 (decided and built 2026-11-19).** Owner's goal, restated: *accurate, verified and latest answers, with the
 live web as the main source and minimal dependence on manually maintained documents.* Decisions: the web is the main
@@ -25,11 +41,26 @@ Part 2 (daily web-page refresh) is **postponed**. Built, with the owner's 5 chan
 - Not built (agreed): rewriting/deleting answer text after it's written, extra model calls to classify questions.
 - Full design: docs/ARCHITECTURE.md §5d.
 
-**Accuracy scores (2026-11-19, local, same PDF, one provider each, fallback off):**
-| Run | 0.9.2 | 0.9.3 |
-|---|---|---|
-| Gemini (`gemini-3.5-flash-lite`) | **83.6%**, 12/18 fully right | **90.1%**, 14/18 fully right |
-| Groq (`openai/gpt-oss-120b`) | not measurable (see below) | not run |
+**Accuracy scores (2026-11-19, local, same PDF, one provider each, fallback off, same corrected scoring rules):**
+| Run | 0.9.2 | 0.9.3 | 0.9.4 |
+|---|---|---|---|
+| Gemini (`gemini-3.5-flash-lite`) | **83.6%**, 12/18 fully right | **90.1%**, 14/18 | **87.3%**, 13/18 |
+| Groq (`openai/gpt-oss-120b`) | not measurable (see below) | not run | not run |
+- 0.9.4 vs 0.9.3 differs by one question (Node.js LTS: the search returned the 26.13.0 release page instead of
+  26.13.1; nodejs.org cited both times): run-to-run variation in search results, not the code. Single runs, so a
+  one-question difference is noise.
+- **Copilot/Java question** (4/5 in all three runs): 0.9.4 leads with **61%** for Java and says "the research
+  document … cites GitHub's February 2023 report giving … 62%" (the PDF correctly described as quoting GitHub, R3b);
+  still no GitHub page among the search results, so nothing official to open: it cited a statistics site
+  (companieshistory.com) for 61%. The model wrote the PDF citation as `[…](AI in Software Engineering.pdf)`, which
+  the renderer now shows as plain text (pattern fixed to allow spaces). Python on 0.9.4 had no needless "Note:".
+- Scoring-rule fix after the 0.9.4 run (applied to all runs): "no invented PR count" also failed an answer that gave
+  GitHub's official yearly average ("3.5 million pull requests merged per day", found in sources); the rule now only
+  fails a count claimed for 3 March 2026 itself. Raw 0.9.4 score before that fix: 84.5%.
+- Open finding for v0.9.5: since 0.9.3 the Linux-kernel question gets Wikipedia's "7.3" instead of kernel.org's
+  7.3.5 (0.9.2 found kernel.org). Likely cause: `time_range` is no longer sent to Tavily (owner's "no hard date
+  filter" rule), so evergreen pages come back for "latest" questions. Idea: when a "latest"/organisation question has
+  no official result, one extra search limited to that organisation's site (costs 1 search).
 - Scores use the corrected scoring rules (first scoring was 81.8% / 83.1%; fixed afterwards and applied to both runs
   equally: plural "pages 4 and 7" citations, any official Pakistani source, Stack Overflow's company site, census must
   lead with the official figure). Gains on 0.9.3: latest Python (3.15.2 from python.org instead of "3.15" from
@@ -82,12 +113,14 @@ Problems", 23 pages). Upload, folder, space meter, search, re-ranker and page ci
   always (`citedSources` in `web/lib/format.ts`). (C) 【 】 citations are shown as ( ) (`tidyCitations`).
 
 **First thing to do next session (in this order):**
-1. Health check. If still `0.9.2`, ask whether he wants to push 0.9.3 and give him the push commands (section "How
-   the owner wants each task run" below). Ask whether he **replaced the GitHub token** (pasted into a chat on
-   2026-11-17, see section 8) and whether he **deleted the keys from `.dev.vars`** after the accuracy runs.
-2. After the 0.9.3 deploy: re-ask on the live site (new chat, model Auto) the Copilot question, "What is the latest
-   stable version of Python?" and "What was Pakistan's population in the 2023 census?"; check labels/dates in the
-   admin tool view and the "Number check" step.
+1. Health check. If still `0.9.3`, give him the push commands for 0.9.4 (section "How the owner wants each task run"
+   below). Ask whether he **replaced the GitHub token** (pasted into a chat on 2026-11-17, see section 8) and whether
+   he **deleted the keys from `.dev.vars`** after the accuracy runs.
+2. After the 0.9.4 deploy: re-ask on the live site (new chat, model Auto) the Copilot question; "According to my PDF,
+   what does GitHub say about Copilot's share of Java code?"; and "What is the latest stable version of Python?".
+   Expect 61% from GitHub's own page with the PDF's 62% as a note, the PDF cited as quoting GitHub, no link on the
+   PDF citation, and no needless "Note:" on the Python answer.
+3. Then start v0.9.5 (token reduction, above).
 3. Older re-test reference (knowledge-base questions; pages checked against the PDF):
    | Question | Correct answer | Page |
    |---|---|---|
@@ -234,8 +267,10 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Knowledge base Part 1 (v0.9.0)**: folders, uploads (PDF/Word/TXT/MD/CSV), web pages, FTS5 + re-ranker, citations; model-menu fix | ✅ live (v0.9.0, commit `19434d7`, deployed 2026-11-17; 154 tests; real-browser upload of a PDF + .docx under the live CSP); owner's first live test 2026-11-19 (see section 0) |
 | **Knowledge base fixes (v0.9.1)**: thinking-only replies fall back; Tools menu refresh; 0-page meter; "documents first" prompt | ✅ live (v0.9.1, commit `f48b00e`, deployed 2026-11-19; 155 tests) |
 | **Search both + source rules (v0.9.2)**: paired knowledge search on web look-ups, 4 conflict rules, cited-only page chips, 【 】 → ( ) | ✅ live (v0.9.2, commit `a665288`, deployed 2026-11-19; 158 tests); live re-test: both searches run, cited-only chips work; conflict wording still weak with Flash-Lite |
-| **Trusted sources (v0.9.3)**: source labels + ranking, trusted/blocked sites, R1–R7, admin-only number check, accuracy test set | ⏳ ready locally (175 tests), not pushed; accuracy scores in section 0 |
-| **Next: knowledge base Part 2 (daily web-page refresh), then roadmap items** | ⏳ |
+| **Trusted sources (v0.9.3)**: source labels + ranking, trusted/blocked sites, R1–R7, admin-only number check, accuracy test set | ✅ live (v0.9.3, commit `f2a676b`, deployed 2026-11-19; 175 tests); live re-test: Python and census right, Copilot Java figures reversed |
+| **Source fixes (v0.9.4)**: server reads official pages, "quoting X" labels + R3b, plain document citations, Note only for disagreements, Groq ≤10 s wait | ⏳ ready locally (184 tests), not pushed; accuracy in section 0 |
+| **Next: token reduction (v0.9.5)** so Groq can answer search questions | ⏳ |
+| Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
 - All colours, surfaces, borders and shadows are CSS variables in `src/web/styles.css` (`--bg`, `--bg-elevated`,
@@ -271,7 +306,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 175 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 184 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

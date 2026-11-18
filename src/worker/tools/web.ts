@@ -13,6 +13,7 @@ import { z } from "zod";
 import { hitRateLimit } from "../db/rate-limit";
 import { checkPublicUrl, clip, FetchFailed, fetchJson, readLimited, wrapUntrusted, DEFAULT_TIMEOUT_MS } from "./net";
 import { define, ToolInputError, type AgentTool, type ToolContext } from "./types";
+import { checkNumbers } from "../llm/number-check";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const userAgent = (ctx: ToolContext) => ctx.web?.userAgent ?? "VESPER-assistant";
@@ -184,6 +185,74 @@ export function rankResults<T extends { url: string; snippet: string; published?
 const SEARCH_RESULTS = 8;
 const RESULTS_FOR_MODEL = 6;
 
+// ------------------------------------------------------------------ official page check (server-side)
+
+/** Words that show the question asks for a figure (a number, share, rate, version…). */
+const ASKS_FOR_FIGURE =
+  /\b(?:how (?:much|many|tall|big|large|long|old|fast|often)|what (?:share|percentage|proportion|number|rate|price|percent|amount|version)|percent(?:age)?|share|rate|number of|population|price|cost|revenue|statistics?|figures?|version|latest|count|total)\b|%/i;
+const OFFICIAL_PAGE_PASSAGES = 3;
+const OFFICIAL_PASSAGE_CHARS = 500;
+const OFFICIAL_PAGE_TIMEOUT_MS = 6_000;
+
+const hasFigure = (text: string) => checkNumbers(text, "").checked > 0;
+
+/**
+ * The 2–3 passages of a page most relevant to the question: those sharing the most words with it, with a bonus for
+ * containing a figure. Passages are ~paragraphs, clipped, and kept in page order (few tokens for the model).
+ */
+export function relevantPassages(pageText: string, about: string, count = OFFICIAL_PAGE_PASSAGES): string[] {
+  const words = [...wordSet(about)].filter((w) => !GENERIC_NAMES.has(w));
+  const paragraphs: string[] = [];
+  let current = "";
+  for (const line of pageText.split(/\n+/).map((l) => l.trim()).filter(Boolean)) {
+    current = current ? `${current} ${line}` : line;
+    if (current.length >= 200) {
+      paragraphs.push(current);
+      current = "";
+    }
+  }
+  if (current) paragraphs.push(current);
+  const scored = paragraphs.map((text, index) => {
+    const own = wordSet(text);
+    const shared = words.filter((w) => own.has(w)).length;
+    return { text, index, score: shared + (shared > 0 && hasFigure(text) ? 2 : 0) };
+  });
+  return scored
+    .filter((p) => p.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, count)
+    .sort((a, b) => a.index - b.index)
+    .map((p) => clip(p.text, OFFICIAL_PASSAGE_CHARS));
+}
+
+/**
+ * When the question names an organisation and its own site is among the results, but that result's snippet has no
+ * figure while the question asks for one, read the page (free: no search used) and return the best passages.
+ * Any failure (blocked, slow, not a page) just means no passages.
+ */
+async function officialPagePassages(
+  results: { url: string; snippet: string; quality: SourceQuality }[],
+  about: string,
+  ctx: ToolContext,
+): Promise<{ url: string; passages: string[] } | null> {
+  const official = results.find((r) => r.quality === "official");
+  if (!official || !ASKS_FOR_FIGURE.test(about) || hasFigure(official.snippet)) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OFFICIAL_PAGE_TIMEOUT_MS);
+  const stop = () => controller.abort();
+  ctx.signal?.addEventListener("abort", stop);
+  try {
+    const page = await fetchPageText(official.url, { userAgent: userAgent(ctx), signal: controller.signal });
+    const passages = relevantPassages(page.text, about);
+    return passages.length ? { url: official.url, passages } : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+    ctx.signal?.removeEventListener("abort", stop);
+  }
+}
+
 interface TavilyResponse {
   results?: { title?: string; url?: string; content?: string; published_date?: string | null }[];
 }
@@ -252,24 +321,33 @@ const webSearch = define({
         ...(r.published_date ? { published: r.published_date } : {}),
         snippet: clip(r.content ?? "", 600),
       }));
+    const about = `${web.question ?? ""} ${query}`; // the question and the search words
     const ranked = rankResults(found, {
       trusted: web.trustedSites ?? [],
       blocked: web.blockedSites ?? [],
-      about: `${web.question ?? ""} ${query}`,
+      about,
       ...(time_range ? { prefer: time_range } : {}),
       now: ctx.now,
       keep: RESULTS_FOR_MODEL,
     });
+    const officialPage = await officialPagePassages(ranked, about, ctx);
     const results = ranked.map((r) => ({
       title: r.title,
       url: r.url,
       source: QUALITY_LABEL[r.quality],
       published: r.published ?? "unknown",
       snippet: r.snippet,
+      ...(officialPage && officialPage.url === r.url
+        ? {
+            official_page_passages: officialPage.passages,
+            official_page_note: "Read automatically: the most relevant passages of this official page (its snippet had no figure).",
+          }
+        : {}),
     }));
+    const heading = results.length ? `${results.length} results for "${clip(query, 80)}"` : `No results for "${clip(query, 80)}"`;
     return {
       content: wrapUntrusted("a web search", { query, retrieved: ctx.now.toISOString().slice(0, 10), results }),
-      summary: results.length ? `${results.length} results for "${clip(query, 80)}"` : `No results for "${clip(query, 80)}"`,
+      summary: officialPage ? `${heading}; read the official page ${siteParts(officialPage.url)?.host ?? ""}` : heading,
       sources: results.map((r) => ({ title: r.title, url: r.url })),
     };
   },

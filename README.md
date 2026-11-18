@@ -31,10 +31,10 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
   message, source links under answers, and a responsive mobile layout
 - 💸 **No paid services, no credit card, no automatic billing**
 
-> Status: **Trusted sources (v0.9.3)**: accurate, current answers with the live web as the main source (source
-> labels and ranking, trusted/blocked sites, answer rules, admin-only number check, an accuracy test set), on top of
-> the knowledge base, live information, multi-user accounts and the admin panel.
-> Next: integrations (GitHub, Gmail, Calendar, Telegram); scheduled refresh of saved web pages is postponed. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> Status: **Trusted sources (v0.9.4)**: accurate, current answers with the live web as the main source (source
+> labels and ranking, official pages read automatically, trusted/blocked sites, answer rules, admin-only number check,
+> an accuracy test set), on top of the knowledge base, live information, multi-user accounts and the admin panel.
+> Next: fewer tokens per answer (v0.9.5), then integrations (GitHub, Gmail, Calendar, Telegram). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 

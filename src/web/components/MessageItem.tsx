@@ -1,7 +1,7 @@
 import { AlertTriangle, Brain, ChevronDown, Info, Pencil, RotateCcw } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import type { UiMessage } from "../hooks/useChat";
-import { citedSources, providerLabel, tidyCitations } from "../lib/format";
+import { citedSources, plainDocumentLinks, providerLabel, tidyCitations } from "../lib/format";
 import { CopyButton, Markdown } from "./Markdown";
 import { collectSources, SourceList, ToolActivity } from "./ToolActivity";
 
@@ -26,8 +26,10 @@ export const MessageItem = memo(function MessageItem({ message, isLast, canRetry
   const working = message.streaming && !message.content;
   const runningTool = message.tools?.some((t) => t.status === "running");
   const failed = message.status === "error" || message.status === "partial";
-  const content = tidyCitations(message.content);
-  const sources = message.streaming ? [] : citedSources(collectSources(message.tools), content);
+  const allSources = collectSources(message.tools);
+  const documentTitles = allSources.filter((s) => !s.url).map((s) => s.title);
+  const content = plainDocumentLinks(tidyCitations(message.content), documentTitles);
+  const sources = message.streaming ? [] : citedSources(allSources, content);
 
   return (
     <div className="rise-in group flex gap-3 sm:gap-4">

@@ -29,7 +29,7 @@ import {
   MAX_KNOWLEDGE_CHARS,
   type KnowledgeHit,
 } from "../src/worker/db/knowledge";
-import { rerank } from "../src/worker/tools/knowledge";
+import { quotedOrganisations, rerank } from "../src/worker/tools/knowledge";
 import { nearDuplicate, organisationNames, QUALITY_BOOST, rankResults, sourceQuality } from "../src/worker/tools/web";
 
 describe("knowledge base search", () => {
@@ -118,6 +118,24 @@ describe("knowledge base search", () => {
     expect((await rerank(undefined, "q", hits, 5)).map((h) => h.chunkId)).toEqual([0, 1, 2]);
   });
 
+  it("labels passages that quote an organisation as 'your document (quoting X)'", async () => {
+    await addPdf("Quotes", "Survey.pdf", [
+      "In February 2023, GitHub reported that 62% of Java code was written by Copilot.",
+      "Our own team measured build times across all projects last spring.",
+    ]);
+    const quoted = JSON.parse((await tool.run({ query: "Java code Copilot" }, ctx())).content).data.results;
+    expect(quoted[0].source).toBe("your document (quoting GitHub)");
+    const own = JSON.parse((await tool.run({ query: "build times projects" }, ctx())).content).data.results;
+    expect(own[0].source).toBe("your document");
+  });
+
+  it("recognises which organisation a passage quotes, but not authors or sentence starts", () => {
+    expect(quotedOrganisations("In February 2023, GitHub reported that, on average, 46% of code was written by Copilot.")).toEqual(["GitHub"]);
+    expect(quotedOrganisations("Thomas Dohmke, CEO of GitHub, said Copilot will write 80% of code.")).toEqual(["GitHub"]);
+    expect(quotedOrganisations("According to the World Health Organization, cases fell.")).toEqual(["World Health Organization"]);
+    expect(quotedOrganisations("Peng et al. [40] reported that programmers were faster. We found the same. The study showed gains.")).toEqual([]);
+  });
+
   it("builds safe full-text queries from any text", () => {
     expect(buildMatchQuery('What is the "leave" OR policy* NEAR(x)?')).toBe('"leave" OR "policy" OR "near"'); // 1-letter words dropped
     expect(buildMatchQuery("the")).toBe('"the"'); // only common words: search them anyway
@@ -137,8 +155,11 @@ describe("knowledge base search", () => {
 
   it("gives the source rules R1–R7 with web tools (R3 only with documents), and none without them", () => {
     const both = buildSystemPrompt({ appName: "V", customInstructions: "", tools: ["web_search", "read_page", "search_knowledge"], knowledge: [] });
-    for (const rule of ["R1.", "R2.", "R3.", "R4.", "R5.", "R6.", "R7."]) expect(both).toContain(rule);
+    for (const rule of ["R1.", "R2.", "R3.", "R3b.", "R4.", "R5.", "R6.", "R7."]) expect(both).toContain(rule);
     expect(both).toContain('no ranges like "61% to 62%"');
+    expect(both).toContain('"your document (quoting X)"'); // a document quoting GitHub is second-hand for GitHub's figures
+    expect(both).toContain("official_page_passages");
+    expect(both).toContain('"Note:" line only when sources actually give different figures');
     expect(both).toContain('time_range "year"');
     expect(both).toContain("open it with read_page");
     expect(both).toContain("not for writing, explaining or brainstorming"); // R6 never blocks ordinary requests

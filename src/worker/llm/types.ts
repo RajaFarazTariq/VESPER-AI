@@ -174,6 +174,13 @@ export function extractErrorMessage(body: string): string {
   return body.replace(/\s+/g, " ").trim().slice(0, 300) || "No details";
 }
 
+/** "Please try again in 26.51s" / "in 1m2.5s" / "in 450ms" (Groq's wording) → milliseconds, when no header says it. */
+export function retryAfterFromMessage(message: string): number | undefined {
+  const m = /try again in\s+(?:(\d+)m)?\s*(?:(\d+(?:\.\d+)?)s|(\d+(?:\.\d+)?)ms)/i.exec(message);
+  if (!m || (!m[1] && !m[2] && !m[3])) return undefined;
+  return Math.round(Number(m[1] ?? 0) * 60_000 + Number(m[2] ?? 0) * 1000 + Number(m[3] ?? 0));
+}
+
 /** Map an HTTP error response to a ProviderError. */
 export function classifyHttpError(
   providerLabel: string,
@@ -181,8 +188,9 @@ export function classifyHttpError(
   body: string,
   retryAfterHeader: string | null,
 ): ProviderError {
-  const detail = extractErrorMessage(body).slice(0, 300);
-  const retryAfterMs = parseRetryAfter(retryAfterHeader);
+  const full = extractErrorMessage(body);
+  const detail = full.slice(0, 300);
+  const retryAfterMs = parseRetryAfter(retryAfterHeader) ?? retryAfterFromMessage(full);
   const msg = `${providerLabel}: ${detail}`;
   if (status === 413) return new ProviderError("too_large", msg, { status });
   if (status === 402) return new ProviderError("quota", msg, { status, retryAfterMs });

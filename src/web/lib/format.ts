@@ -3,6 +3,27 @@ import type { ConversationDto, ModelsResponse, ProviderId, SourceDto } from "../
 /** Some models (e.g. gpt-oss) cite in 【 】 brackets: show those as normal round brackets. */
 export const tidyCitations = (text: string) => text.replace(/【([^【】\n]{1,300})】/g, "($1)");
 
+/**
+ * Document citations are plain text, never links: a Markdown link whose text names one of the answer's knowledge-base
+ * documents, or whose target isn't a real web address, is shown as its text only. Real web links (including web PDFs
+ * such as https://…/report.pdf) stay links.
+ */
+export function plainDocumentLinks(text: string, documentTitles: readonly string[]): string {
+  const names = documentTitles
+    .map((t) => t.toLowerCase())
+    .flatMap((t) => {
+      const bare = t.replace(/\.[a-z0-9]{2,5}$/, "").trim();
+      return bare.length >= 4 && bare !== t ? [t, bare] : [t];
+    });
+  // The target may contain spaces ("](AI in Software Engineering.pdf)"): not a valid link, but models write it.
+  return text.replace(/\[([^\]\n]{1,300})\]\(([^)\n]*)\)/g, (link, label: string, target: string) => {
+    const lower = label.toLowerCase();
+    const namesDocument = names.some((n) => lower.includes(n));
+    const href = target.trim().replace(/\s+"[^"]*"$/, "");
+    return namesDocument || !/^https?:\/\/\S+$/i.test(href) ? label : link;
+  });
+}
+
 const plainText = (s: string) => s.replace(/[    ]/g, " ").toLowerCase();
 
 /** Page numbers an answer mentions: "page 6", "page6", "pages 2 and 14", "pages 2, 14", "pp. 3–5", "p. 7". */

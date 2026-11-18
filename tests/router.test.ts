@@ -69,6 +69,7 @@ function setup(providers: FakeProvider[]) {
   const map = new Map<ProviderId, Provider>(providers.map((p) => [p.id, p]));
   const store = new MemoryStore();
   const events: string[] = [];
+  const sleeps: number[] = [];
   const run = async (plan: RouteTarget[], signal = new AbortController().signal) =>
     executeRoute({
       plan,
@@ -78,7 +79,7 @@ function setup(providers: FakeProvider[]) {
       signal,
       store,
       health: await store.getHealth(),
-      sleep: async () => {},
+      sleep: async (ms: number) => void sleeps.push(ms),
       events: {
         attempt: (t) => void events.push(`attempt:${t.provider}`),
         fallback: (from, reason) => void events.push(`fallback:${from.provider}:${reason}`),
@@ -86,7 +87,7 @@ function setup(providers: FakeProvider[]) {
         reasoning: () => {},
       },
     });
-  return { map, store, events, run };
+  return { map, store, events, run, sleeps };
 }
 
 const order: ProviderId[] = ["groq", "gemini", "openrouter", "mistral", "workers-ai"];
@@ -162,6 +163,46 @@ describe("executeRoute", () => {
       { provider: "groq", ok: false },
       { provider: "gemini", ok: true },
     ]);
+  });
+
+  it("waits out a short Groq rate limit (10 s or less) once instead of switching to the next provider", async () => {
+    const groq = new FakeProvider("groq", [
+      { kind: "fail", error: new ProviderError("rate_limit", "429", { retryAfterMs: 6_000 }) },
+      { kind: "ok", text: ["from groq"] },
+    ]);
+    const gemini = new FakeProvider("gemini", [{ kind: "ok", text: ["from gemini"] }]);
+    const { run, sleeps } = setup([groq, gemini]);
+    const result = await run([
+      { provider: "groq", model: "g" },
+      { provider: "gemini", model: "m" },
+    ]);
+    expect(result.text).toBe("from groq");
+    expect(gemini.calls).toBe(0);
+    expect(sleeps).toEqual([6_250]);
+  });
+
+  it("switches at once when Groq's wait is longer than 10 s, and never waits for other providers", async () => {
+    const long = setup([
+      new FakeProvider("groq", [{ kind: "fail", error: new ProviderError("rate_limit", "429", { retryAfterMs: 26_000 }) }]),
+      new FakeProvider("gemini", [{ kind: "ok", text: ["from gemini"] }]),
+    ]);
+    const first = await long.run([
+      { provider: "groq", model: "g" },
+      { provider: "gemini", model: "m" },
+    ]);
+    expect(first.text).toBe("from gemini");
+    expect(long.sleeps).toEqual([]);
+
+    const other = setup([
+      new FakeProvider("gemini", [{ kind: "fail", error: new ProviderError("rate_limit", "429", { retryAfterMs: 5_000 }) }]),
+      new FakeProvider("groq", [{ kind: "ok", text: ["from groq"] }]),
+    ]);
+    const second = await other.run([
+      { provider: "gemini", model: "m" },
+      { provider: "groq", model: "g" },
+    ]);
+    expect(second.text).toBe("from groq");
+    expect(other.sleeps).toEqual([]);
   });
 
   it("retries a transient error once on the same provider before moving on", async () => {
