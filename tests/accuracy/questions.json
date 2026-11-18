@@ -1,0 +1,384 @@
+{
+  "about": "Accuracy test set: real questions with the expected answer and its source (checked 2026-11-19 against the original sources). Run with scripts/accuracy.mjs against a local server that has real keys. {{name}} values are fetched live from the official source at run time, so 'latest' questions never go stale. Answers are matched after turning odd spaces into normal ones and 【 】 into ( ). Scoring rules corrected on 2026-11-19 after the first runs (plural page citations, any official Pakistani source, Stack Overflow's company site; census must lead with the official figure); all runs re-scored with the same rules.",
+  "document": "AI in Software Engineering.pdf",
+  "questions": [
+    {
+      "id": "copilot-java-conflict",
+      "kind": "conflict",
+      "question": "According to GitHub, what share of developers' code is written by Copilot, overall and in Java?",
+      "expected": "46% overall and 61% in Java (GitHub's own blog, Feb 2023). The PDF quotes 62% for Java: that should be noted, not merged.",
+      "source": "https://github.blog/news-insights/product-news/github-copilot-for-business-is-now-available/ ; AI in Software Engineering.pdf, page 4",
+      "checks": [
+        {
+          "name": "46% overall",
+          "type": "includes",
+          "pattern": "\\b46\\s?%"
+        },
+        {
+          "name": "61% for Java (GitHub's figure)",
+          "type": "includes",
+          "pattern": "\\b61\\s?%"
+        },
+        {
+          "name": "notes the PDF's 62%",
+          "type": "includes",
+          "pattern": "\\b62\\s?%"
+        },
+        {
+          "name": "doesn't merge 61 and 62 into a range",
+          "type": "excludes",
+          "pattern": "\\b61\\s?%?\\s?(?:to|-|–|—|or|/)\\s?62"
+        },
+        {
+          "name": "cites GitHub's own site",
+          "type": "includes",
+          "pattern": "github\\.blog|github\\.com/"
+        }
+      ]
+    },
+    {
+      "id": "doc-codecompose",
+      "kind": "docs",
+      "question": "What does my PDF say was the developer acceptance rate for CodeCompose at Meta?",
+      "expected": "22% (4.5 million suggestions in 15 days; 92% positive feedback).",
+      "source": "AI in Software Engineering.pdf, page 6",
+      "checks": [
+        {
+          "name": "22%",
+          "type": "includes",
+          "pattern": "\\b22\\s?%"
+        },
+        {
+          "name": "cites page 6",
+          "type": "includes",
+          "pattern": "pages?\\s?(?:\\d+\\s?(?:,|and|&)\\s?)*6\\b"
+        },
+        {
+          "name": "searched the documents",
+          "type": "tool",
+          "tool": "search_knowledge"
+        }
+      ]
+    },
+    {
+      "id": "doc-regression-oracle",
+      "kind": "docs",
+      "question": "According to my document, what is the Automated Regression Oracle?",
+      "expected": "It uses the existing version of the software system as the reference against which later changes are checked; it can only catch regressions.",
+      "source": "AI in Software Engineering.pdf, page 2 (also 1 and 14)",
+      "checks": [
+        {
+          "name": "explains the existing version is the reference",
+          "type": "includes",
+          "pattern": "existing (?:version|system|software|behaviou?r)|current (?:version|behaviou?r)"
+        },
+        {
+          "name": "cites page 2 (or 1/14)",
+          "type": "includes",
+          "pattern": "pages?\\s?(?:\\d+\\s?(?:,|and|&)\\s?)*(?:2|1|14)\\b"
+        },
+        {
+          "name": "searched the documents",
+          "type": "tool",
+          "tool": "search_knowledge"
+        }
+      ]
+    },
+    {
+      "id": "doc-java-figure",
+      "kind": "docs-vs-web",
+      "question": "What does my PDF say about how much of developers' Java code Copilot writes?",
+      "expected": "The PDF says 62% for Java (page 4). Ideally one extra line: GitHub's own blog says 61%.",
+      "source": "AI in Software Engineering.pdf, page 4 ; GitHub blog",
+      "checks": [
+        {
+          "name": "62% from the PDF",
+          "type": "includes",
+          "pattern": "\\b62\\s?%"
+        },
+        {
+          "name": "cites page 4",
+          "type": "includes",
+          "pattern": "pages?\\s?(?:\\d+\\s?(?:,|and|&)\\s?)*4\\b"
+        },
+        {
+          "name": "notes GitHub's newer 61%",
+          "type": "includes",
+          "pattern": "\\b61\\s?%"
+        }
+      ]
+    },
+    {
+      "id": "doc-humaneval",
+      "kind": "docs",
+      "question": "According to my PDF, what pass@1 accuracy did GPT-4 reach on HumanEval?",
+      "expected": "67% zero-shot in the original GPT-4 report; the paper also gives an updated figure of 80%. Both, not blended.",
+      "source": "AI in Software Engineering.pdf, pages 4 and 7",
+      "checks": [
+        {
+          "name": "67%",
+          "type": "includes",
+          "pattern": "\\b67\\s?%"
+        },
+        {
+          "name": "the updated 80%",
+          "type": "includes",
+          "pattern": "\\b80\\s?%"
+        },
+        {
+          "name": "doesn't merge 67 and 80 into a range",
+          "type": "excludes",
+          "pattern": "\\b67\\s?%?\\s?(?:to|-|–|—)\\s?80"
+        },
+        {
+          "name": "cites page 4 or 7",
+          "type": "includes",
+          "pattern": "pages?\\s?(?:\\d+\\s?(?:,|and|&)\\s?)*(?:4|7)\\b"
+        }
+      ]
+    },
+    {
+      "id": "doc-no-answer",
+      "kind": "no-answer",
+      "question": "What does my PDF say about Kubernetes deployment costs?",
+      "expected": "The document doesn't cover this. No page citations.",
+      "source": "AI in Software Engineering.pdf (not covered)",
+      "checks": [
+        {
+          "name": "says the document doesn't cover it",
+          "type": "includes",
+          "pattern": "(?:doesn'?t|does not|did not|didn'?t|no|not|nothing)\\b.{0,40}\\b(?:mention|cover|contain|discuss|include|address|information|reference)"
+        },
+        {
+          "name": "no page citations",
+          "type": "excludes",
+          "pattern": "pages?\\s?\\d+"
+        }
+      ]
+    },
+    {
+      "id": "latest-python",
+      "kind": "latest",
+      "question": "What is the latest stable version of Python?",
+      "expected": "Python {{python}} (python.org, read live at run time).",
+      "source": "https://www.python.org/downloads/",
+      "checks": [
+        {
+          "name": "latest version {{python}}",
+          "type": "includes",
+          "pattern": "{{python_re}}"
+        },
+        {
+          "name": "cites python.org",
+          "type": "includes",
+          "pattern": "python\\.org"
+        }
+      ]
+    },
+    {
+      "id": "latest-node-lts",
+      "kind": "latest",
+      "question": "What is the latest Node.js LTS version?",
+      "expected": "Node.js {{node_lts}} (nodejs.org release list, read live at run time).",
+      "source": "https://nodejs.org/dist/index.json",
+      "checks": [
+        {
+          "name": "latest LTS {{node_lts}}",
+          "type": "includes",
+          "pattern": "{{node_lts_re}}"
+        },
+        {
+          "name": "cites nodejs.org",
+          "type": "includes",
+          "pattern": "nodejs\\.org"
+        }
+      ]
+    },
+    {
+      "id": "latest-linux-kernel",
+      "kind": "latest",
+      "question": "What is the latest stable Linux kernel version?",
+      "expected": "Linux {{kernel}} (kernel.org, read live at run time).",
+      "source": "https://www.kernel.org/releases.json",
+      "checks": [
+        {
+          "name": "latest stable {{kernel}}",
+          "type": "includes",
+          "pattern": "{{kernel_re}}"
+        },
+        {
+          "name": "cites kernel.org",
+          "type": "includes",
+          "pattern": "kernel\\.org"
+        }
+      ]
+    },
+    {
+      "id": "pakistan-census",
+      "kind": "official",
+      "question": "What was Pakistan's population in the 2023 census?",
+      "expected": "241.49 million (Pakistan Bureau of Statistics, 7th Population and Housing Census 2023).",
+      "source": "https://www.pbs.gov.pk/",
+      "checks": [
+        {
+          "name": "241.49 million",
+          "type": "includes",
+          "pattern": "241[.,]49"
+        },
+        {
+          "name": "leads with the official 241.49 million (not 247.5 million)",
+          "type": "includes",
+          "pattern": "^(?:(?!247[.,]5)[\\s\\S])*241[.,]49"
+        },
+        {
+          "name": "cites an official Pakistani source (.gov.pk / Bureau of Statistics)",
+          "type": "includes",
+          "pattern": "\\.gov\\.pk|Bureau of Statistics"
+        }
+      ]
+    },
+    {
+      "id": "stackoverflow-ai",
+      "kind": "official",
+      "question": "According to the Stack Overflow 2025 Developer Survey, what share of developers use or plan to use AI tools?",
+      "expected": "84%, up from 76% the year before.",
+      "source": "https://survey.stackoverflow.co/2025/ai",
+      "checks": [
+        {
+          "name": "84%",
+          "type": "includes",
+          "pattern": "\\b84\\s?%"
+        },
+        {
+          "name": "cites Stack Overflow's own site",
+          "type": "includes",
+          "pattern": "stackoverflow\\.(?:co|blog)\\b"
+        }
+      ]
+    },
+    {
+      "id": "everest-height",
+      "kind": "official",
+      "question": "What is the official height of Mount Everest?",
+      "expected": "8,848.86 m (joint Nepal–China survey, 2020).",
+      "source": "https://en.wikipedia.org/wiki/Mount_Everest",
+      "checks": [
+        {
+          "name": "8,848.86 m",
+          "type": "includes",
+          "pattern": "8,?848\\.86"
+        },
+        {
+          "name": "mentions the 2020 survey",
+          "type": "includes",
+          "pattern": "2020"
+        }
+      ]
+    },
+    {
+      "id": "speed-of-light",
+      "kind": "stable",
+      "question": "What is the speed of light in a vacuum, in metres per second?",
+      "expected": "Exactly 299,792,458 m/s (SI definition).",
+      "source": "BIPM SI Brochure",
+      "checks": [
+        {
+          "name": "299,792,458",
+          "type": "includes",
+          "pattern": "299[, ]?792[, ]?458"
+        }
+      ]
+    },
+    {
+      "id": "http-429",
+      "kind": "stable",
+      "question": "What does HTTP status code 429 mean?",
+      "expected": "Too Many Requests (rate limiting; RFC 6585).",
+      "source": "RFC 6585",
+      "checks": [
+        {
+          "name": "Too Many Requests",
+          "type": "includes",
+          "pattern": "too many requests"
+        }
+      ]
+    },
+    {
+      "id": "eiffel-tower",
+      "kind": "stable",
+      "question": "When was the Eiffel Tower completed?",
+      "expected": "1889 (opened 31 March 1889).",
+      "source": "https://en.wikipedia.org/wiki/Eiffel_Tower",
+      "checks": [
+        {
+          "name": "1889",
+          "type": "includes",
+          "pattern": "\\b1889\\b"
+        }
+      ]
+    },
+    {
+      "id": "sales-tax",
+      "kind": "calc",
+      "question": "What is 18% sales tax on PKR 12,500, and what is the total with tax?",
+      "expected": "Tax PKR 2,250; total PKR 14,750.",
+      "source": "calculation",
+      "checks": [
+        {
+          "name": "tax 2,250",
+          "type": "includes",
+          "pattern": "2,?250\\b"
+        },
+        {
+          "name": "total 14,750",
+          "type": "includes",
+          "pattern": "14,?750\\b"
+        },
+        {
+          "name": "used the calculator",
+          "type": "tool",
+          "tool": "calculator"
+        }
+      ]
+    },
+    {
+      "id": "usd-eur",
+      "kind": "live",
+      "question": "How much is 100 US dollars in euros today?",
+      "expected": "About €{{usd_eur_100}} (Frankfurter / ECB reference rate, read live at run time).",
+      "source": "https://api.frankfurter.app/latest?from=USD&to=EUR",
+      "checks": [
+        {
+          "name": "≈ €{{usd_eur_100}} (within 1.5%)",
+          "type": "number-near",
+          "value": "{{usd_eur_100}}",
+          "tolerance": 0.015
+        },
+        {
+          "name": "used the exchange-rate tool",
+          "type": "tool",
+          "tool": "currency"
+        }
+      ]
+    },
+    {
+      "id": "web-no-answer",
+      "kind": "no-answer",
+      "question": "Exactly how many pull requests were merged on GitHub on 3 March 2026?",
+      "expected": "No public source gives this daily figure: it should say so and not invent a number.",
+      "source": "none",
+      "checks": [
+        {
+          "name": "says it can't find an exact figure",
+          "type": "includes",
+          "pattern": "(?:couldn'?t|could not|can'?t|cannot|unable to|wasn'?t able|no (?:public|publicly|reliable|official|exact|specific)|not (?:publicly )?(?:available|published|disclosed|released|reported)|doesn'?t (?:publish|provide|release|report)|does not (?:publish|provide|release|report))"
+        },
+        {
+          "name": "no invented PR count",
+          "type": "excludes",
+          "pattern": "\\b\\d[\\d,.]*\\s*(?:million|thousand|k|m)?\\s+(?:pull requests|PRs)\\b"
+        }
+      ]
+    }
+  ]
+}

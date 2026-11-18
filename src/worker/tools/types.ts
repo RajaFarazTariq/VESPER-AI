@@ -30,6 +30,11 @@ export interface WebToolContext {
   tavilyApiKey?: string;
   /** Web searches allowed per UTC day for the whole app (0 = web search off). */
   webSearchDailyLimit: number;
+  /** Admin's trusted websites (ranked first) and blocked websites (never used), e.g. "who.int". */
+  trustedSites?: string[];
+  blockedSites?: string[];
+  /** The user's question: names in it (e.g. "GitHub") mark that organisation's own site as official. */
+  question?: string;
 }
 
 export interface ToolOutput {
@@ -39,6 +44,8 @@ export interface ToolOutput {
   summary: string;
   /** Pages/services the result came from, shown as source links under the answer (to everyone). */
   sources?: SourceDto[];
+  /** Full text behind a clipped result (e.g. whole knowledge-base passages), used only by the number check. */
+  evidence?: string;
 }
 
 /** A tool the model may call. Parameters are plain JSON Schema (portable across providers). */

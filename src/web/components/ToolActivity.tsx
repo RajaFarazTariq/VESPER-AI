@@ -1,4 +1,4 @@
-import { BookOpen, Bookmark, BookmarkMinus, Calculator, ChevronRight, CircleAlert, Clock, CloudSun, Coins, FileText, Library, Loader2, Search, Wrench } from "lucide-react";
+import { BookOpen, Bookmark, BookmarkMinus, Calculator, ChevronRight, CircleAlert, Clock, CloudSun, Coins, FileText, Library, Loader2, Search, ShieldCheck, Wrench } from "lucide-react";
 import { useState } from "react";
 import type { SourceDto, ToolEventDto } from "../../shared/types";
 
@@ -13,6 +13,7 @@ export const TOOL_ICONS: Record<string, typeof Wrench> = {
   wikipedia: BookOpen,
   currency: Coins,
   search_knowledge: Library,
+  answer_check: ShieldCheck, // admin-only number check
 };
 
 /** Every source used for a reply, once each, in the order the tools found them. */

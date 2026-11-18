@@ -16,6 +16,12 @@ export default defineConfig(async () => {
             ADMIN_EMAILS: "boss@example.com",
             DEV_LOGIN: "true",
             WORKERS_AI_ENABLED: "false",
+            // Tests never use real keys, even when .dev.vars has them for local testing (tests set their own fakes).
+            GROQ_API_KEY: "",
+            GEMINI_API_KEY: "",
+            OPENROUTER_API_KEY: "",
+            MISTRAL_API_KEY: "",
+            TAVILY_API_KEY: "",
           },
         },
       }),

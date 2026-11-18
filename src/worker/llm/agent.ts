@@ -1,6 +1,7 @@
 import type { ProviderId, ToolEventDto } from "../../shared/types";
 import type { ProviderHealth, ProviderStateStore } from "../db/provider-state";
 import { ToolInputError, type AgentTool, type ToolContext } from "../tools/registry";
+import { numberCheckEvent } from "./number-check";
 import { executeRoute, type RouteError, type RouteTarget, type RouterEvents } from "./router";
 import type { ChatMessage, Provider, ToolCall, ToolSpec } from "./types";
 
@@ -14,6 +15,11 @@ const MAX_TOOL_RESULT_CHARS = 8_000;
  */
 const PAIRED_WEB_TOOLS = new Set(["web_search", "wikipedia"]);
 const PAIRED_KNOWLEDGE_RESULTS = 3;
+/**
+ * Look-up tools whose results an answer quotes numbers from; after them the number check runs (admin-only).
+ * (The calculator alone doesn't trigger it, but its results count as evidence.)
+ */
+const CHECKED_TOOLS = new Set(["web_search", "read_page", "wikipedia", "search_knowledge", "weather", "currency"]);
 
 /** The knowledge-base search to run alongside a web look-up, or null when it isn't needed. */
 function pairedKnowledgeCall(call: ToolCall, tools: Map<string, AgentTool>): ToolCall | null {
@@ -61,7 +67,7 @@ async function runTool(
   call: ToolCall,
   tools: Map<string, AgentTool>,
   ctx: ToolContext,
-): Promise<{ event: ToolEventDto; content: string }> {
+): Promise<{ event: ToolEventDto; content: string; evidence?: string }> {
   const tool = tools.get(call.name);
   const base = { id: call.id, name: call.name, label: tool?.label ?? call.name };
   let args: Record<string, unknown> = {};
@@ -91,6 +97,7 @@ async function runTool(
         ...(sources.length ? { sources } : {}),
       },
       content: output.content.slice(0, MAX_TOOL_RESULT_CHARS),
+      ...(output.evidence ? { evidence: output.evidence } : {}),
     };
   } catch (error) {
     const known = error instanceof ToolInputError || error instanceof SyntaxError;
@@ -127,6 +134,7 @@ export async function runAgent(input: {
   const messages = [...input.messages];
   let plan = input.plan;
   let knowledgeChecked = false; // has the knowledge base been searched in this reply?
+  const evidence: string[] = []; // everything the tools returned in this reply, for the number check
   const result: AgentResult = {
     status: "error",
     target: null,
@@ -187,6 +195,14 @@ export async function runAgent(input: {
 
     if (route.toolCalls.length === 0) {
       result.status = "complete";
+      // Admin-only: are the answer's numbers in what the tools returned, the passages, the question or the chat?
+      if (result.tools.some((t) => CHECKED_TOOLS.has(t.name) && t.status === "done")) {
+        const check = numberCheckEvent(result.text, [...evidence, ...messages.map((m) => (typeof m.content === "string" ? m.content : ""))]);
+        if (check) {
+          result.tools.push(check);
+          await input.events.tool(check);
+        }
+      }
       return result;
     }
 
@@ -212,10 +228,12 @@ export async function runAgent(input: {
       ]);
       result.tools.push(main.event);
       await input.events.tool(main.event);
+      evidence.push(main.content, main.evidence ?? "");
       let content = main.content;
       if (extra) {
         result.tools.push(extra.event);
         await input.events.tool(extra.event);
+        evidence.push(extra.content, extra.evidence ?? "");
         // One tool result per call id (providers require it), so the documents ride along with the web results.
         content =
           `${main.content}\n\n` +

@@ -1,6 +1,6 @@
 {
   "name": "ai-assistant",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "private": true,
   "description": "Multi-provider AI assistant running entirely on free tiers (Cloudflare Workers + D1).",
   "type": "module",
@@ -19,7 +19,8 @@
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "deploy": "npm run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
-    "mock:llm": "node scripts/mock-llm.mjs"
+    "mock:llm": "node scripts/mock-llm.mjs",
+    "accuracy": "node scripts/accuracy.mjs"
   },
   "dependencies": {
     "hono": "^4.13.17",

@@ -55,8 +55,8 @@ noted). Deploys from GitHub keep these, because `wrangler.jsonc` has `keep_vars:
 |---|---|---|
 | `ADMIN_GITHUB_USERS` | New name for the GitHub admin list (replaces `ALLOWED_GITHUB_USERS`) | Falls back to `ALLOWED_GITHUB_USERS` |
 | `DEFAULT_DAILY_LIMIT` | Starting value for messages per user per day | `30` (the admin panel value wins once saved) |
-| `OPENROUTER_API_KEY` | AI provider (OpenRouter, `:free` models only) | Provider skipped |
-| `MISTRAL_API_KEY` | AI provider (Mistral free "Experiment" plan) | Provider skipped |
+| `OPENROUTER_API_KEY` | AI provider (OpenRouter, `:free` models only). **Key "VESPER AI" created 2026-11-19** (90 days, expires **2027-02-17**, credit limit set to the minimum, account balance $0). **Set as a Cloudflare Secret on 2026-11-19**; confirmed live: Admin panel → Providers shows "Configured", default model `google/gemma-4-26b-a4b-it:free` | Provider skipped |
+| `MISTRAL_API_KEY` | AI provider (Mistral). **Skipped by the owner on 2026-11-19:** Mistral's console now says the Free plan must be upgraded before keys can be created | Provider skipped |
 | `PROVIDER_ORDER` | Order of automatic provider fallback | `groq,gemini,openrouter,mistral,workers-ai` |
 | `GROQ_MODEL`, `GEMINI_MODEL`, `OPENROUTER_MODEL`, `MISTRAL_MODEL`, `WORKERS_AI_MODEL`, `WORKERS_AI_MODELS` | Override default models | Built-in defaults / live model lists |
 | `WORKERS_AI_ENABLED` | Turn Cloudflare's built-in models off | `true` |
@@ -94,6 +94,8 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 | **Models** tab: models available to users | Users always have **Auto**; the admin adds up to 20 more, each with a friendly name (e.g. "Smart"). Users' model menu and Settings list only these; the server refuses any other model from a user. A user's saved default that is later removed becomes Auto | None (Auto only) |
 | Messages per user per day | Daily limit for everyone without a personal limit. Admins unlimited (but counted). Resets 00:00 UTC (05:00 PKT) | 30 |
 | Instructions for the assistant | Added to every user's conversations | Empty |
+| Trusted websites (v0.9.3) | One per line (e.g. `who.int`; subdomains included). Web search ranks them first and labels them "trusted". Government sites (.gov, gov.pk, .int…) and the organisation's own site are already ranked first without being listed | Empty |
+| Blocked websites (v0.9.3) | One per line. Never used: Tavily is asked to skip them and any that still come back are removed | Empty |
 | Tools available to everyone | Tools switched off here are removed for all users | All on |
 | Per-user (Users tab) | Personal daily limit, Block/Unblock, Delete (deletes their chats and memories too) | n/a |
 
@@ -164,6 +166,7 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 | 2026-11-17 | **Knowledge base (v0.9.0)** | No new Cloudflare settings, secrets or bindings (re-ranking uses the existing `AI` binding). Migration `0004_knowledge_base.sql` (add-only: `kb_collections`, `kb_documents`, `kb_chunks`, FTS5 table `kb_chunks_fts` + triggers). New admin-panel tab **Knowledge** (folders, upload, add web page, space meter); new tool `search_knowledge` (admins can switch it off for everyone in App settings). New dev dependencies `pdfjs-dist` 6.5.438 and `mammoth` 1.13.0 (browser only, lazy-loaded). Also fixed: the model menu no longer runs off the top of the screen |
 | 2026-11-19 | **Knowledge base fixes (v0.9.1)** | No new settings, secrets or migrations. After the first live test: a model that sends only thinking notes and no answer now falls back to the next free provider; the composer's Tools menu refreshes when the admin panel closes; an empty knowledge base shows 0 pages used; stronger "search the documents" instruction. Live test data added through the admin panel: folder "AI in Software Engineering" with one 23-page PDF. Deployed as v0.9.1 (commit `f48b00e`) |
 | 2026-11-19 | **Documents + web together (v0.9.2)** | No new settings, secrets or migrations. Web look-ups also search the knowledge base (same query, in parallel); source rules for conflicts (original source first, newest wins for changing facts, documents win for their own content and the admin's rules, disagreements shown). Under answers only cited document pages are listed; 【 】 citations shown as ( ). Uses a few more web searches (still capped by the admin's "Web searches per day") |
+| 2026-11-19 | **Trusted sources (v0.9.3)** | No new Cloudflare settings, secrets or migrations. Two new admin-panel settings (stored in `app_settings`): **Trusted websites** and **Blocked websites**. Web search asks for 8 results (still 1 search) and gives the best 6, labelled by source type with dates; no hard date filter. Source rules R1–R7 in the system prompt; admin-only number check under answers. New `npm run accuracy` script + `tests/accuracy/questions.json` (needs real keys in `.dev.vars`, runs locally only). Tests now ignore keys in `.dev.vars` (`vitest.config.ts`) |
 | 2026-11-17 | **Sign-in page redesign (v0.8.1)** | No new settings, secrets or migrations. Professional split layout: sign-in form on the left (follows the app theme), dark brand panel on wide screens (logo in orbit lines, headline). The third-party-AI notice was removed from the sign-in page at the owner's request. Local-dev fix: `vite.config.ts` no longer proxies the app's own `/api/*.ts` source files to the Worker (that left `npm run dev` on a blank page) |
 
 ---

@@ -30,6 +30,7 @@ import {
   type KnowledgeHit,
 } from "../src/worker/db/knowledge";
 import { rerank } from "../src/worker/tools/knowledge";
+import { nearDuplicate, organisationNames, QUALITY_BOOST, rankResults, sourceQuality } from "../src/worker/tools/web";
 
 describe("knowledge base search", () => {
   const tool = ALL_TOOLS.find((t) => t.name === "search_knowledge")!;
@@ -132,6 +133,102 @@ describe("knowledge base search", () => {
     });
     expect(prompt).toContain("• Policies — HR rules");
     expect(prompt).toContain("(Handbook.pdf, page 12)");
+  });
+
+  it("gives the source rules R1–R7 with web tools (R3 only with documents), and none without them", () => {
+    const both = buildSystemPrompt({ appName: "V", customInstructions: "", tools: ["web_search", "read_page", "search_knowledge"], knowledge: [] });
+    for (const rule of ["R1.", "R2.", "R3.", "R4.", "R5.", "R6.", "R7."]) expect(both).toContain(rule);
+    expect(both).toContain('no ranges like "61% to 62%"');
+    expect(both).toContain('time_range "year"');
+    expect(both).toContain("open it with read_page");
+    expect(both).toContain("not for writing, explaining or brainstorming"); // R6 never blocks ordinary requests
+    expect(buildSystemPrompt({ appName: "V", customInstructions: "", tools: ["web_search"] })).not.toContain("R3.");
+    expect(buildSystemPrompt({ appName: "V", customInstructions: "", tools: ["calculator"] })).not.toContain("R4.");
+  });
+});
+
+describe("source quality and ranking", () => {
+  const none = new Set<string>();
+  const github = organisationNames("According to GitHub, what share of code does Copilot write?");
+
+  it("recognises government sites, including country versions, and international bodies", () => {
+    for (const url of [
+      "https://www.pbs.gov.pk/content/census",
+      "https://www.gov.uk/x",
+      "https://data.census.gov/y",
+      "https://www.who.int/news",
+      "https://www.gob.mx/",
+      "https://www.service-public.gouv.fr/",
+      "https://www.mhlw.go.jp/",
+      "https://www.canada.ca/en",
+      "https://www.un.org/en",
+      "https://www.hc-sc.gc.ca/",
+    ]) {
+      expect(sourceQuality(url, none), url).toBe("government");
+    }
+  });
+
+  it("gives universities (.edu, edu.pk, ac.uk…) a smaller boost than government sites", () => {
+    for (const url of ["https://mit.edu/x", "https://lums.edu.pk/y", "https://www.ox.ac.uk/z", "https://www.iitb.ac.in/"]) {
+      expect(sourceQuality(url, none), url).toBe("education");
+    }
+    expect(QUALITY_BOOST.education).toBeLessThan(QUALITY_BOOST.government);
+    expect(QUALITY_BOOST.education).toBeLessThan(QUALITY_BOOST.official);
+    expect(QUALITY_BOOST.education).toBeGreaterThan(QUALITY_BOOST.other);
+  });
+
+  it("counts an organisation's own site only on an exact name match, never 'contains the name'", () => {
+    expect(sourceQuality("https://github.blog/news-insights/x", github)).toBe("official");
+    expect(sourceQuality("https://docs.github.com/en", github)).toBe("official");
+    expect(sourceQuality("https://githubstats.com/copilot", github)).toBe("other");
+    expect(sourceQuality("https://mygithub.blog/x", github)).toBe("other");
+    expect(sourceQuality("https://copilot-stats.github.io/", github)).toBe("other"); // a page hosted on GitHub, not GitHub's own
+    expect(sourceQuality("https://medium.com/@someone/github", github)).toBe("other");
+    expect(sourceQuality("https://survey.stackoverflow.co/2025", organisationNames("Stack Overflow survey"))).toBe("official");
+    expect(sourceQuality("https://nodejs.org/en", organisationNames("latest Node.js LTS"))).toBe("official");
+    expect(sourceQuality("https://news.com/x", organisationNames("latest news today"))).toBe("other"); // common words aren't names
+  });
+
+  it("puts the admin's trusted sites first and drops blocked ones, subdomains included", () => {
+    const r = (url: string) => ({ url, snippet: `text about ${url}` });
+    const ranked = rankResults([r("https://other.com/1"), r("https://spam.blocked.net/2"), r("https://www.dawn.com/3")], {
+      trusted: ["dawn.com"],
+      blocked: ["blocked.net"],
+      about: "",
+      now: new Date(),
+      keep: 6,
+    });
+    expect(ranked.map((x) => [x.url, x.quality])).toEqual([
+      ["https://www.dawn.com/3", "trusted"],
+      ["https://other.com/1", "other"],
+    ]);
+  });
+
+  it("ranks newer results higher only when asked, keeps old ones (no hard filter), and never demotes official ones for age", () => {
+    const now = new Date("2026-11-19T00:00:00Z");
+    const r = (url: string, published: string) => ({ url, published, snippet: `snippet for ${url}` });
+    const old = r("https://old.example.com/a", "2018-05-01");
+    const fresh = r("https://new.example.com/b", "2026-10-01");
+    const base = { trusted: [], blocked: [], about: "According to GitHub", now, keep: 6 };
+    expect(rankResults([old, fresh], base).map((x) => x.url)).toEqual([old.url, fresh.url]);
+    expect(rankResults([old, fresh], { ...base, prefer: "year" }).map((x) => x.url)).toEqual([fresh.url, old.url]);
+    const official = r("https://github.blog/c", "2023-02-14");
+    expect(rankResults([fresh, official], { ...base, prefer: "year" }).map((x) => x.url)).toEqual([official.url, fresh.url]);
+  });
+
+  it("drops near-duplicate results: the same page, or snippets saying practically the same thing", () => {
+    const text = "GitHub Copilot now writes an average of forty six percent of code across all languages";
+    const ranked = rankResults(
+      [
+        { url: "https://a.example.com/story?utm=1", snippet: text },
+        { url: "https://www.a.example.com/story/", snippet: "different words entirely here" },
+        { url: "https://b.example.com/copy", snippet: `${text}!` },
+        { url: "https://c.example.com/other", snippet: "an unrelated snippet about weather in Lahore this week and next" },
+      ],
+      { trusted: [], blocked: [], about: "", now: new Date(), keep: 6 },
+    );
+    expect(ranked.map((x) => x.url)).toEqual(["https://a.example.com/story?utm=1", "https://c.example.com/other"]);
+    expect(nearDuplicate({ url: "https://x.com/1", snippet: "short" }, { url: "https://y.com/2", snippet: "short" })).toBe(false);
   });
 });
 
@@ -307,14 +404,14 @@ const noopStore: ProviderStateStore = {
   recordUsage: async () => {},
 };
 
-async function agent(providers: ScriptedProvider[], options: { maxRounds?: number; userId?: string } = {}) {
+async function agent(providers: ScriptedProvider[], options: { maxRounds?: number; userId?: string; messages?: ChatMessage[] } = {}) {
   const map = new Map<ProviderId, Provider>(providers.map((p) => [p.id, p]));
   const toolEvents: ToolEventDto[] = [];
   const text: string[] = [];
   const result = await runAgent({
     plan: providers.map((p) => ({ provider: p.id, model: "m" })),
     providers: map,
-    messages: [
+    messages: options.messages ?? [
       { role: "system", content: "sys" },
       { role: "user", content: "hi" },
     ],
@@ -376,6 +473,46 @@ describe("runAgent", () => {
     expect(toolMessages.map((m) => m.tool_call_id)).toEqual(["c_web_search", "c_web2"]);
     expect(toolMessages[0]!.content).toContain("knowledge base (the administrator's documents) was also searched automatically");
     expect(toolMessages[1]!.content).not.toContain("knowledge base");
+  });
+
+  it("checks the answer's numbers against whole document passages, the question and the chat, and lists only the unsupported one", async () => {
+    const folder = await createCollection(env.DB, { name: "Number check research", description: "" });
+    // Longer than the 1,100 characters the model is shown: the figures sit in the part it doesn't see, so only the
+    // whole passage (the check's evidence) contains them.
+    const filler = "Background on code completion tools and how teams adopt them. ".repeat(20);
+    const chunks = chunkUnits([{ location: "page 6", text: `${filler}CodeCompose made 4.5 million suggestions; the acceptance rate was 22%.` }]);
+    const doc = await createDocument(env.DB, {
+      collectionId: folder.id,
+      title: "Paper.pdf",
+      kind: "pdf",
+      pages: 1,
+      expectedChunks: chunks.length,
+      totalChars: chunks.reduce((n, c) => n + c.text.length, 0),
+    });
+    await addChunks(env.DB, doc.id, chunks);
+    await completeDocument(env.DB, doc.id);
+    const groq = new ScriptedProvider("groq", [
+      { calls: [call("search_knowledge", { query: "CodeCompose acceptance rate" })] },
+      { text: "CodeCompose's acceptance rate was 22% over 4.5 million suggestions (Paper.pdf, page 6). For your 37 teams and 1,234 users, about 63% would accept." },
+    ]);
+    const { result, toolEvents } = await agent([groq], {
+      messages: [
+        { role: "system", content: "sys" },
+        { role: "user", content: "How many users do we have?" },
+        { role: "assistant", content: "You have 1,234 users." },
+        { role: "user", content: "What acceptance rate would CodeCompose give our 37 teams?" },
+      ],
+    });
+    expect(result.status).toBe("complete");
+    const check = result.tools.at(-1)!;
+    expect(check).toMatchObject({ name: "answer_check", label: "Number check", status: "error", summary: "Not found in any source: 63%" });
+    expect(toolEvents.at(-1)).toEqual(check);
+  });
+
+  it("adds no number check after replies that only used the calculator", async () => {
+    const groq = new ScriptedProvider("groq", [{ calls: [call("calculator", { expression: "18% * 12500" })] }, { text: "That's 2,250." }]);
+    const { result } = await agent([groq]);
+    expect(result.tools.map((t) => t.name)).toEqual(["calculator"]);
   });
 
   it("reports bad tool input to the model instead of failing the turn", async () => {

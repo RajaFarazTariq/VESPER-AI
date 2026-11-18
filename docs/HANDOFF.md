@@ -4,8 +4,48 @@ Read this first when resuming work. Last updated: **2026-11-19**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-19)
 
-**State:** **v0.9.1 is live** (commit `f48b00e`, verified: `/api/health` → `0.9.1`). **v0.9.2 is ready locally, waiting
-for the owner's push** (if health already shows `0.9.2`, it's deployed).
+**State:** **v0.9.2 is live** (commit `a665288`). **v0.9.3 "trusted sources" is ready locally, not pushed** (the
+owner said "don't push" until he has seen the report). If `/api/health` shows `0.9.3`, it's deployed.
+
+**v0.9.3 (decided and built 2026-11-19).** Owner's goal, restated: *accurate, verified and latest answers, with the
+live web as the main source and minimal dependence on manually maintained documents.* Decisions: the web is the main
+source; the knowledge base is only for the admin's own/private material (don't upload public papers); Knowledge base
+Part 2 (daily web-page refresh) is **postponed**. Built, with the owner's 5 changes to the plan:
+- **Trusted / blocked websites** (Admin panel → App settings). Source labels + ranking: government (.gov/.int and
+  country versions gov.pk, gov.uk, gob.mx… = biggest boost), the organisation's own site on an **exact** name match
+  only, universities (.edu, edu.pk, ac.uk = smaller boost), other. 8 results asked (still 1 search), best 6 kept,
+  near-duplicates dropped, dates shown. **No hard date filter**: for changing facts newer results rank higher, but
+  official/trusted results never lose rank for age.
+- **Rules R1–R7** in the system prompt (R6 "say so if nothing found" only for factual look-ups).
+- **Number check** (admin-only step under answers): numbers vs tool results, whole document passages, the question
+  and the chat; % / K / M / commas / currency normalised; years, dates, list numbers ignored; never changes answers.
+- **Accuracy test set** `tests/accuracy/questions.json` (18 questions, sources checked 2026-11-19) + `npm run
+  accuracy`; scores before/after and Groq vs Gemini are in "Accuracy scores" below.
+- Tests no longer pick up real keys from `.dev.vars` (`vitest.config.ts` blanks them).
+- Not built (agreed): rewriting/deleting answer text after it's written, extra model calls to classify questions.
+- Full design: docs/ARCHITECTURE.md §5d.
+
+**Accuracy scores (2026-11-19, local, same PDF, one provider each, fallback off):**
+| Run | 0.9.2 | 0.9.3 |
+|---|---|---|
+| Gemini (`gemini-3.5-flash-lite`) | **83.6%**, 12/18 fully right | **90.1%**, 14/18 fully right |
+| Groq (`openai/gpt-oss-120b`) | not measurable (see below) | not run |
+- Scores use the corrected scoring rules (first scoring was 81.8% / 83.1%; fixed afterwards and applied to both runs
+  equally: plural "pages 4 and 7" citations, any official Pakistani source, Stack Overflow's company site, census must
+  lead with the official figure). Gains on 0.9.3: latest Python (3.15.2 from python.org instead of "3.15" from
+  Wikipedia), Node.js LTS, census (official 241.49 million from finance.gov.pk instead of leading with Wikipedia's
+  247.5 million). Still missed in both: Copilot cites a magazine, not GitHub's blog (GitHub's blog wasn't among the
+  search results at all); the docs-only Java question doesn't add GitHub's 61% note; HumanEval's "updated 80%".
+  0.9.3 missed the latest Linux kernel once (said "7.3" from Wikipedia; 0.9.2 found 7.3.5 on kernel.org): normal
+  run-to-run variation in search results.
+- **Groq finding (important):** Groq's free plan allows **8,000 tokens per minute** for gpt-oss-120b, and a question
+  that uses a search needs two requests of ~4,500–6,000 tokens each (question + tools, then the results). The second
+  one is always refused ("Rate limit reached … tokens per minute (TPM): Limit 8000, Used 5547, Requested 5988"). So on
+  the live site practically **every search question is answered by Gemini Flash-Lite** after "Groq: rate limit
+  reached. Switched to the next free provider". With fallback off, Groq finished only the 5 document questions it
+  reached on 0.9.2 (3/3, 3/3, 2/3, 3/4, 1/2) and failed both web questions; the runs were stopped so they wouldn't use
+  up the Groq allowance the live site shares. Options discussed: wait-and-retry on Groq when its wait is short, or
+  make requests smaller, or keep Gemini answering search questions (see the owner's decision, when made).
 
 **Owner's goal (stated 2026-11-19): give users accurate and *latest* information from the internet.** So the
 knowledge base must not override the web blindly. Agreed source rule (now in the system prompt, `llm/context.ts`):
@@ -28,16 +68,27 @@ Problems", 23 pages). Upload, folder, space meter, search, re-ranker and page ci
 - On v0.9.1: 3 of 4 questions answered from the PDF with correct pages. "According to GitHub, what share of code was
   written by Copilot?" still went to the web only (Gemini Flash-Lite). Answers listed page chips for every passage
   read, even "the document doesn't cover this". Groq writes citations in 【 】 brackets.
-- **v0.9.2 (ready, not pushed):** (A) whenever the model calls `web_search` or `wikipedia` before the documents were
+- **v0.9.2 re-test of the Copilot question (live, Gemini Flash-Lite after a Groq rate limit):** both steps ran (Web
+  search + Knowledge base, 3 passages); answer 46% with citations to the web and the PDF page 4; chips = 5 web links +
+  only page 4. **Still weak:** it blended the conflict into "around 61% to 62%" instead of naming who says which, and it
+  relied on statistics sites instead of opening GitHub's own blog. **Planned (with the next release, agreed to batch):**
+  sharper prompt rule with an example ("never merge different figures into a range; say which source gives which"),
+  and, if the PDF citation renders as a dead link, a rule not to turn document citations into links. Not planned:
+  a bigger default Gemini model (fewer free requests per day).
+- **v0.9.2 (live):** (A) whenever the model calls `web_search` or `wikipedia` before the documents were
   checked in that reply, the server also runs `search_knowledge` with the same query in parallel (3 passages, hidden
   `limit` arg) and appends them to that web result, shown as its own "Knowledge base" step (`llm/agent.ts`); plus the
   4 source rules above. (B) Under answers, document pages are listed only when the answer cites them; web links
   always (`citedSources` in `web/lib/format.ts`). (C) 【 】 citations are shown as ( ) (`tidyCitations`).
 
 **First thing to do next session (in this order):**
-1. Health check. If still `0.9.1`, give the owner the push commands (section "How the owner wants each task run"
-   below). Ask whether he **replaced the GitHub token** (pasted into a chat on 2026-11-17, see section 8).
-2. **Re-test on 0.9.2** in a new chat (reload the page, model on Auto). Expected answers (pages checked against the PDF):
+1. Health check. If still `0.9.2`, ask whether he wants to push 0.9.3 and give him the push commands (section "How
+   the owner wants each task run" below). Ask whether he **replaced the GitHub token** (pasted into a chat on
+   2026-11-17, see section 8) and whether he **deleted the keys from `.dev.vars`** after the accuracy runs.
+2. After the 0.9.3 deploy: re-ask on the live site (new chat, model Auto) the Copilot question, "What is the latest
+   stable version of Python?" and "What was Pakistan's population in the 2023 census?"; check labels/dates in the
+   admin tool view and the "Number check" step.
+3. Older re-test reference (knowledge-base questions; pages checked against the PDF):
    | Question | Correct answer | Page |
    |---|---|---|
    | At Meta, what was the developer acceptance rate for the CodeCompose code completion tool? | 22%; 4.5M suggestions in 15 days; 92% positive | 6 |
@@ -45,12 +96,11 @@ Problems", 23 pages). Upload, folder, space meter, search, re-ranker and page ci
    | What is the Automated Regression Oracle? | Uses the existing version of the software as the reference for new changes | 2 (14 also relevant) |
    | What does the document say about Kubernetes deployment costs? | Not covered; no PDF page chips under the answer | — |
    If answers miss obvious passages, check the admin view of the tool call (query used, passages found) first.
-3. Then **Knowledge base Part 2 (agreed, not built): daily automatic refresh of saved web pages** (the daily cron
-   already exists; re-read web documents in small batches within the 10 ms CPU / 50-query limits; replace a page's
-   passages only when the text changed).
-4. After that, per the roadmap PDF: deep-research mode, answer quality (👍/👎 + verification), smarter memory, then
-   6b GitHub (approval gate), Gmail/Calendar/Telegram.
-5. Still never checked **live** (low priority): web search/weather/currency/Wikipedia answers, Edit on the last
+4. Next per the roadmap PDF: deep-research mode, answer quality (👍/👎), smarter memory, then 6b GitHub (approval
+   gate), Gmail/Calendar/Telegram. **Postponed:** Knowledge base Part 2 (daily refresh of saved web pages: the daily
+   cron exists; re-read web documents in small batches within the 10 ms CPU / 50-query limits; replace passages only
+   when the text changed). Optional later: test a bigger Gemini model for accuracy (fewer free requests per day).
+5. Still never checked **live** (low priority): weather/currency/Wikipedia answers, Edit on the last
    message, user vs admin view, Block / Unblock, Sign-ups switch, GitHub backup login.
 
 **Knowledge base (v0.9.0), in short:** Admin panel → Knowledge: folders; upload PDF/Word (.docx)/TXT/MD/CSV (read in
@@ -87,10 +137,13 @@ free-tier terms for serving other users (not done yet; fine for a few testers).
   updates and few round-trips. Never ask him to paste a token or key into the chat.
 - **UI style:** professional, enterprise-grade (see the design rule in section 5).
 
-**Local machine notes:** at the end of 2026-11-17 the local dev servers were stopped. `.dev.vars` exists in the project
-folder (git-ignored) with empty key lines and `DEV_LOGIN=true` / `ADMIN_GITHUB_USERS=admin`; the owner may paste his own
-keys there for local real-AI testing; delete it when done. Screenshot/browser-test scripts lived in a temporary folder
-and are gone; how to recreate them is in section 7 (DevTools-protocol emulation via Node's built-in WebSocket).
+**Local machine notes:** `.dev.vars` exists in the project folder (git-ignored) with `DEV_LOGIN=true` /
+`ADMIN_GITHUB_USERS=admin`. On 2026-11-19 the owner put his **Groq, Gemini and Tavily keys** in it for the accuracy
+runs; remind him to empty those lines (or delete the file) when done. The accuracy runs used two temporary local
+servers (0.9.2 copy on :8788, 0.9.3 on :8787) with fresh databases in the session's temporary folder; they are
+stopped at the end. To re-run: start `npx wrangler dev --port 8787 --local --persist-to <empty folder>`, then
+`npm run accuracy -- --setup --provider groq --pdf <the PDF>` once, then one run per provider. Screenshot/browser-test
+scripts lived in a temporary folder and are gone; how to recreate them is in section 7.
 
 ## 1. What this is
 **VESPER** is the owner's ChatGPT-style AI assistant. Since v0.6.0 it's **multi-user**: anyone can sign up with
@@ -156,7 +209,8 @@ requirement: no paid services, no card on file, no paid fallback).
 
 ## 4. Configuration (names only; values live in Cloudflare → Worker → Settings → Variables and Secrets)
 Set: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `ALLOWED_GITHUB_USERS` (= RajaFarazTariq), `GROQ_API_KEY`,
-`GEMINI_API_KEY`, `APP_NAME` (= VESPER). Not set yet: `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`.
+`GEMINI_API_KEY`, `APP_NAME` (= VESPER), `OPENROUTER_API_KEY` (added 2026-11-19, key expires 2027-02-17; confirmed
+"Configured" in Admin panel → Providers). Not set: `MISTRAL_API_KEY` (skipped: Mistral's Free plan now needs an upgrade).
 Added 2026-11-11 for v0.6.0: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (secrets), `ADMIN_EMAILS` (text, the owner's
 Gmail). `ALLOWED_GITHUB_USERS` still keeps him admin on GitHub sign-in (optional rename to `ADMIN_GITHUB_USERS`).
 **Full register of every setting, secret, account and console, with a setup log per stage:
@@ -179,7 +233,8 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Sign-in page redesign (v0.8.1)**: professional split layout, brand panel; notice removed; local dev fix | ✅ live (v0.8.1, commit `59f34c8`); live-checked 2026-11-17: new page shows, Google sign-in lands in the app as admin |
 | **Knowledge base Part 1 (v0.9.0)**: folders, uploads (PDF/Word/TXT/MD/CSV), web pages, FTS5 + re-ranker, citations; model-menu fix | ✅ live (v0.9.0, commit `19434d7`, deployed 2026-11-17; 154 tests; real-browser upload of a PDF + .docx under the live CSP); owner's first live test 2026-11-19 (see section 0) |
 | **Knowledge base fixes (v0.9.1)**: thinking-only replies fall back; Tools menu refresh; 0-page meter; "documents first" prompt | ✅ live (v0.9.1, commit `f48b00e`, deployed 2026-11-19; 155 tests) |
-| **Search both + source rules (v0.9.2)**: paired knowledge search on web look-ups, 4 conflict rules, cited-only page chips, 【 】 → ( ) | ⏳ ready locally (158 tests), waiting for the owner's push |
+| **Search both + source rules (v0.9.2)**: paired knowledge search on web look-ups, 4 conflict rules, cited-only page chips, 【 】 → ( ) | ✅ live (v0.9.2, commit `a665288`, deployed 2026-11-19; 158 tests); live re-test: both searches run, cited-only chips work; conflict wording still weak with Flash-Lite |
+| **Trusted sources (v0.9.3)**: source labels + ranking, trusted/blocked sites, R1–R7, admin-only number check, accuracy test set | ⏳ ready locally (175 tests), not pushed; accuracy scores in section 0 |
 | **Next: knowledge base Part 2 (daily web-page refresh), then roadmap items** | ⏳ |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -216,7 +271,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 158 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 175 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
@@ -274,5 +329,11 @@ Apply new migrations locally first: `npx wrangler d1 migrations apply DB --local
 - Delete the GitHub fine-grained token (VESPER-AI only) and its Windows Credential Manager entry when the project is done.
 - **Replace the current GitHub token** (it was pasted into a chat on 2026-11-17; it expires 2026-12-09): delete it on
   GitHub and create a new fine-grained token (VESPER-AI only, Contents: read and write).
-- Delete `.dev.vars` when local testing is done, so no keys stay on the PC.
+- Delete `.dev.vars` when local testing is done, so no keys stay on the PC (on 2026-11-19 it holds his Groq,
+  Gemini and Tavily keys for the accuracy runs).
+- **OpenRouter key "VESPER AI" expires 2027-02-17** (created 2026-11-19, 90 days): before then create a new one
+  (credit limit at the minimum) and replace the Cloudflare secret `OPENROUTER_API_KEY`. Until it's replaced, VESPER
+  just skips OpenRouter. If OpenRouter answers "No endpoints found matching your data policy", allow free models in
+  OpenRouter → Settings → Privacy.
+- Mistral: skipped (its Free plan now needs an upgrade before keys can be created; no card allowed).
 - The local project folder on the office PC can be deleted at any time; everything lives in GitHub + Cloudflare.

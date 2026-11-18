@@ -17,7 +17,172 @@ import { define, ToolInputError, type AgentTool, type ToolContext } from "./type
 const DAY_MS = 24 * 60 * 60 * 1000;
 const userAgent = (ctx: ToolContext) => ctx.web?.userAgent ?? "VESPER-assistant";
 
+// ------------------------------------------------------------------ source quality (labels and ranking)
+
+/**
+ * How much a website can be trusted for facts, by simple rules (no lookups):
+ * - trusted: on the admin's list (subdomains included)
+ * - government: .gov/.mil/.int, country versions such as gov.pk, gov.uk, gob.mx, gouv.fr, go.jp, gc.ca, and a few
+ *   international bodies (un.org, worldbank.org…)
+ * - official: the organisation's own site: the site's name equals a name in the question exactly (github.com and
+ *   github.blog for "GitHub"; never githubstats.com), and it isn't a page someone published on a hosting platform
+ * - education: universities and research (.edu, edu.pk, ac.uk…), ranked below government and official
+ * - other: everything else (news, blogs, statistics and aggregator sites)
+ */
+export type SourceQuality = "trusted" | "government" | "official" | "education" | "other";
+
+export const QUALITY_BOOST: Record<SourceQuality, number> = { trusted: 3, government: 3, official: 3, education: 1.5, other: 0 };
+
+const QUALITY_LABEL: Record<SourceQuality, string> = {
+  trusted: "trusted (on the administrator's list)",
+  government: "official: government or international body",
+  official: "official: the organisation's own website",
+  education: "university or research institution",
+  other: "other website (news, blog or statistics site)",
+};
+
+/** Second-level labels that form a two-part suffix under a country code: gov.pk, edu.pk, ac.uk, co.uk, com.au… */
+const SECOND_LEVEL = new Set(["ac", "co", "com", "edu", "gc", "go", "gob", "gouv", "gov", "govt", "mil", "ne", "net", "nic", "or", "org", "sch"]);
+const GOVERNMENT_SECOND_LEVEL = new Set(["gc", "go", "gob", "gouv", "gov", "govt", "mil"]);
+const EDUCATION_SECOND_LEVEL = new Set(["ac", "edu"]);
+const INTERNATIONAL_BODIES = new Set(["un.org", "worldbank.org", "imf.org", "oecd.org", "wto.org", "europa.eu", "canada.ca"]);
+/** Hosting platforms where anyone gets a subdomain: a name match there isn't the organisation's own site. */
+const USER_CONTENT_HOSTS = [
+  "github.io", "gitlab.io", "blogspot.com", "wordpress.com", "substack.com", "medium.com", "tumblr.com", "vercel.app",
+  "netlify.app", "pages.dev", "herokuapp.com", "web.app", "firebaseapp.com", "notion.site", "wixsite.com", "weebly.com",
+];
+/** Common words that are also website names; never treated as the organisation a question is about. */
+const GENERIC_NAMES = new Set(
+  ("about according amazing best code current data developer developers download free global guide history how info latest " +
+    "news official online people price prices rate rates report review reviews share site stats statistics the time today top " +
+    "update version what when where which who why world year").split(" "),
+);
+
+export interface SiteParts {
+  host: string;
+  /** Registrable domain, e.g. "github.com" for "docs.github.com", "pbs.gov.pk" for "www.pbs.gov.pk". */
+  domain: string;
+  /** The name part of the domain: "github", "pbs". */
+  name: string;
+  /** "com", "blog", "gov.pk"… */
+  suffix: string;
+}
+
+export function siteParts(url: string): SiteParts | null {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
+  } catch {
+    return null;
+  }
+  const labels = host.split(".");
+  if (labels.length < 2 || labels.some((l) => !l)) return null;
+  const tld = labels.at(-1)!;
+  const second = labels.at(-2)!;
+  const twoPart = tld.length === 2 && SECOND_LEVEL.has(second);
+  const suffix = twoPart ? `${second}.${tld}` : tld;
+  // "gov.uk" or "gob.mx" on their own are the suffix itself, with no organisation name in front.
+  const name = twoPart ? (labels.at(-3) ?? "") : second;
+  return { host, domain: name ? `${name}.${suffix}` : suffix, name, suffix };
+}
+
+/** True when the url's site is one of `sites` or a subdomain of one ("who.int" matches "www.who.int", "news.who.int"). */
+export function onSiteList(url: string, sites: readonly string[]): boolean {
+  const host = siteParts(url)?.host;
+  return Boolean(host && sites.some((s) => host === s || host.endsWith(`.${s}`)));
+}
+
+/** Organisation names a question mentions, as website names: single words and joined pairs ("stack overflow" → "stackoverflow"). */
+export function organisationNames(text: string): Set<string> {
+  const words = text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const names = new Set<string>();
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]!;
+    if (word.length >= 3 && !GENERIC_NAMES.has(word)) names.add(word);
+    const next = words[i + 1];
+    if (next) names.add(word + next);
+  }
+  return names;
+}
+
+export function sourceQuality(url: string, names: ReadonlySet<string>, trusted: readonly string[] = []): SourceQuality {
+  const site = siteParts(url);
+  if (!site) return "other";
+  if (onSiteList(url, trusted)) return "trusted";
+  const [second] = site.suffix.split(".");
+  const twoPart = site.suffix.includes(".");
+  if (["gov", "mil", "int"].includes(site.suffix) || (twoPart && GOVERNMENT_SECOND_LEVEL.has(second!)) || INTERNATIONAL_BODIES.has(site.domain)) {
+    return "government";
+  }
+  const hosted = USER_CONTENT_HOSTS.some((h) => site.host.endsWith(`.${h}`));
+  if (!hosted && names.has(site.name)) return "official";
+  if (site.suffix === "edu" || (twoPart && EDUCATION_SECOND_LEVEL.has(second!))) return "education";
+  return "other";
+}
+
+const PREFER_DAYS = { day: 1, week: 7, month: 31, year: 366 } as const;
+
+export interface RankOptions {
+  trusted: readonly string[];
+  blocked: readonly string[];
+  /** The question and search words, to recognise the organisation's own site. */
+  about: string;
+  /** Rank results from this period higher. Nothing is dropped for its age (no hard date filter). */
+  prefer?: keyof typeof PREFER_DAYS;
+  now: Date;
+  keep: number;
+}
+
+const normalUrl = (url: string) => url.toLowerCase().replace(/^https?:\/\/(www\.)?/, "").replace(/[?#].*$/, "").replace(/\/+$/, "");
+const wordSet = (text: string) => new Set(text.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2));
+
+/** Same page, or snippets that say practically the same thing (≥ 80% of words shared). */
+export function nearDuplicate(a: { url: string; snippet: string }, b: { url: string; snippet: string }): boolean {
+  if (normalUrl(a.url) === normalUrl(b.url)) return true;
+  const x = wordSet(a.snippet);
+  const y = wordSet(b.snippet);
+  if (x.size < 8 || y.size < 8) return false;
+  let shared = 0;
+  for (const w of x) if (y.has(w)) shared++;
+  return shared / (x.size + y.size - shared) >= 0.8;
+}
+
+/**
+ * Labels results by source quality, drops blocked sites and near-duplicates, and puts the best first:
+ * quality first (trusted / government / official > education > other), then the search engine's own order.
+ * With `prefer`, newer results gain up to one point and older "other" results lose one; official, trusted,
+ * government and education results never lose rank for their age. Unknown dates count as neither.
+ */
+export function rankResults<T extends { url: string; snippet: string; published?: string }>(
+  results: T[],
+  options: RankOptions,
+): (T & { quality: SourceQuality })[] {
+  const names = organisationNames(options.about);
+  const scored = results.flatMap((r, i) => {
+    if (onSiteList(r.url, options.blocked)) return [];
+    const quality = sourceQuality(r.url, names, options.trusted);
+    let score = QUALITY_BOOST[quality] + (1 - i / Math.max(1, results.length));
+    const published = r.published ? Date.parse(r.published) : Number.NaN;
+    if (options.prefer && Number.isFinite(published)) {
+      const window = PREFER_DAYS[options.prefer];
+      const age = Math.max(0, (options.now.getTime() - published) / DAY_MS);
+      if (age <= window) score += 1 - age / window;
+      else if (quality === "other") score -= 1;
+    }
+    return [{ result: { ...r, quality }, score }];
+  });
+  scored.sort((a, b) => b.score - a.score);
+  const kept: (T & { quality: SourceQuality })[] = [];
+  for (const { result } of scored) {
+    if (!kept.some((k) => nearDuplicate(k, result))) kept.push(result);
+  }
+  return kept.slice(0, options.keep);
+}
+
 // ------------------------------------------------------------------ web_search (Tavily)
+
+const SEARCH_RESULTS = 8;
+const RESULTS_FOR_MODEL = 6;
 
 interface TavilyResponse {
   results?: { title?: string; url?: string; content?: string; published_date?: string | null }[];
@@ -29,7 +194,8 @@ const webSearch = define({
   description:
     "Search the web for current or specific information: news, recent events, prices, schedules, sports results, " +
     "current office holders, product details, anything that may have changed recently or that you're unsure about. " +
-    "Returns up to 5 results with title, URL and a text snippet. Use read_page to read a result in full when the snippet isn't enough.",
+    "Returns up to 6 results, best sources first, each with title, URL, source type (official, university or other), " +
+    "publish date (when known) and a text snippet. Use read_page to read a result in full when the snippet isn't enough.",
   risk: "read",
   requiresMemory: false,
   isAvailable: ({ web }) => Boolean(web?.tavilyApiKey) && (web?.webSearchDailyLimit ?? 0) > 0,
@@ -38,7 +204,11 @@ const webSearch = define({
     properties: {
       query: { type: "string", description: "A focused search query, e.g. \"Pakistan vs England test series result November 2026\"" },
       topic: { type: "string", enum: ["general", "news"], description: "Use \"news\" for recent events and headlines. Default: general." },
-      time_range: { type: "string", enum: ["day", "week", "month", "year"], description: "Only results from this recent period (optional)." },
+      time_range: {
+        type: "string",
+        enum: ["day", "week", "month", "year"],
+        description: 'Rank results from this recent period higher (older official sources are still kept). Use "year" for facts that change over time.',
+      },
     },
     required: ["query"],
   },
@@ -60,29 +230,45 @@ const webSearch = define({
     const response = await fetchJson<TavilyResponse>("https://api.tavily.com/search", "Web search", {
       method: "POST",
       headers: { Authorization: `Bearer ${web.tavilyApiKey}`, "Content-Type": "application/json" },
+      // 8 results cost the same single search as 5; the best 6 go to the model. No time_range is sent: a hard date
+      // filter would also drop older official pages, so recency only changes the ranking (rankResults).
       body: JSON.stringify({
         query,
         search_depth: "basic",
-        max_results: 5,
+        max_results: SEARCH_RESULTS,
         topic: topic ?? "general",
         include_answer: false,
-        ...(time_range ? { time_range } : {}),
+        ...(web.blockedSites?.length ? { exclude_domains: web.blockedSites } : {}),
       }),
       userAgent: web.userAgent,
       timeoutMs: 15_000,
       signal: ctx.signal,
     });
-    const results = (response.results ?? [])
+    const found = (response.results ?? [])
       .filter((r) => typeof r.url === "string" && /^https?:\/\//i.test(r.url))
-      .slice(0, 5)
       .map((r) => ({
         title: clip(r.title || r.url!, 150),
         url: r.url!,
         ...(r.published_date ? { published: r.published_date } : {}),
         snippet: clip(r.content ?? "", 600),
       }));
+    const ranked = rankResults(found, {
+      trusted: web.trustedSites ?? [],
+      blocked: web.blockedSites ?? [],
+      about: `${web.question ?? ""} ${query}`,
+      ...(time_range ? { prefer: time_range } : {}),
+      now: ctx.now,
+      keep: RESULTS_FOR_MODEL,
+    });
+    const results = ranked.map((r) => ({
+      title: r.title,
+      url: r.url,
+      source: QUALITY_LABEL[r.quality],
+      published: r.published ?? "unknown",
+      snippet: r.snippet,
+    }));
     return {
-      content: wrapUntrusted("a web search", { query, results }),
+      content: wrapUntrusted("a web search", { query, retrieved: ctx.now.toISOString().slice(0, 10), results }),
       summary: results.length ? `${results.length} results for "${clip(query, 80)}"` : `No results for "${clip(query, 80)}"`,
       sources: results.map((r) => ({ title: r.title, url: r.url })),
     };
@@ -208,8 +394,9 @@ const readPage = define({
     const { url } = page;
     const title = clip(page.title || url.hostname, 150);
     const text = page.text.length > PAGE_TEXT_CHARS ? `${page.text.slice(0, PAGE_TEXT_CHARS)}…` : page.text;
+    const source = QUALITY_LABEL[sourceQuality(url.href, organisationNames(ctx.web?.question ?? ""), ctx.web?.trustedSites ?? [])];
     return {
-      content: wrapUntrusted(url.hostname, { url: url.href, title, text, cut_off: page.truncated || page.text.length > PAGE_TEXT_CHARS }),
+      content: wrapUntrusted(url.hostname, { url: url.href, title, source, text, cut_off: page.truncated || page.text.length > PAGE_TEXT_CHARS }),
       summary: `Read "${clip(title, 80)}"`,
       sources: [{ title, url: url.href }],
     };

@@ -130,18 +130,22 @@ export const ALL_TOOLS: AgentTool[] = [calculator, datetime, remember, forget, .
 
 const isAvailable = (t: AgentTool, server: ToolServerState) => (t.isAvailable ? t.isAvailable(server) : true);
 
-/** What the live-information tools need: request identity, the search key (if set) and today's cap. */
+/** What the live-information tools need: request identity, the search key (if set), today's cap and the site lists. */
 export function webToolContext(
   env: { TAVILY_API_KEY?: string },
   appName: string,
   origin: string,
-  settings: Pick<AppSettingsDto, "webSearchDailyLimit">,
+  settings: Pick<AppSettingsDto, "webSearchDailyLimit" | "trustedSites" | "blockedSites">,
+  question?: string,
 ): WebToolContext {
   const key = env.TAVILY_API_KEY?.trim();
   return {
     userAgent: `${appName.replace(/[^\w.-]/g, "") || "Assistant"}/${VERSION} (+${origin})`,
     ...(key ? { tavilyApiKey: key } : {}),
     webSearchDailyLimit: settings.webSearchDailyLimit,
+    trustedSites: settings.trustedSites,
+    blockedSites: settings.blockedSites,
+    ...(question?.trim() ? { question: question.trim().slice(0, 2_000) } : {}),
   };
 }
 

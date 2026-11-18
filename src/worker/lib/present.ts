@@ -9,6 +9,7 @@
  */
 import type { AppSettingsDto, ChatStreamEvent, MessageDto, ToolEventDto } from "../../shared/types";
 import type { SessionUser } from "../db/users";
+import { ANSWER_CHECK } from "../llm/number-check";
 
 export interface Viewer {
   admin: boolean;
@@ -31,7 +32,8 @@ export function presentMessage(message: MessageDto, viewer: Viewer): MessageDto 
     reasoning: viewer.showReasoning ? message.reasoning : null,
     provider: null,
     model: null,
-    tools: message.tools ? message.tools.map((t) => presentTool(t, viewer)) : null,
+    // The number check is a note for the admin, never shown to users.
+    tools: message.tools ? message.tools.filter((t) => t.name !== ANSWER_CHECK).map((t) => presentTool(t, viewer)) : null,
   };
 }
 
@@ -45,7 +47,7 @@ export function presentEvent(event: ChatStreamEvent, viewer: Viewer): ChatStream
     case "reasoning":
       return viewer.showReasoning ? event : null;
     case "tool":
-      return { ...event, tool: presentTool(event.tool, viewer) };
+      return event.tool.name === ANSWER_CHECK ? null : { ...event, tool: presentTool(event.tool, viewer) };
     case "done":
       return { ...event, message: presentMessage(event.message, viewer) };
     case "error":

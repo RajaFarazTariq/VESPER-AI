@@ -2,6 +2,27 @@ import { z } from "zod";
 import type { AppSettingsDto } from "../../shared/types";
 import type { AppConfig } from "../env";
 
+const HOST = /^(?=.{3,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+/** "https://www.WHO.int/news/x" → "who.int": the website part only (subdomains are matched too). */
+export function cleanSite(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
+    .replace(/[/?#].*$/, "")
+    .replace(/:\d+$/, "")
+    .replace(/^www\./, "")
+    .replace(/\.$/, "");
+}
+
+/** A list of websites, one per entry; blank entries and duplicates dropped, anything else must be a website address. */
+const siteList = z
+  .array(z.string().max(300))
+  .max(100)
+  .transform((list) => [...new Set(list.map(cleanSite).filter(Boolean))])
+  .refine((list) => list.every((site) => HOST.test(site)), "Use website addresses like who.int (one per line).");
+
 /** Validation for each admin-managed setting (also used for the admin API). */
 export const appSettingsSchema = z.object({
   signupsOpen: z.boolean(),
@@ -24,6 +45,8 @@ export const appSettingsSchema = z.object({
     .max(20)
     .refine((list) => new Set(list.map((m) => m.value)).size === list.length, "Each model can only be listed once"),
   webSearchDailyLimit: z.number().int().min(0).max(1_000),
+  trustedSites: siteList,
+  blockedSites: siteList,
 });
 
 type Key = keyof AppSettingsDto;
@@ -39,6 +62,8 @@ export function defaultAppSettings(config: AppConfig): AppSettingsDto {
     userModels: [],
     // Tavily's free plan is 1,000 searches a month: 30 a day stays under it.
     webSearchDailyLimit: 30,
+    trustedSites: [],
+    blockedSites: [],
   };
 }
 

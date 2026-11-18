@@ -247,7 +247,8 @@ export const chatRoutes = new Hono<AppEnv>()
             userId: user.id,
             settings: user.settings,
             now: new Date(),
-            web,
+            // The question lets web search recognise the organisation it's about (its own site counts as official).
+            web: { ...web, question: turn.userMessage.content.slice(0, 2_000) },
             signal: abort.signal,
             ...(timeZone ? { timeZone } : {}),
             ...(c.env.AI ? { ai: c.env.AI } : {}),

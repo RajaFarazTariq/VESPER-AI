@@ -9,6 +9,10 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
 - 🛠️ Tool-using agent: exact calculator, date/time in **each user's own time zone**, long-term memory
 - 🌐 **Live information** with source links: web search (Tavily, free plan, daily-capped), reading web pages,
   weather (Open-Meteo), Wikipedia, and currency rates (Frankfurter); web content is treated as untrusted data
+- ✅ **Trusted sources first**: results are labelled (official / university / other) with dates, government sites
+  and the organisation's own site rank first, the admin keeps trusted and blocked website lists, and the assistant
+  follows clear rules (newest reliable source wins, differing figures are never blended). An admin-only number check
+  flags any figure in an answer that no source contains
 - 📚 **Knowledge base**: the admin uploads PDF, Word (.docx), text, Markdown and CSV files (or adds web pages) into
   folders; everyone's assistant answers from them and cites "document, page X". Files are read in the admin's
   browser and only their text is stored (about 15,000 pages fit in the free database). Search = full-text (FTS5)
@@ -27,9 +31,10 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
   message, source links under answers, and a responsive mobile layout
 - 💸 **No paid services, no credit card, no automatic billing**
 
-> Status: **Knowledge base complete (v0.9.2)**: answers compare the admin's documents with the live web, on top of
-> live information, multi-user accounts and the admin panel.
-> Scheduled refresh of saved web pages, then integrations (GitHub, Gmail, Calendar, Telegram) come next. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> Status: **Trusted sources (v0.9.3)**: accurate, current answers with the live web as the main source (source
+> labels and ranking, trusted/blocked sites, answer rules, admin-only number check, an accuracy test set), on top of
+> the knowledge base, live information, multi-user accounts and the admin panel.
+> Next: integrations (GitHub, Gmail, Calendar, Telegram); scheduled refresh of saved web pages is postponed. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
@@ -145,6 +150,7 @@ contacts your machine, and local chats still save to your history.
 |---|---|
 | `npm run dev` | Local D1 migrations + API (`wrangler dev`) + web app (`vite`) with hot reload |
 | `npm run mock:llm` | Offline mock of the AI APIs (`MOCK_FAIL=groq` makes Groq return 429 to test fallback) |
+| `npm run accuracy -- --provider groq --pdf <file> --out run.json` | Asks the 18 real questions in `tests/accuracy/questions.json` through a local server with real keys and scores the answers (uses free-tier quota; `--compare a.json b.json` prints runs side by side) |
 | `npm run typecheck` | TypeScript checks for the Worker and the web app |
 | `npm test` | Unit + integration tests inside the Workers runtime with a real local D1 |
 | `npm run build` | Builds the web app into `dist/` |

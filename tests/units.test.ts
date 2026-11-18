@@ -13,6 +13,69 @@ import { cooldownFor, parseSelection } from "../src/worker/llm/router";
 import { classifyHttpError, parseRetryAfter, ProviderError } from "../src/worker/llm/types";
 import * as entry from "../src/worker/index";
 import { citedSources, tidyCitations } from "../src/web/lib/format";
+import { appSettingsSchema } from "../src/worker/db/app-settings";
+import { presentEvent, presentMessage } from "../src/worker/lib/present";
+import { checkNumbers, numberCheckEvent } from "../src/worker/llm/number-check";
+
+describe("number check", () => {
+  it("compares %, M/K, commas and currency by value", () => {
+    const evidence = "Copilot writes 46% of code; 4,500,000 suggestions; revenue of $1.2 billion; 250K users; it costs PKR 12,500.";
+    expect(checkNumbers("46 percent of code, 4.5 million suggestions, $1.2B revenue, 250,000 users, Rs 12,500.", evidence)).toEqual({
+      checked: 5,
+      missing: [],
+    });
+  });
+
+  it("accepts a rounder figure, but flags a different one", () => {
+    expect(checkNumbers("about 4.5 million suggestions and 46% of code", "4,512,000 suggestions and 46.2% of code").missing).toEqual([]);
+    expect(checkNumbers("In Java it's 63%.", "In Java it's 61%.").missing).toEqual(["63%"]);
+    expect(checkNumbers("Everest is 8,849 m tall", "8,848.86 m").missing).toEqual([]);
+  });
+
+  it("ignores years, dates, times, list numbers, page references, ordinals, small counts, code and links", () => {
+    const answer = [
+      "1. In 2023 GitHub said so (Report.pdf, page 47).",
+      "2. On 14 February 2023 at 10:30 AM, 3 teams met; see [the blog](https://example.com/2023/62).",
+      "As of Nov 19, 2026 (2026-11-19, 19/11/2026), in the 21st century. Run `npm i x@99`.",
+    ].join("\n");
+    expect(checkNumbers(answer, "")).toEqual({ checked: 0, missing: [] });
+  });
+
+  it("needs version numbers to match exactly", () => {
+    expect(checkNumbers("The latest is Python 3.15.2.", "Download Python 3.15.2").missing).toEqual([]);
+    expect(checkNumbers("The latest is Python 3.15.3.", "Download Python 3.15.2").missing).toEqual(["3.15.3"]);
+  });
+
+  it("makes an admin-only step: a warning listing what's missing, a confirmation, or nothing", () => {
+    expect(numberCheckEvent("Java: 63% and 46%", ["46%", "61%"])).toMatchObject({ status: "error", summary: "Not found in any source: 63%" });
+    expect(numberCheckEvent("Overall 46%", ["46%"])).toMatchObject({ status: "done", summary: "All 1 number found in the sources" });
+    expect(numberCheckEvent("No figures here.", ["46%"])).toBeNull();
+  });
+
+  it("is shown to the admin only: users never get it, live or when reopening the chat", () => {
+    const check = numberCheckEvent("63%", ["61%"])!;
+    const user = { admin: false, showReasoning: false };
+    const admin = { admin: true, showReasoning: true };
+    expect(presentEvent({ type: "tool", messageId: "m", tool: check } as never, user)).toBeNull();
+    expect(presentEvent({ type: "tool", messageId: "m", tool: check } as never, admin)).not.toBeNull();
+    const search = { id: "s", name: "web_search", label: "Web search", args: {}, status: "done" as const, summary: "x" };
+    const message = { role: "assistant", provider: "groq", tools: [search, check] } as never;
+    expect((presentMessage(message, user).tools ?? []).map((t) => t.name)).toEqual(["web_search"]);
+    expect((presentMessage(message, admin).tools ?? []).map((t) => t.name)).toEqual(["web_search", "answer_check"]);
+  });
+});
+
+describe("trusted and blocked website lists", () => {
+  it("keeps just the website part, drops blanks and duplicates, and rejects anything that isn't a website", () => {
+    expect(appSettingsSchema.shape.trustedSites.parse(["https://www.WHO.int/news/x", "who.int", "", "  sbp.org.pk  ", "pbs.gov.pk:443"])).toEqual([
+      "who.int",
+      "sbp.org.pk",
+      "pbs.gov.pk",
+    ]);
+    expect(appSettingsSchema.shape.blockedSites.safeParse(["not a website"]).success).toBe(false);
+    expect(appSettingsSchema.shape.blockedSites.safeParse(Array.from({ length: 101 }, (_, i) => `s${i}.com`)).success).toBe(false);
+  });
+});
 
 describe("citations under answers", () => {
   const doc = (location: string, title = "AI in SE.pdf") => ({ title, location });

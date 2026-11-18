@@ -136,29 +136,62 @@ describe("web_search tool", () => {
     published_date: i === 0 ? "2026-11-10" : null,
   }));
 
-  it("calls Tavily correctly and returns 5 short, untrusted results with sources", async () => {
+  it("calls Tavily correctly (8 results, no hard date filter) and returns short, labelled, untrusted results with sources", async () => {
     const spy = mockFetch(() => json({ results: tavilyResults }));
     const out = await tool("web_search").run({ query: "latest cricket score", topic: "news", time_range: "day" }, ctx());
     const [url, init] = spy.mock.calls[0]!;
     expect(url).toBe("https://api.tavily.com/search");
     expect(init?.method).toBe("POST");
     expect(new Headers(init?.headers).get("authorization")).toBe("Bearer tvly-k");
+    // time_range only ranks newer results higher: it's never sent as a filter (that would drop older official pages).
     expect(JSON.parse(String(init?.body))).toEqual({
       query: "latest cricket score",
       search_depth: "basic",
-      max_results: 5,
+      max_results: 8,
       topic: "news",
       include_answer: false,
-      time_range: "day",
     });
     const content = JSON.parse(out.content);
     expect(content.notice).toMatch(/^Untrusted content from a web search/);
+    expect(content.data.retrieved).toBe("2026-11-11");
     expect(content.data.results).toHaveLength(5);
     expect(content.data.results.map((r: any) => r.url)).not.toContain("javascript:alert(1)");
-    expect(content.data.results[0]).toMatchObject({ title: "Result 1", published: "2026-11-10" });
+    expect(content.data.results[0]).toMatchObject({ title: "Result 1", published: "2026-11-10", source: expect.stringMatching(/^other website/) });
+    expect(content.data.results[1].published).toBe("unknown");
     expect(content.data.results[0].snippet.length).toBeLessThanOrEqual(601);
     expect(out.sources).toHaveLength(5);
     expect(out.summary).toBe('5 results for "latest cricket score"');
+  });
+
+  it("puts official and trusted sites first, drops blocked ones (and asks Tavily to skip them), never demotes official pages for age", async () => {
+    const spy = mockFetch(() =>
+      json({
+        results: [
+          { title: "Stats site", url: "https://copilotstats.example.com/a", content: "Copilot writes 61% of Java code, says this statistics site" },
+          { title: "Blocked", url: "https://spam.blocked.com/b", content: "spam" },
+          { title: "GitHub blog", url: "https://github.blog/news/c", content: "61% among developers using Java", published_date: "2023-02-14" },
+          { title: "Dawn", url: "https://www.dawn.com/d", content: "A news story about Copilot adoption in Pakistan" },
+        ],
+      }),
+    );
+    const web = {
+      userAgent: "t",
+      tavilyApiKey: "tvly-k",
+      webSearchDailyLimit: 30,
+      trustedSites: ["dawn.com"],
+      blockedSites: ["blocked.com"],
+      question: "According to GitHub, how much Java code does Copilot write?",
+    };
+    const out = await tool("web_search").run({ query: "Copilot Java share", time_range: "year" }, ctx({ web }));
+    expect(JSON.parse(String(spy.mock.calls[0]![1]?.body)).exclude_domains).toEqual(["blocked.com"]);
+    const results = JSON.parse(out.content).data.results;
+    expect(results.map((r: any) => r.url)).toEqual(["https://github.blog/news/c", "https://www.dawn.com/d", "https://copilotstats.example.com/a"]);
+    expect(results.map((r: any) => r.source)).toEqual([
+      expect.stringMatching(/^official: the organisation's own website/),
+      expect.stringMatching(/^trusted/),
+      expect.stringMatching(/^other website/),
+    ]);
+    expect(results[0].published).toBe("2023-02-14"); // older than the preferred year, still first
   });
 
   it("stops at the daily allowance for the whole app", async () => {

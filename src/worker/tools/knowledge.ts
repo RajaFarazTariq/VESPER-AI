@@ -108,6 +108,7 @@ export const searchKnowledge = define({
     const best = await rerank(ctx.ai, query, candidates, limit ?? RESULTS);
     const results = best.map((h, i) => ({
       ref: i + 1,
+      source: "your document (the administrator's knowledge base)",
       document: h.title,
       ...(h.location ? { location: h.location } : {}),
       folder: h.collection,
@@ -123,6 +124,7 @@ export const searchKnowledge = define({
       }),
       summary: `Found ${plural(best.length, "passage")} in ${plural(documents, "document")}`,
       sources: sourcesOf(best),
+      evidence: best.map((h) => h.text).join("\n\n"), // whole passages, for the number check
     };
   },
 });

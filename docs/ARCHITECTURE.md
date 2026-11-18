@@ -139,6 +139,44 @@ from Ollama directly, then `/api/chat/local/complete` stores the reply. The serv
   setup and holds 5× more. Semantic recall can be added later if keyword recall proves too narrow.
 - **Backups:** `wrangler d1 export` can't export virtual (FTS5) tables; Time Travel (point-in-time restore) still works.
 
+## 5d. Accurate and current answers: source quality, rules, number check (v0.9.3)
+
+Goal set by the owner: accurate, verified and *latest* answers for users, with the live web as the main source and the
+knowledge base for the admin's own material. Everything below is free (no extra searches or model calls).
+
+- **Source labels** (`tools/web.ts`, `sourceQuality`): every web result and every page read gets a type, by simple
+  rules: *trusted* (admin's list, subdomains included) · *government* (.gov/.mil/.int and country versions such as
+  gov.pk, gov.uk, gob.mx, gouv.fr, go.jp, gc.ca; plus un.org, worldbank.org, imf.org, oecd.org, wto.org, europa.eu,
+  canada.ca) · *official* (the organisation's own site: the domain's name equals a name in the question **exactly**,
+  e.g. github.com/github.blog for "GitHub", never githubstats.com; pages on hosting platforms like *.github.io don't
+  count; common words aren't names) · *education* (.edu, edu.pk, ac.uk…) · *other* (news, blogs, statistics sites).
+  Knowledge-base passages are labelled "your document". Results also carry their publish date ("unknown" when Tavily
+  has none) and the retrieval date.
+- **Ranking** (`rankResults`): Tavily is asked for 8 results (same single credit), blocked sites are sent as
+  `exclude_domains` and filtered again; score = quality boost (trusted/government/official 3, education 1.5, other 0)
+  + search order (0–1). With `time_range` (the prompt asks for "year" on facts that change) newer results gain up to
+  1 point and older *other* results lose 1; official/trusted/government/education never lose rank for age. **No hard
+  date filter**: `time_range` is never sent to Tavily. Near-duplicates (same page, or ≥80% shared words) are dropped;
+  the best 6 go to the model.
+- **Rules R1–R7** in the system prompt (`llm/context.ts`, only when web tools are offered): R1 official > education >
+  other (open the official page with read_page when the best figure comes from a weak site); R2 newest reliable source
+  wins for changing facts, "as of <date>"; R3 documents win for their own content and the admin's rules, newer web
+  figure as a note; R4 never merge/average/round together differing figures (no "61% to 62%"), add a "Note:" line;
+  R5 cite every number from tool results, never state a figure that isn't in them; R6 if a look-up finds nothing, say
+  so (factual look-ups only, never writing/explaining); R7 sources agree → one answer, no note.
+- **Number check** (`llm/number-check.ts`, run in `llm/agent.ts` after an answer that used a look-up tool): every
+  number in the answer must appear in the tool results, the whole knowledge-base passages (not just the clipped part
+  the model saw), the question or the chat so far. Compared by value (%, K/M/B/million/lakh/crore, commas, currency;
+  rounder figures accepted); years, dates, times, list numbers, page references, ordinals, small whole numbers and
+  code/links are skipped; version numbers must match exactly. The result is an admin-only step "Number check" under
+  the answer ("Not found in any source: 63%" or "All N numbers found"); `lib/present.ts` never sends it to users.
+  The answer is never changed or regenerated.
+- **Accuracy test** (`npm run accuracy`, `tests/accuracy/questions.json`): 18 real questions with expected answers
+  and sources (conflict, documents-only, latest, official statistics, stable facts, calculation, live rate,
+  no-answer). "Latest" expectations are read live from python.org, nodejs.org, kernel.org and Frankfurter at run time.
+  Runs against a local server with real keys, one provider at a time (fallback off); scores are recorded in
+  HANDOFF.md. Locally the re-ranker isn't available (keyword order), the same for every run.
+
 ## 6. Security model
 
 | Threat | Control |
@@ -175,6 +213,12 @@ tools are blocked once untrusted content is in context.
   messages, a full chat turn with search (untrusted labelling, sources for users), admin controls.
 - `tests/api.test.ts`: full HTTP flows inside workerd with a real local D1: auth, OAuth callback, CSRF, streaming + fallback + persistence, regenerate, validation, rate limiting, isolation between
   users, settings, model lists, local-model endpoints.
+- `tests/tools.test.ts` also covers source quality (country government/university domains, exact-name official sites,
+  trusted/blocked, ranking by date without dropping official pages, near-duplicates), the paired knowledge search,
+  the number check inside the agent loop and the R1–R7 prompt rules; `tests/units.test.ts` covers number
+  normalisation and what it ignores, admin-only display, site-list cleaning and cited-only page chips.
+- Tests never use real keys: `vitest.config.ts` blanks the provider and search keys even if `.dev.vars` has them.
+- Accuracy (real models, real search): `npm run accuracy` (see 5d); not part of `npm test`.
 - Manual/automated E2E: `wrangler dev` + `scripts/mock-llm.mjs` + a headless browser run (login, streaming,
   reload persistence, regenerate, model picker, settings, rename, dark mode, stop, mobile drawer, sign-out).
 

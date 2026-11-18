@@ -52,6 +52,10 @@ export interface AppSettingsDto {
   userModels: UserModelOption[];
   /** Web searches allowed per UTC day for the whole app (protects the free search quota). 0 = web search off. */
   webSearchDailyLimit: number;
+  /** Websites the admin trusts (e.g. "who.int"; subdomains included): ranked first in web search results. */
+  trustedSites: string[];
+  /** Websites never used in web search results (e.g. spammy statistics sites). */
+  blockedSites: string[];
 }
 
 /** A model the admin made available to users, e.g. { value: "groq:openai/gpt-oss-120b", label: "Smart" }. */

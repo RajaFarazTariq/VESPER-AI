@@ -19,6 +19,13 @@ interface Props {
 
 const MAX_INSTRUCTIONS = 4000;
 
+/** Website list from a text box: one per line (commas also work); the server tidies each entry. */
+const siteLines = (text: string) =>
+  text
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
 const errorText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 const formatDate = (t: number) => new Date(t).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
@@ -289,6 +296,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const [limitText, setLimitText] = useState("");
   const [tools, setTools] = useState<ToolInfoDto[]>([]);
   const [searchText, setSearchText] = useState("");
+  const [trustedText, setTrustedText] = useState("");
+  const [blockedText, setBlockedText] = useState("");
   const [webSearch, setWebSearch] = useState<{ keyConfigured: boolean; usedToday: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -300,6 +309,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         setDraft(r.settings);
         setLimitText(String(r.settings.defaultDailyLimit));
         setSearchText(String(r.settings.webSearchDailyLimit));
+        setTrustedText(r.settings.trustedSites.join("\n"));
+        setBlockedText(r.settings.blockedSites.join("\n"));
         setTools(r.tools);
         setWebSearch(r.webSearch);
       },
@@ -317,6 +328,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
     ...draft,
     defaultDailyLimit: limitValid ? limit : draft.defaultDailyLimit,
     webSearchDailyLimit: searchValid ? searches : draft.webSearchDailyLimit,
+    trustedSites: siteLines(trustedText),
+    blockedSites: siteLines(blockedText),
   };
   const dirty = JSON.stringify(next) !== JSON.stringify(saved);
 
@@ -331,6 +344,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       setDraft(settings);
       setLimitText(String(settings.defaultDailyLimit));
       setSearchText(String(settings.webSearchDailyLimit));
+      setTrustedText(settings.trustedSites.join("\n")); // the server tidies entries ("https://www.who.int/x" → "who.int")
+      setBlockedText(settings.blockedSites.join("\n"));
       onNotice("App settings saved.", "info");
     } catch (e) {
       setError(errorText(e, "Could not save settings."));
@@ -399,6 +414,29 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
             )
           ) : null}
         </div>
+      </Field>
+      <Field
+        label="Trusted websites"
+        hint="One per line, e.g. who.int or sbp.org.pk (subdomains included). Web search puts these first. Government sites (.gov, gov.pk, .int…) and an organisation's own site are already ranked first automatically."
+      >
+        <textarea
+          value={trustedText}
+          onChange={(e) => setTrustedText(e.target.value)}
+          rows={3}
+          aria-label="Trusted websites"
+          placeholder={"who.int\nsbp.org.pk"}
+          className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
+        />
+      </Field>
+      <Field label="Blocked websites" hint="One per line. Web search never uses these sites, e.g. statistics or content-farm sites you don't trust.">
+        <textarea
+          value={blockedText}
+          onChange={(e) => setBlockedText(e.target.value)}
+          rows={3}
+          aria-label="Blocked websites"
+          placeholder="example-stats-site.com"
+          className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
+        />
       </Field>
       <Field label="Tools available to everyone" hint="A tool switched off here is removed for all users, including you.">
         <div className="space-y-2">
