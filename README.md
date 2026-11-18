@@ -27,7 +27,8 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
   message, source links under answers, and a responsive mobile layout
 - 💸 **No paid services, no credit card, no automatic billing**
 
-> Status: **Knowledge base (v0.9.0) complete**, on top of live information, multi-user accounts and the admin panel.
+> Status: **Knowledge base complete (v0.9.2)**: answers compare the admin's documents with the live web, on top of
+> live information, multi-user accounts and the admin panel.
 > Scheduled refresh of saved web pages, then integrations (GitHub, Gmail, Calendar, Telegram) come next. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---

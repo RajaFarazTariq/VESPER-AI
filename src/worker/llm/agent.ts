@@ -7,6 +7,30 @@ import type { ChatMessage, Provider, ToolCall, ToolSpec } from "./types";
 /** Model ↔ tool rounds per user message. Every round is one request against a free quota. */
 export const MAX_TOOL_ROUNDS = 5;
 const MAX_TOOL_RESULT_CHARS = 8_000;
+/**
+ * Web look-ups that also search the knowledge base (same query, at the same time) when the documents haven't been
+ * checked yet in this reply, so the model can compare both instead of ignoring the admin's documents.
+ * read_page is left out: the user asked for one specific page.
+ */
+const PAIRED_WEB_TOOLS = new Set(["web_search", "wikipedia"]);
+const PAIRED_KNOWLEDGE_RESULTS = 3;
+
+/** The knowledge-base search to run alongside a web look-up, or null when it isn't needed. */
+function pairedKnowledgeCall(call: ToolCall, tools: Map<string, AgentTool>): ToolCall | null {
+  if (!PAIRED_WEB_TOOLS.has(call.name) || !tools.has("search_knowledge")) return null;
+  let query: unknown;
+  try {
+    query = (parseArguments(call.arguments) as { query?: unknown }).query;
+  } catch {
+    return null; // the web tool reports the bad input itself
+  }
+  if (typeof query !== "string" || query.trim().length < 2) return null;
+  return {
+    id: `${call.id}-kb`,
+    name: "search_knowledge",
+    arguments: JSON.stringify({ query: query.trim().slice(0, 300), limit: PAIRED_KNOWLEDGE_RESULTS }),
+  };
+}
 
 export interface AgentEvents extends RouterEvents {
   tool(event: ToolEventDto): void | Promise<void>;
@@ -102,6 +126,7 @@ export async function runAgent(input: {
   const specs = toToolSpecs(input.tools);
   const messages = [...input.messages];
   let plan = input.plan;
+  let knowledgeChecked = false; // has the knowledge base been searched in this reply?
   const result: AgentResult = {
     status: "error",
     target: null,
@@ -166,20 +191,38 @@ export async function runAgent(input: {
     }
 
     messages.push({ role: "assistant", content: roundText || null, tool_calls: route.toolCalls });
+    if (route.toolCalls.some((c) => c.name === "search_knowledge")) knowledgeChecked = true;
     for (const call of route.toolCalls) {
       if (input.signal.aborted) break;
-      const running: ToolEventDto = {
-        id: call.id,
-        name: call.name,
-        label: toolMap.get(call.name)?.label ?? call.name,
+      const running = (c: ToolCall): ToolEventDto => ({
+        id: c.id,
+        name: c.name,
+        label: toolMap.get(c.name)?.label ?? c.name,
         args: {},
         status: "running",
         summary: null,
-      };
-      await input.events.tool(running);
-      const { event, content } = await runTool(call, toolMap, input.toolContext);
-      result.tools.push(event);
-      await input.events.tool(event);
+      });
+      const paired = knowledgeChecked ? null : pairedKnowledgeCall(call, toolMap);
+      if (paired) knowledgeChecked = true;
+      await input.events.tool(running(call));
+      if (paired) await input.events.tool(running(paired));
+      const [main, extra] = await Promise.all([
+        runTool(call, toolMap, input.toolContext),
+        paired ? runTool(paired, toolMap, input.toolContext) : null,
+      ]);
+      result.tools.push(main.event);
+      await input.events.tool(main.event);
+      let content = main.content;
+      if (extra) {
+        result.tools.push(extra.event);
+        await input.events.tool(extra.event);
+        // One tool result per call id (providers require it), so the documents ride along with the web results.
+        content =
+          `${main.content}\n\n` +
+          "The knowledge base (the administrator's documents) was also searched automatically with the same query. " +
+          "Use these passages only if they are relevant, and compare them with the web results:\n" +
+          extra.content;
+      }
       messages.push({ role: "tool", tool_call_id: call.id, name: call.name, content });
     }
     if (input.signal.aborted) {

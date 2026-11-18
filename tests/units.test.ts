@@ -12,6 +12,28 @@ import { pickOpenRouterDefault } from "../src/worker/llm/registry";
 import { cooldownFor, parseSelection } from "../src/worker/llm/router";
 import { classifyHttpError, parseRetryAfter, ProviderError } from "../src/worker/llm/types";
 import * as entry from "../src/worker/index";
+import { citedSources, tidyCitations } from "../src/web/lib/format";
+
+describe("citations under answers", () => {
+  const doc = (location: string, title = "AI in SE.pdf") => ({ title, location });
+  const web = { title: "GitHub blog", url: "https://github.blog/x" };
+
+  it("shows 【 】 citations (gpt-oss style) in round brackets", () => {
+    expect(tidyCitations("accepted 22 %【AI in SE.pdf, page 6】.")).toBe("accepted 22 %(AI in SE.pdf, page 6).");
+  });
+
+  it("lists only the document pages an answer cites, and web links always", () => {
+    const sources = [doc("page 6"), doc("page 9"), doc("page 2"), doc("page 14"), web];
+    expect(citedSources(sources, "22%【AI in SE.pdf, page 6】")).toEqual([doc("page 6"), web]);
+    expect(citedSources(sources, "See (AI in SE.pdf, pages 2 and 14).")).toEqual([doc("page 2"), doc("page 14"), web]);
+    expect(citedSources(sources, "The document (AI in SE.pdf) does not mention Kubernetes.")).toEqual([web]);
+    // With several documents a bare page number isn't enough: the document must be named.
+    const two = [doc("page 3", "Handbook.pdf"), doc("page 3", "Pricing.pdf")];
+    expect(citedSources(two, "As stated (Pricing.pdf, page 3).")).toEqual([doc("page 3", "Pricing.pdf")]);
+    expect(citedSources(two, "As stated (page 3).")).toEqual([]);
+    expect(citedSources([doc("section “Annual leave”", "Handbook.docx")], "(Handbook.docx, section “Annual leave”)")).toHaveLength(1);
+  });
+});
 
 describe("SseParser", () => {
   it("parses events split across arbitrary chunk boundaries", () => {

@@ -360,6 +360,24 @@ describe("runAgent", () => {
     expect(groq.requests[0]!.tools?.map((t) => t.function.name)).toEqual(ALL_TOOLS.map((t) => t.name));
   });
 
+  it("also searches the knowledge base when the model goes to the web first, once per reply", async () => {
+    const groq = new ScriptedProvider("groq", [
+      { calls: [call("web_search", { query: "Copilot share of code" })] },
+      { calls: [call("web_search", { query: "Copilot Java share" }, "c_web2")] },
+      { text: "Done." },
+    ]);
+    const { result } = await agent([groq]);
+    expect(result.status).toBe("complete");
+    // The paired search shows as its own step; the second web search isn't paired again.
+    expect(result.tools.map((t) => t.name)).toEqual(["web_search", "search_knowledge", "web_search"]);
+    expect(result.tools[1]).toMatchObject({ id: "c_web_search-kb", args: { query: "Copilot share of code", limit: 3 } });
+    // The model gets exactly one result per call it made (none for the paired search); the first carries both parts.
+    const toolMessages = groq.requests.at(-1)!.messages.filter((m) => m.role === "tool");
+    expect(toolMessages.map((m) => m.tool_call_id)).toEqual(["c_web_search", "c_web2"]);
+    expect(toolMessages[0]!.content).toContain("knowledge base (the administrator's documents) was also searched automatically");
+    expect(toolMessages[1]!.content).not.toContain("knowledge base");
+  });
+
   it("reports bad tool input to the model instead of failing the turn", async () => {
     const groq = new ScriptedProvider("groq", [
       { calls: [call("calculator", { expression: "1/0" }), call("nope", {}), { id: "c_bad", name: "calculator", arguments: "{not json" }] },

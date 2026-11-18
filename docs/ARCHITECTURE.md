@@ -124,6 +124,16 @@ from Ollama directly, then `/api/chat/local/complete` stores the reply. The serv
   `@cf/baai/bge-reranker-base` re-orders by meaning (≈4 Neurons per search; falls back to keyword order on error or
   locally) → best 6 passages, wrapped as untrusted data, with sources `{title, location}` shown as document chips.
   The system prompt names the folders (with descriptions) and asks for inline citations "(document, location)".
+- **Documents and the web together (v0.9.2):** the goal is accurate *and* current answers, so documents don't
+  override the web. When the model calls `web_search` or `wikipedia` before the documents were searched in that
+  reply, `llm/agent.ts` also runs `search_knowledge` with the same query in parallel (3 passages, server-only `limit`
+  argument) and appends the passages to that web result (one tool result per call id, as providers require); the
+  admin sees it as its own "Knowledge base" step. The system prompt adds source rules: original sources beat
+  second-hand ones; for things that change, the newest reliable source wins ("as of <date>"); for what a document
+  says and the admin's own rules, the documents win; disagreements are shown, never silently resolved.
+- **Chips under answers:** the browser lists a document page only when the answer cites it (`citedSources` in
+  `web/lib/format.ts`; one document → a bare "page 6" counts, several → the document must be named); web links are
+  always listed. `tidyCitations` shows gpt-oss's 【 】 citations as ( ).
 - **Why not vectors (Vectorize)?** It needs an index created outside the app (a setup step) and caps the free tier at
   5M stored dimensions (~3,000 pages). Keyword recall + re-ranking + the model choosing search words works with zero
   setup and holds 5× more. Semantic recall can be added later if keyword recall proves too narrow.

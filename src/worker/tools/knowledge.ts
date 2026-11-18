@@ -71,8 +71,8 @@ export const searchKnowledge = define({
   label: "Knowledge base",
   description:
     "Search the knowledge base: documents the administrator added (for example handbooks, policies, books, notes and saved web pages). " +
-    "Returns the most relevant passages with their document name and page or section. Check it before searching the web whenever a " +
-    "question relates to one of its folders. Use specific key words from the topic; " +
+    "Returns the most relevant passages with their document name and page or section. Check it whenever a question relates to " +
+    "one of its folders (documents can be out of date: for things that change over time, compare with the web). Use specific key words from the topic; " +
     "if nothing relevant comes back, try different words or synonyms before concluding the documents don't cover it.",
   risk: "read",
   requiresMemory: false,
@@ -85,8 +85,13 @@ export const searchKnowledge = define({
     },
     required: ["query"],
   },
-  schema: z.object({ query: z.string().trim().min(2).max(300), folder: z.string().trim().max(80).optional() }),
-  async run({ query, folder }, ctx) {
+  // `limit` isn't offered to the model: the server uses it for the smaller search it runs alongside a web search.
+  schema: z.object({
+    query: z.string().trim().min(2).max(300),
+    folder: z.string().trim().max(80).optional(),
+    limit: z.number().int().min(1).max(RESULTS).optional(),
+  }),
+  async run({ query, folder, limit }, ctx) {
     const candidates = await searchChunks(ctx.db, query, { ...(folder ? { collection: folder } : {}), limit: CANDIDATES });
     if (candidates.length === 0) {
       return {
@@ -100,7 +105,7 @@ export const searchKnowledge = define({
         summary: `Nothing found for "${clip(query, 60)}"`,
       };
     }
-    const best = await rerank(ctx.ai, query, candidates, RESULTS);
+    const best = await rerank(ctx.ai, query, candidates, limit ?? RESULTS);
     const results = best.map((h, i) => ({
       ref: i + 1,
       document: h.title,

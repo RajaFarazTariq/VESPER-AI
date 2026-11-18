@@ -1,7 +1,7 @@
 import { AlertTriangle, Brain, ChevronDown, Info, Pencil, RotateCcw } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import type { UiMessage } from "../hooks/useChat";
-import { providerLabel } from "../lib/format";
+import { citedSources, providerLabel, tidyCitations } from "../lib/format";
 import { CopyButton, Markdown } from "./Markdown";
 import { collectSources, SourceList, ToolActivity } from "./ToolActivity";
 
@@ -26,7 +26,8 @@ export const MessageItem = memo(function MessageItem({ message, isLast, canRetry
   const working = message.streaming && !message.content;
   const runningTool = message.tools?.some((t) => t.status === "running");
   const failed = message.status === "error" || message.status === "partial";
-  const sources = message.streaming ? [] : collectSources(message.tools);
+  const content = tidyCitations(message.content);
+  const sources = message.streaming ? [] : citedSources(collectSources(message.tools), content);
 
   return (
     <div className="rise-in group flex gap-3 sm:gap-4">
@@ -53,7 +54,7 @@ export const MessageItem = memo(function MessageItem({ message, isLast, canRetry
           </div>
         ) : message.content ? (
           <div className={message.streaming ? "streaming-caret" : undefined}>
-            <Markdown text={message.content} />
+            <Markdown text={content} />
           </div>
         ) : null}
 
@@ -83,7 +84,7 @@ export const MessageItem = memo(function MessageItem({ message, isLast, canRetry
               isLast ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
             }`}
           >
-            {message.content ? <CopyButton text={message.content} /> : null}
+            {message.content ? <CopyButton text={content} /> : null}
             {canRetry && isLast && !failed ? (
               <button type="button" onClick={onRetry} className={actionButton} title="Regenerate">
                 <RotateCcw size={14} />

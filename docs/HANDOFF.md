@@ -1,23 +1,50 @@
 # VESPER: handoff notes for a new working session
 
-Read this first when resuming work. Last updated: **2026-11-17**. No secrets are stored here.
+Read this first when resuming work. Last updated: **2026-11-19**. No secrets are stored here.
 
-## 0. ▶ Resume here (where we stopped on 2026-11-17)
+## 0. ▶ Resume here (where we stopped on 2026-11-19)
 
-**State:** **v0.9.0 is live** (knowledge base Part 1 + model-menu fix; commit `19434d7`, pushed by the owner and
-verified 2026-11-17: `/api/health` → `0.9.0`, database ok; the new `/api/admin/knowledge` endpoint answers 401 when
-signed out, i.e. it's deployed and migration `0004` applied). GitHub `main` = live, plus this docs-only update
-(push it with the next change if it isn't on GitHub yet). **Not yet tried on live by the owner** (he stopped for the day).
+**State:** **v0.9.1 is live** (commit `f48b00e`, verified: `/api/health` → `0.9.1`). **v0.9.2 is ready locally, waiting
+for the owner's push** (if health already shows `0.9.2`, it's deployed).
+
+**Owner's goal (stated 2026-11-19): give users accurate and *latest* information from the internet.** So the
+knowledge base must not override the web blindly. Agreed source rule (now in the system prompt, `llm/context.ts`):
+1. The original source beats second-hand ones (an organisation's own site/blog/docs > a paper or news quoting it >
+   blogs and "statistics"/aggregator sites). If a key fact comes only from a weak source, open the original (read_page).
+2. For things that change over time, the newest reliable source wins ("as of <date>").
+3. For what a document says, definitions and the admin's own rules/policies, the knowledge base wins.
+4. When sources disagree, never pick silently: best-supported answer first, then one line with the other figure,
+   its source and date.
+Real example from the test: the PDF says Copilot wrote **62%** of Java code; GitHub's own blog (Feb 2023, the original
+source) says **61%**. The document was wrong, the web answer was right.
+
+**First live knowledge-base test (2026-11-19).** Live test data: folder **"AI in Software Engineering"** with
+**"AI in Software Engineering.pdf"** (arXiv 2310.03533, Fan et al., "LLMs for Software Engineering: Survey and Open
+Problems", 23 pages). Upload, folder, space meter, search, re-ranker and page citations all work live.
+- On v0.9.0 the assistant used web search instead of the documents, and Groq's gpt-oss once sent only a thinking
+  note and stopped ("returned an empty response (response was cut off)"). **Fixed in v0.9.1:** thinking notes alone
+  no longer count as "answer started", so the router falls back (`llm/router.ts`); the composer's Tools menu reloads
+  when the admin panel closes (`App.tsx`); an empty knowledge base shows 0 pages used (`KnowledgeTab.tsx`).
+- On v0.9.1: 3 of 4 questions answered from the PDF with correct pages. "According to GitHub, what share of code was
+  written by Copilot?" still went to the web only (Gemini Flash-Lite). Answers listed page chips for every passage
+  read, even "the document doesn't cover this". Groq writes citations in 【 】 brackets.
+- **v0.9.2 (ready, not pushed):** (A) whenever the model calls `web_search` or `wikipedia` before the documents were
+  checked in that reply, the server also runs `search_knowledge` with the same query in parallel (3 passages, hidden
+  `limit` arg) and appends them to that web result, shown as its own "Knowledge base" step (`llm/agent.ts`); plus the
+  4 source rules above. (B) Under answers, document pages are listed only when the answer cites them; web links
+  always (`citedSources` in `web/lib/format.ts`). (C) 【 】 citations are shown as ( ) (`tidyCitations`).
 
 **First thing to do next session (in this order):**
-1. Health check → `0.9.0` (or newer). Ask whether he **replaced the GitHub token** (it was pasted into a chat on
-   2026-11-17, see section 8).
-2. **Live test of the knowledge base, one step at a time with his screenshots:** Admin panel → Knowledge → New folder
-   (name + short description) → Upload files (a real PDF; wait for "Added (N pages)") → New chat → ask something the
-   PDF answers → expect "Searched the knowledge base" and a citation "(File.pdf, page N)" plus a document chip under
-   the answer. This is the first real check of the Workers AI re-ranker and of answers with citations (locally only
-   keyword order could be tested). If answers miss obvious passages, check the admin view of the tool call (query used,
-   passages found) before changing anything.
+1. Health check. If still `0.9.1`, give the owner the push commands (section "How the owner wants each task run"
+   below). Ask whether he **replaced the GitHub token** (pasted into a chat on 2026-11-17, see section 8).
+2. **Re-test on 0.9.2** in a new chat (reload the page, model on Auto). Expected answers (pages checked against the PDF):
+   | Question | Correct answer | Page |
+   |---|---|---|
+   | At Meta, what was the developer acceptance rate for the CodeCompose code completion tool? | 22%; 4.5M suggestions in 15 days; 92% positive | 6 |
+   | According to GitHub, what share of developers' code was written by Copilot? | 46% overall; Java: GitHub's blog 61% vs the PDF 62%: expect both sources and the difference noted | 4 |
+   | What is the Automated Regression Oracle? | Uses the existing version of the software as the reference for new changes | 2 (14 also relevant) |
+   | What does the document say about Kubernetes deployment costs? | Not covered; no PDF page chips under the answer | — |
+   If answers miss obvious passages, check the admin view of the tool call (query used, passages found) first.
 3. Then **Knowledge base Part 2 (agreed, not built): daily automatic refresh of saved web pages** (the daily cron
    already exists; re-read web documents in small batches within the 10 ms CPU / 50-query limits; replace a page's
    passages only when the text changed).
@@ -150,7 +177,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **6a Live information** (web search, read page, weather, Wikipedia, currency, sources) | ✅ live (v0.7.0, commit `758f0b0`); owner adding `TAVILY_API_KEY`; live check pending |
 | **UI redesign (v0.8.0)**: new design system, sidebar, welcome screen, composer, messages, Edit last message | ✅ live (v0.8.0, commit `940b218`, verified 2026-11-11); live look with a real AI reply still to do |
 | **Sign-in page redesign (v0.8.1)**: professional split layout, brand panel; notice removed; local dev fix | ✅ live (v0.8.1, commit `59f34c8`); live-checked 2026-11-17: new page shows, Google sign-in lands in the app as admin |
-| **Knowledge base Part 1 (v0.9.0)**: folders, uploads (PDF/Word/TXT/MD/CSV), web pages, FTS5 + re-ranker, citations; model-menu fix | ✅ live (v0.9.0, commit `19434d7`, deployed 2026-11-17; 154 tests; real-browser upload of a PDF + .docx under the live CSP); **owner's live test pending** |
+| **Knowledge base Part 1 (v0.9.0)**: folders, uploads (PDF/Word/TXT/MD/CSV), web pages, FTS5 + re-ranker, citations; model-menu fix | ✅ live (v0.9.0, commit `19434d7`, deployed 2026-11-17; 154 tests; real-browser upload of a PDF + .docx under the live CSP); owner's first live test 2026-11-19 (see section 0) |
+| **Knowledge base fixes (v0.9.1)**: thinking-only replies fall back; Tools menu refresh; 0-page meter; "documents first" prompt | ✅ live (v0.9.1, commit `f48b00e`, deployed 2026-11-19; 155 tests) |
+| **Search both + source rules (v0.9.2)**: paired knowledge search on web look-ups, 4 conflict rules, cited-only page chips, 【 】 → ( ) | ⏳ ready locally (158 tests), waiting for the owner's push |
 | **Next: knowledge base Part 2 (daily web-page refresh), then roadmap items** | ⏳ |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -187,7 +216,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 144 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 158 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
@@ -220,6 +249,10 @@ Apply new migrations locally first: `npx wrangler d1 migrations apply DB --local
   foreign history is flattened into a neutral note (`flattenToolMessages`). Never use a `[Used tool …]` format; models copy it.
 - **Groq free tier is 8K tokens/min**, so two-step tool tasks can hit 429 and fall back. That's expected.
 - **CSP is strict** (`public/_headers`: no inline styles, fonts 'self' only). That's why KaTeX outputs MathML with no KaTeX CSS.
+- **Full test run on the office PC: a random test sometimes fails with "Test timed out in 5000ms"** (2026-11-19; a
+  different test each run, e.g. in admin.test.ts / api.test.ts). They pass when their file is run alone
+  (`npx vitest run tests/<file>.ts`) and GitHub CI passes; it's the PC being slow under the parallel run, not a bug.
+  Re-run the file alone before suspecting the code. If CI ever fails this way, re-run the job.
 - **Windows: stopping a background task leaves `workerd.exe`/`node` children running** on the port. Check
   `netstat -ano | findstr 8787` and stop those PIDs. Stopping only `workerd.exe` isn't enough: its parent wrangler
   `node` process restarts it on the same port, and two servers on 8787 make every request hang. Stop the whole
