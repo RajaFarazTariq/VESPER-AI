@@ -211,6 +211,7 @@ function UserRow({
             {isSelf ? <Badge>You</Badge> : null}
             {user.google ? <Badge>Google</Badge> : null}
             {user.github ? <Badge>GitHub</Badge> : null}
+            {user.githubConnected ? <Badge>Repos connected</Badge> : null}
           </div>
           <p className="truncate text-xs text-[var(--text-soft)]">{user.email ?? user.login}</p>
           <p className="mt-1 text-xs text-[var(--text-soft)]">
@@ -310,6 +311,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const [researchKeepText, setResearchKeepText] = useState("");
   const [checksText, setChecksText] = useState("");
   const [webSearch, setWebSearch] = useState<{ keyConfigured: boolean; usedToday: number } | null>(null);
+  const [githubConfigured, setGithubConfigured] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -329,6 +331,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         setChecksText(String(r.settings.answerChecksPerDay));
         setTools(r.tools);
         setWebSearch(r.webSearch);
+        setGithubConfigured(Boolean(r.github?.configured));
       },
       (e: unknown) => setError(errorText(e, "Could not load settings.")),
     );
@@ -541,6 +544,19 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
           label="Check research reports automatically"
           hint="Every finished deep-research report is checked against its sources the same way, right after it's written: 1 more model request per run. It doesn't use the user's answer checks."
         />
+      </div>
+      <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
+        <Toggle
+          checked={draft.githubForUsers}
+          onChange={(githubForUsers) => setDraft({ ...draft, githubForUsers })}
+          label="GitHub for users"
+          hint="Settings → Connections: each user connects their own GitHub (read-only) and chooses which repositories VESPER may read; then they can ask about code, issues and pull requests. Admins can always use it. At most 10 GitHub requests per message; nothing is changed on GitHub."
+        />
+        <p className={`ml-12 text-xs ${githubConfigured ? "text-[var(--text-soft)]" : "text-amber-600 dark:text-amber-400"}`}>
+          {githubConfigured
+            ? "The VESPER GitHub App is set up."
+            : "Not set up yet: add GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET, GITHUB_APP_SLUG and GITHUB_TOKEN_KEY in Cloudflare (see the configuration guide)."}
+        </p>
       </div>
       <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
         <Toggle

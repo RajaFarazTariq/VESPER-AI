@@ -15,6 +15,20 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** Workers AI binding (the knowledge base uses its re-ranker); absent in local dev and tests. */
   ai?: Ai;
+  /** The user's own GitHub access (read-only), when they connected GitHub and may use it (v0.12.0). */
+  github?: GithubAccess;
+}
+
+/** What the GitHub tools need from the per-user GitHub client (tools/github-client.ts). */
+export interface GithubAccess {
+  /** A GitHub API GET (path like "/repos/o/r"), through the short cache, within the per-message call limit. */
+  get(path: string, options?: { accept?: string; fresh?: number }): Promise<{ body: string; headers: Headers | null }>;
+  /** Why a repo can't be read (not installed, needs the org owner's approval, not chosen…), in plain words. */
+  explainNoAccess(repo: string): Promise<string>;
+  /** github.com page where the user picks the repos VESPER may read. */
+  installUrl: string;
+  /** Same repo/commit look-ups within one message are made once. */
+  memo<T>(key: string, load: () => Promise<T>): Promise<T>;
 }
 
 /** What the server has right now, for tools that depend on it (a key, a daily quota, documents). */
@@ -22,6 +36,8 @@ export interface ToolServerState {
   web?: WebToolContext;
   /** At least one knowledge-base document is ready to search. */
   knowledgeReady?: boolean;
+  /** This user has a working GitHub connection (v0.12.0). */
+  github?: boolean;
 }
 
 export interface WebToolContext {
@@ -46,6 +62,13 @@ export interface ToolOutput {
   sources?: SourceDto[];
   /** Full text behind a clipped result (e.g. whole knowledge-base passages), used only by the number check. */
   evidence?: string;
+  /**
+   * What is kept with the answer for "Check this answer" instead of the content (v0.12.0): GitHub tools keep only
+   * references (repo, commit, file, lines), which the check reads again, so no repository text is stored.
+   */
+  keep?: string;
+  /** The result holds private repository content: no more web pages may be opened in this answer (leak guard). */
+  private?: boolean;
 }
 
 /** A tool the model may call. Parameters are plain JSON Schema (portable across providers). */

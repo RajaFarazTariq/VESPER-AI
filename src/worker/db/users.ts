@@ -214,6 +214,7 @@ type AdminUserRow = UserRow & {
   today_speech: number;
   today_research: number;
   today_answer_checks: number;
+  github_connected: number;
   conversations: number;
 };
 
@@ -224,6 +225,7 @@ export function toAdminUserDto(
     today_speech?: number;
     today_research?: number;
     today_answer_checks?: number;
+    github_connected?: number;
     conversations?: number;
   },
   config: AppConfig,
@@ -237,6 +239,7 @@ export function toAdminUserDto(
     todaySpeechSeconds: row.today_speech ?? 0,
     todayResearch: row.today_research ?? 0,
     todayAnswerChecks: row.today_answer_checks ?? 0,
+    githubConnected: row.github_connected === 1,
     conversations: row.conversations ?? 0,
     github: row.github_login !== null,
     google: row.google_sub !== null,
@@ -250,6 +253,7 @@ const ADMIN_LIST_SQL = `SELECT ${USER_COLUMNS.split(", ")
   .join(", ")}, COALESCE(d.messages, 0) AS today_messages, COALESCE(d.images, 0) AS today_images,
     COALESCE(d.speech_seconds, 0) AS today_speech, COALESCE(d.research_runs, 0) AS today_research,
     COALESCE(d.answer_checks, 0) AS today_answer_checks,
+    EXISTS (SELECT 1 FROM github_connections g WHERE g.user_id = u.id AND g.status = 'connected') AS github_connected,
     (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.id) AS conversations
   FROM users u LEFT JOIN user_usage_daily d ON d.user_id = u.id AND d.day = ?1`;
 

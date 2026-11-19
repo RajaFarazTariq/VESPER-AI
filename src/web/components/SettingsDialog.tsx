@@ -6,9 +6,10 @@ import { selectionLabel } from "../lib/format";
 import { explainOllamaError, listOllamaModels } from "../lib/ollama";
 import { getThemePreference, setThemePreference, type ThemePreference } from "../lib/theme";
 import { canRecord, canSpeak } from "../lib/voice";
+import { ConnectionsTab } from "./ConnectionsTab";
 
 // Provider status moved to the admin panel (AdminDialog), since only the administrator manages keys.
-export type SettingsTab = "general" | "tools" | "memory" | "voice" | "local" | "appearance";
+export type SettingsTab = "general" | "tools" | "memory" | "voice" | "local" | "connections" | "appearance";
 type Tab = SettingsTab;
 
 interface Props {
@@ -105,6 +106,8 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
     ...(micAvailable || readAloudAvailable ? ([["voice", "Voice"]] as [Tab, string][]) : []),
     // Local models (Ollama on the user's own computer): admins always; users only when the admin allows it.
     ...(features?.localModels ? ([["local", "Local models"]] as [Tab, string][]) : []),
+    // The user's own GitHub (read-only, v0.12.0): when the admin set it up and allows it.
+    ...(features?.github?.available ? ([["connections", "Connections"]] as [Tab, string][]) : []),
     ["appearance", "Appearance"],
   ];
 
@@ -395,6 +398,8 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
               </div>
             </div>
           ) : null}
+
+          {tab === "connections" ? <ConnectionsTab /> : null}
 
           {tab === "appearance" ? (
             <Field label="Theme">

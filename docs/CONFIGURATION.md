@@ -49,6 +49,18 @@ noted). Deploys from GitHub keep these, because `wrangler.jsonc` has `keep_vars:
 |---|---|---|---|---|
 | `TAVILY_API_KEY` | Secret | Turns on **web search** for the assistant. Without it, web search is simply not offered (weather, Wikipedia, currency and page reading still work: they need no key) | <https://app.tavily.com> → API keys (free "Researcher" plan: 1,000 credits/month, no card; a basic search = 1 credit) | Create a new key in Tavily, save it here, delete the old key |
 
+### To add for v0.12.0 (GitHub for each user, read-only)
+
+All four are needed; until they're all set, GitHub isn't offered anywhere. Type **Secret** for all four (so a deploy
+never touches them). Never paste them into chats, files or commits.
+
+| Name | Type | What it does | Where it comes from | How to replace |
+|---|---|---|---|---|
+| `GITHUB_APP_CLIENT_ID` | Secret | Identifies the **VESPER GitHub App** when a user connects GitHub | GitHub → Settings → Developer settings → GitHub Apps → the app → **Client ID** | Shown on the app page (it doesn't change) |
+| `GITHUB_APP_CLIENT_SECRET` | Secret | Server proof when connecting and renewing users' GitHub access | Same app page → **Generate a new client secret** (shown once) | Generate a new secret, save it here, then delete the old one on GitHub |
+| `GITHUB_APP_SLUG` | Secret | The app's short name, used for the "Choose repositories on GitHub" link (`github.com/apps/<slug>/installations/new`) | The app's public link `github.com/apps/<slug>` | Only changes if the app is renamed |
+| `GITHUB_TOKEN_KEY` | Secret | Encrypts every user's GitHub tokens in the database (AES-256-GCM) | Made on your PC: base64 of 32 random bytes (PowerShell command in section 5) | **Don't change it casually**: tokens encrypted with the old key can't be read, so every user would have to reconnect |
+
 ### Supported but not set (optional)
 
 | Name | What it would do | Default when not set |
@@ -109,6 +121,7 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 | Check this answer (v0.11.0) | "Check" button under answers that used sources (web, documents, weather, currency, research): 1 more model request lists the answer's key claims and rates each Supported / Contradicted / Not in the sources, with the source. Other providers are tried before Groq. Each answer is checked once; the result is saved with it | On |
 | Answer checks per user per day (v0.11.0) | Checks per user per UTC day (admins unlimited but counted; shown in Users). Failed checks don't count. 0 = paused for users | 10 |
 | Check research reports automatically (v0.11.0) | Every finished deep-research report is checked the same way right after it's written (1 more model request per run; doesn't use the user's daily checks) | On |
+| GitHub for users (v0.12.0) | Settings → Connections: regular users can connect their own GitHub (read-only) and choose which repositories VESPER may read. Admins can always use it once the four `GITHUB_APP_*`/`GITHUB_TOKEN_KEY` secrets are set (the panel says whether they are). At most 10 GitHub requests per message; nothing is ever changed on GitHub | Off |
 | **Feedback** tab (v0.9.7) | Read-only list of 👍/👎 on answers (Bad answers first) with Good/Bad counts per model; each entry shows the user, date, model, reason, note, question, answer and sources. Nothing to configure | n/a |
 | Per-user (each user's Settings → **Voice** tab, v0.9.6) | "Language you speak" (Detect automatically / English / Urdu) and "Read answers aloud automatically" (default off). Shown only when Voice is on | n/a |
 
@@ -138,6 +151,21 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 ### GitHub OAuth app (admin backup sign-in), Phase 4
 - GitHub → Settings → Developer settings → OAuth Apps → **VESPER AI**.
 - Callback URL: `https://ai-assistant.vesper-ai.workers.dev/api/auth/github/callback`. No scopes requested.
+
+### VESPER GitHub App (each user's GitHub, read-only), v0.12.0
+- GitHub → Settings → Developer settings → **GitHub Apps** → the VESPER app (created by the owner).
+- Homepage: `https://ai-assistant.vesper-ai.workers.dev`. Callback URL: `https://ai-assistant.vesper-ai.workers.dev/api/connections/github/callback`.
+  Setup URL: `https://ai-assistant.vesper-ai.workers.dev/?github=installed` with **Redirect on update** ticked.
+- **Expire user authorization tokens**: on (tokens last 8 hours; VESPER renews them). **Request user authorization
+  during installation**: off. **Device flow**: off. **Webhook**: off (not used).
+- **Repository permissions**: Contents, Issues, Pull requests: **Read-only**; Metadata: Read-only (automatic).
+  Nothing else; no account permissions. **Installable by any account** (each user connects their own).
+- No private key is needed (VESPER uses only users' own access, not the app's).
+- Encryption key for `GITHUB_TOKEN_KEY` (PowerShell):
+  `$b = New-Object byte[] 32; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`
+- Organisations: a member can only *request* access; an organisation owner approves it on GitHub. Organisations with
+  single sign-on also need the user to authorize VESPER for that organisation (VESPER explains both when it happens).
+- Write access (create issues/comments/PRs) is **not** part of v0.12.0; see HANDOFF for how v0.13.0 would add it.
 
 ### AI providers
 - Groq (<https://console.groq.com>): free plan, no payment method.
@@ -192,6 +220,7 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 | 2026-11-19 | **Source fixes (v0.9.4)** | No new settings, secrets or migrations. After the live re-test (the Copilot answer called the PDF's 62% "GitHub's report"): the server reads an organisation's own page when its search snippet has no figure (2–3 short passages, no extra search); document passages that quote an organisation are labelled "your document (quoting X)" + rule R3b; document citations are never links; "Note:" lines only for real disagreements; Groq waits once when its rate-limit wait is 10 s or less, otherwise falls back at once. OpenRouter key added as a Cloudflare secret the same day |
 | 2026-11-19 | **Fewer tokens (v0.9.5)** | No new settings or secrets. **Migration `0005_search_cache.sql`** (add-only: new table `search_cache`, public search results only, expires after 1 h for "latest" questions / 6 h otherwise; the daily cron deletes expired rows). Questions that clearly need a look-up are searched first so the model answers in one request (fits Groq's 8,000 tokens/min); shorter snippets (450) and passages (800); the paired document search keeps only passages about the question; dates read from snippet text; at most 2 "other website" results when an official one has the figure; quoting passages carry a warning in their text; one extra search limited to the organisation's own sites when an "According to X" question gets none of X's pages |
 | 2026-11-19 | **Images + voice (v0.9.6)** | No new Cloudflare settings, secrets or bindings (uses the existing Gemini/OpenRouter/Groq keys and the `AI` binding). **Migration `0006_images_voice.sql`** (add-only: `messages.images` for ~20 KB previews; `user_usage_daily.images` and `.speech_seconds` counters). Four new admin-panel settings: Image attachments (on), Images per user per day (10), Voice (on), Minutes of speech per user per day (15). Two new per-user settings (Settings → Voice): speech language, read answers aloud automatically. `public/_headers`: `Permissions-Policy` now allows the microphone for VESPER's own pages (`microphone=(self)`). `/api/chat` accepts bodies up to 4 MB (other routes keep 256 KB); new endpoints `GET /api/media/features`, `POST /api/media/transcribe`. The offline mock (`npm run mock:llm`) answers speech-to-text too |
+| 2026-11-20 | **GitHub for each user, read-only (v0.12.0)** | **Four new Cloudflare secrets** (`GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_SLUG`, `GITHUB_TOKEN_KEY`) for a new **VESPER GitHub App** (section 5). **Migration `0011_github_connections.sql`** (add-only, revert-safe: new tables `github_connections` with encrypted tokens and `github_cache`, a 15-minute response cache). New admin setting **GitHub for users** (off). New endpoints under `/api/connections` (status, `github/start`, `github/callback`, `github/disconnect`); five read-only GitHub tools for the assistant. The daily clean-up also deletes expired GitHub cache rows |
 | 2026-11-20 | **Answer verification (v0.11.0)** | No secrets or bindings (uses the existing AI providers). **Migration `0010_answer_verification.sql`** (add-only, revert-safe: `messages.evidence` and `messages.verification` NULL-able; `user_usage_daily.answer_checks` DEFAULT 0). Answers that used sources keep a copy of what the sources said (≤ 20,000 characters, never sent to the browser). Three new admin-panel settings: **Check this answer** (on), **Answer checks per user per day** (10, admins unlimited), **Check research reports automatically** (on). Each check is 1 model request (other providers before Groq). The admin-only number check no longer flags general-knowledge numbers. New endpoint `POST /api/answer-check/:messageId` |
 | 2026-11-20 | **Table display fix (v0.10.1)** | No settings, secrets or migrations. A `<br>` a model writes inside a table now shows as a line break (other HTML still shows as text); table columns no longer break words mid-word |
 | 2026-11-20 | **Smarter memory (v0.10.0)** | No new settings, secrets or bindings. **Migration `0009_smarter_memory.sql`** (add-only, revert-safe: `memories.pinned` DEFAULT 0, `memories.updated_at`, `conversations.summary`, `conversations.summary_until`, all NULL-able or defaulted). Each message gets only pinned + related memories; Settings → Memory gets pin, edit and export; passwords, card/bank numbers, ID card numbers and phone numbers are refused; long chats are summarised once (1 model request) into notes kept on the conversation. New endpoint `PATCH /api/memories/:id` |

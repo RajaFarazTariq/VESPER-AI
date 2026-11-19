@@ -20,6 +20,8 @@ const updateSchema = z
   .refine((p) => p.content !== undefined || p.pinned !== undefined, { message: "Nothing to update." });
 import { requireUser } from "../middleware/auth";
 import { toolInfo, webToolContext } from "../tools/registry";
+import { githubConnected } from "../tools/github-client";
+import { githubAllowed } from "./connections";
 
 export const memoryRoutes = new Hono<AppEnv>()
   .use(requireUser)
@@ -60,5 +62,6 @@ export const toolRoutes = new Hono<AppEnv>().use(requireUser).get("/", async (c)
   const config = getConfig(c.env);
   const [settings, knowledgeReady] = await Promise.all([getAppSettings(c.env.DB, config), hasSearchableKnowledge(c.env.DB)]);
   const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, settings);
-  return c.json({ tools: toolInfo({ web, knowledgeReady }).filter((t) => t.available && !settings.disabledTools.includes(t.name)) });
+  const github = githubAllowed(c.env, c.get("user"), settings) && (await githubConnected(c.env.DB, c.get("user").id));
+  return c.json({ tools: toolInfo({ web, knowledgeReady, github }).filter((t) => t.available && !settings.disabledTools.includes(t.name)) });
 });

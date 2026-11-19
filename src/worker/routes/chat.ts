@@ -52,6 +52,8 @@ import { MAX_RESEARCH_SEARCHES, MIN_RESEARCH_SEARCHES, runResearch, type Researc
 import { planRoute } from "../llm/router";
 import { factCheckEvent, sourcesOfTools, verifyAnswer } from "../llm/verify";
 import { enabledTools, webToolContext, type AgentTool } from "../tools/registry";
+import { githubAccess, githubConnected } from "../tools/github-client";
+import { githubAllowed } from "./connections";
 import { requireUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/security";
 
@@ -363,7 +365,9 @@ export const chatRoutes = new Hono<AppEnv>()
     };
 
     const knowledge = await searchableCollections(c.env.DB);
-    const tools = enabledTools(user.settings, appSettings.disabledTools, { web, knowledgeReady: knowledge.length > 0 });
+    // The user's own GitHub (read-only, v0.12.0): offered when the app is set up, allowed and connected.
+    const githubOn = !research && githubAllowed(c.env, user, appSettings) && (await githubConnected(c.env.DB, user.id));
+    const tools = enabledTools(user.settings, appSettings.disabledTools, { web, knowledgeReady: knowledge.length > 0, github: githubOn });
     const timeZone = normalizeTimeZone(body.timeZone);
     let turn: Awaited<ReturnType<typeof prepareTurn>>;
     try {
@@ -420,6 +424,7 @@ export const chatRoutes = new Hono<AppEnv>()
           signal: abort.signal,
           ...(timeZone ? { timeZone } : {}),
           ...(c.env.AI ? { ai: c.env.AI } : {}),
+          ...(githubOn ? { github: githubAccess({ env: c.env, db: c.env.DB, userId: user.id, userAgent: web.userAgent, signal: abort.signal }) } : {}),
         };
         const events = {
           attempt: (t: { provider: ProviderId; model: string }) => send({ type: "attempt", provider: t.provider, model: t.model }),

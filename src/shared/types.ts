@@ -36,6 +36,8 @@ export interface AdminUserDto extends UserDto {
   todayResearch: number;
   /** "Check this answer" checks that finished today. */
   todayAnswerChecks: number;
+  /** Connected their GitHub through the VESPER GitHub App (v0.12.0). */
+  githubConnected?: boolean;
   conversations: number;
   github: boolean;
   google: boolean;
@@ -85,6 +87,8 @@ export interface AppSettingsDto {
   answerChecksPerDay: number;
   /** Deep-research reports are checked against their sources automatically (one extra model request per run). */
   researchAutoCheck: boolean;
+  /** Regular users may connect their own GitHub (read-only, v0.12.0). Admins always can when the app is set up. */
+  githubForUsers: boolean;
 }
 
 /** What the chat screen may offer right now (admin switches + whether a capable service is set up). */
@@ -101,6 +105,36 @@ export interface FeaturesDto {
   localModels: boolean;
   /** "Check this answer" under answers that used sources (v0.11.0). */
   answerCheck: { enabled: boolean; perDay: number };
+  /** Settings → Connections → GitHub: the GitHub App is set up and this account may use it (v0.12.0). */
+  github: { available: boolean };
+}
+
+// ------------------------------------------------------------------ Connections: GitHub, read-only (v0.12.0)
+
+export interface GithubInstallationDto {
+  /** The user or organisation VESPER is installed on. */
+  account: string;
+  type: "User" | "Organization";
+  /** true: every repo of that account; false: only the repos chosen on GitHub. */
+  allRepos: boolean;
+  /** Where to change the choice on GitHub. */
+  manageUrl: string | null;
+}
+
+export interface GithubConnectionDto {
+  /** The GitHub App is set up and this account may use it. */
+  available: boolean;
+  /** none: never connected (or disconnected); reconnect: GitHub removed or expired the access. */
+  status: "none" | "connected" | "reconnect";
+  login: string | null;
+  /** github.com page to choose which repos VESPER may read. */
+  installUrl: string | null;
+  installations: GithubInstallationDto[];
+  /** Repos VESPER can read (up to 100). */
+  repos: { fullName: string; private: boolean }[];
+  reposTruncated: boolean;
+  /** Couldn't ask GitHub right now (the connection itself is fine). */
+  error: string | null;
 }
 
 export interface TranscriptionDto {

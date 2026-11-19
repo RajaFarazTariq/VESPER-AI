@@ -361,12 +361,16 @@ describe("tool-call streaming helpers", () => {
 
 describe("tool settings", () => {
   it("respects the master switch, per-tool switches and the memory switch", () => {
-    // Without a search key, web search isn't offered; without documents, the knowledge base isn't; with both, every tool is.
+    // Without a search key, web search isn't offered; without documents, the knowledge base isn't; without the user's
+    // GitHub connection (v0.12.0), the GitHub tools aren't; with all three, every tool is.
     const all = ALL_TOOLS.map((t) => t.name);
-    expect(enabledTools({ ...DEFAULT_SETTINGS }).map((t) => t.name)).toEqual(all.filter((n) => n !== "web_search" && n !== "search_knowledge"));
+    const noGithub = all.filter((n) => !n.startsWith("github_"));
+    expect(enabledTools({ ...DEFAULT_SETTINGS }).map((t) => t.name)).toEqual(noGithub.filter((n) => n !== "web_search" && n !== "search_knowledge"));
     const web = { userAgent: "test", tavilyApiKey: "k", webSearchDailyLimit: 30 };
-    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web }).map((t) => t.name)).toEqual(all.filter((n) => n !== "search_knowledge"));
-    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true }).map((t) => t.name)).toEqual(all);
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web }).map((t) => t.name)).toEqual(noGithub.filter((n) => n !== "search_knowledge"));
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true }).map((t) => t.name)).toEqual(noGithub);
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, github: true }).map((t) => t.name)).toEqual(all);
+    expect(all.filter((n) => n.startsWith("github_"))).toEqual(["github_repo", "github_file", "github_search", "github_issues", "github_pr_changes"]);
     expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web: { ...web, webSearchDailyLimit: 0 } }).map((t) => t.name)).not.toContain("web_search");
     expect(enabledTools({ ...DEFAULT_SETTINGS, toolsEnabled: false })).toEqual([]);
     expect(enabledTools({ ...DEFAULT_SETTINGS, disabledTools: ["calculator"] }).map((t) => t.name)).not.toContain("calculator");

@@ -4,15 +4,30 @@ Read this first when resuming work. Last updated: **2026-11-20**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-20)
 
-**State:** **v0.11.0 (answer verification) is built and checked locally, not pushed yet** (to go on branch
-`release/v0.11.0-answer-verification` + PR #6; adds **migration 0010**, applied by the deploy). Live is **v0.10.1**
-(table display fix; merged via PR #5, merge `e752cb9`, `/api/health` → `0.10.1`). Earlier: v0.10.0 via PR #4
-(migration 0009), v0.9.10 via PR #3 (merge `ba2b34a`), v0.9.9 via PR #2, v0.9.8 via PR #1. The owner added a **branch protection rule for `main`** (exact ticks not confirmed yet; see
-section 2), so **`main` can't be pushed to directly**: every change, docs included, goes on a branch + PR. The owner
-replaced the GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-19.
-**Agreed order (owner, 2026-11-20): v0.10.1 display fix (✅ merged) → v0.11.0 Answer verification** (below). Next after
-v0.11.0: propose the following phase (roadmap: GitHub integration).
-**Pending owner checks:** v0.11.0 live test (below), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
+**State:** **v0.12.0 (GitHub for each user, read-only) is built and checked locally, not pushed yet** (to go on
+branch `release/v0.12.0-github-read-only` + PR #7; adds **migration 0011**, applied by the deploy). It needs the owner's
+**GitHub App + 4 Cloudflare secrets** (CONFIGURATION section 2 and 5) before it can be used live. Live is **v0.11.0**
+(answer verification; PR #6, merge `d2a7a46`, migration 0010). Earlier: v0.10.1 via PR #5, v0.10.0 via PR #4
+(migration 0009), v0.9.10 via PR #3, v0.9.9 via PR #2, v0.9.8 via PR #1. Push note: `origin` has no token, so the
+owner pushes a branch with the token in the URL and **without `-u`** (keeps the token out of `.git/config`):
+`git -c credential.helper= push https://<TOKEN>@github.com/RajaFarazTariq/VESPER-AI.git <branch>`.
+
+**Logo (owner's choice, 2026-11-20): "Mark V5 · faceted blades"**: a dark rounded-square tile with a thin light
+border; the V is two blades, the left one white/very light lavender, the right one violet, meeting at the bottom;
+hollow cyan circuit nodes on short stems at both top ends; a solid cyan orbit ring crossing the middle (tilted, a
+small cyan node at its left end) with a dotted second orbit below it; a white four-point sparkle at the orbit's right
+end; tiny dots in the tile's corners. Wordmark: VESPER in large, widely spaced light capitals; under it a small cyan
+ring, a short teal line and "AI AGENT" in small spaced warm-orange capitals. Earlier candidates (Circuit V, Orbit V
+tile, Mark V3) were dropped. The owner's images came as chat pictures only (no files). **Next: v0.12.1 "New logo"** on
+its own branch after v0.12.0 is pushed: the mark as SVG → `public/favicon.svg` (plus a simplified small-size version
+if the detail doesn't read at 16 px), the sign-in/brand panel and the message avatar.
+
+**Rules in force:** a **branch protection rule for `main`** (exact ticks not confirmed yet; see section 2), so
+**`main` can't be pushed to directly**: every change, docs included, goes on a branch + PR. The owner replaced the
+GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-20.
+**Order (owner, 2026-11-20):** v0.10.1 ✅ → v0.11.0 ✅ → v0.12.0 GitHub read-only (built) → v0.12.1 new logo →
+v0.13.0 GitHub write actions (to propose).
+**Pending owner checks:** create the GitHub App + secrets, then the v0.12.0 live test (below); v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
 
 **v0.10.0 live test (owner, 2026-11-20):** ✔️ phone number refused with the reason; memories "planning a trip to
@@ -27,6 +42,57 @@ renderers) turns only `<br>`/`<br/>` into real line breaks (other raw HTML still
 `overflow-wrap: break-word` + `min-width: 6.5rem` (`.md th/td` in `styles.css`) so words wrap at spaces and wide
 tables scroll inside their box. Checked in headless Edge (desktop + phone, no sideways page scroll). 225 tests.
 Merged via PR #5 (2026-11-20, live). Owner's quick look at a table answer still pending.
+
+**v0.12.0 GitHub for each user, read-only (owner approved 2026-11-20 with his 9 additions + my 3 adjustments):**
+1. **Connect** (Settings → **Connections**, shown when the app is set up and the account may use it): "Connect
+   GitHub" → GitHub's authorize page (`/api/connections/github/start`, state cookie) → callback exchanges the code,
+   reads `/user`, stores the access + refresh tokens **encrypted** (`lib/secret-box.ts`, AES-256-GCM, key
+   `GITHUB_TOKEN_KEY`, bound to the user id) in `github_connections` → back to `/?github=connected` (toast + the tab).
+   The tab shows the account, each installation (account/org, all or chosen repos, a "change" link) and up to 100
+   repos (🔒 for private), "Choose repositories on GitHub", **Disconnect** (revokes the grant on GitHub with
+   `DELETE /applications/{client_id}/grant`, deletes the row and the cache) and a privacy note (encrypted, 15-minute
+   cache, 👍/👎 copies go to the admin's feedback list).
+2. **App permissions** (owner sets them): Contents, Issues, Pull requests, Metadata, all read-only.
+3. **Five tools** (`tools/github.ts`, offered only when connected): `github_repo` (overview / list allowed repos),
+   `github_file` (file with line numbers, or a folder; long files in parts), `github_search` (code search),
+   `github_issues` (list/search/open with comments), `github_pr_changes` (diff in parts). Sources are file links with
+   the exact commit and lines (`blob/<sha>/path#L10-L24`); the chips show "repo · path L10–24".
+4. **Untrusted content:** every result is wrapped as untrusted data ("written by others"), the prompt says never to
+   follow it or open links from it. **Leak guard:** once private repo content is in an answer, `read_page` is refused
+   for the rest of it (`LEAK_GUARD_MESSAGE` in `llm/agent.ts`). Tested with an issue that tells the model to open an
+   "evil" page: the page is never requested.
+5. **Org/SSO/not chosen:** `explainNoAccess` checks the user's installations: no installation for that owner → "an
+   owner of the organisation must approve VESPER" + install link; installed with chosen repos → "not one of the
+   repositories you chose" + change link; SSO (`x-github-sso`) → authorize link.
+6. **Code search limit (10/min):** results cached 10 minutes per user; when limited (or not indexed / no results)
+   it falls back to the repo's file list (one request), matching file names, then lines inside the best two files.
+7. **Short cache + ETags** (`github_cache`, per user): reused as is for 2 minutes, then GitHub is asked with the
+   ETag (304 = no allowance used), deleted after 15 minutes (on the next request, on disconnect, by the daily cron).
+   **At most 10 GitHub requests per message** (Cloudflare free plan: 50 outbound requests per request).
+8. **Token renewal:** GitHub user tokens last 8 hours; refresh tokens work once, so only one renewal per user runs at
+   a time (`lockGithubRefresh`, 30-second lock); others wait for the new token. A refused renewal or a 401 marks the
+   connection `reconnect` → "Reconnect GitHub". Tokens/codes/secrets are never logged (tested).
+9. **Sizes:** a file ≤ 12,000 characters per read (with "ask for start_line N"); a PR part ≤ 14,000 characters,
+   ≤ 4,000 per file, code first, then tests, docs, lock/generated/minified last; files left are listed with
+   `continue_with: {start}` ("review the rest").
+10. **Check this answer** on GitHub answers: only references (`GITHUB_REF {...}`) are kept in `messages.evidence`,
+    never repo text; the check reads them again through the user's own access (409 `github_reconnect` if
+    disconnected).
+11. Admin: **GitHub for users** (off by default; admins always can), a note whether the app is set up, and a "Repos
+    connected" badge in Users. Research mode doesn't use GitHub.
+12. 243 tests (8 new in `tests/github.test.ts` + the migration check), typecheck, build. Checked in headless Edge
+    with a local fake GitHub + fake model: connect flow, Connections tab (desktop + phone), a file answer with its
+    chip, admin switch.
+- **Live test for v0.12.0** (after the owner creates the GitHub App and adds the 4 secrets): as admin, Settings →
+  Connections → Connect GitHub → authorize → "Choose repositories on GitHub" → pick VESPER-AI → ask "What does
+  src/worker/llm/verify.ts do in RajaFarazTariq/VESPER-AI?", "List the open pull requests in …", "Review PR #6 in
+  …" → press Check under one answer. To confirm live: whether repos that weren't chosen but are public can be read.
+  Then switch on "GitHub for users" if wanted.
+- **v0.13.0 (later, write actions):** add Issues: write, Pull requests: write, Contents: write (only to open PRs) to
+  the app, or a separate opt-in "actions" app (safer; decide then). GitHub then asks each user/org owner to **accept
+  the new permissions**; until they do, their connection stays read-only ("Approve new GitHub permissions"). Every
+  write shows an **Approve / Reject** card with the exact repo, title, text or diff; nothing is sent before approval;
+  each action is logged.
 
 **v0.11.0 Answer verification (approved and built 2026-11-20):**
 1. **Sources kept with the answer:** an answer that used a look-up tool (web search, read page, Wikipedia, knowledge
@@ -57,6 +123,11 @@ Merged via PR #5 (2026-11-20, live). Owner's quick look at a table answer still 
   question: the report should end with a "Fact check" card without pressing anything; (c) a plain question ("hello")
   shows no Check button; (d) as admin, the packing-list question no longer flags "SPF 30"-type numbers.
 - Answers written before v0.11.0 kept no sources, so they show no Check button (by design).
+- **Live test (owner, 2026-11-20), step (a) ✔️:** census question (answered by Gemini after Groq's rate limit;
+  number check "All 3 numbers found") → Check → "3 of 3 claims supported": 241.49 million (pbs.gov.pk), 207.68
+  million in 2017 (pbs.gov.pk), Wikipedia's 247,541,947 (en.wikipedia.org); checked by gemini-3.5-flash-lite (shown to
+  the admin only). Noticed: 9 source chips under that normal-chat answer, incl. pbs.gov.pk three times and
+  instagram.com (possible later tidy-up). Steps (b)–(d) still to do.
 
 **v0.10.0 "smarter memory" (built 2026-11-20; owner approved the 6 steps):**
 1. **Only relevant memories** go with each message (`selectMemories` in `db/memories.ts`, word matching, no model
@@ -551,8 +622,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Menu fix + local models for users (v0.9.10)**: Tools menu fits the screen (shared `useMenuLayout`); admin switch "Local models (Ollama) for users" (off) hides and refuses local models for users | ✅ live (v0.9.10, PR #3, merge commit `ba2b34a`, deployed 2026-11-20; 215 tests) |
 | **Smarter memory (v0.10.0)**: relevant + pinned memories per message; pin/edit/export; sensitive data refused; long chats summarised once into kept notes; migration 0009 | ✅ live (v0.10.0, PR #4, deployed 2026-11-20; 224 tests); live test ✔️ (2026-11-20) |
 | **Table display fix (v0.10.1)**: `<br>` in tables becomes a line break; no mid-word breaks in table columns | ✅ live (v0.10.1, PR #5, merge `e752cb9`, deployed 2026-11-20; 225 tests) |
-| **Answer verification (v0.11.0)**: "Check" under answers that used sources → claims rated Supported / Contradicted / Not in the sources with the source; research reports checked automatically; number check skips general-knowledge numbers; admin switches + daily checks; migration 0010 | 🔨 built 2026-11-20 (234 tests), not pushed yet (PR #6) |
-| **Next: GitHub integration** | ⏳ to propose after v0.11.0 is merged |
+| **Answer verification (v0.11.0)**: "Check" under answers that used sources → claims rated Supported / Contradicted / Not in the sources with the source; research reports checked automatically; number check skips general-knowledge numbers; admin switches + daily checks; migration 0010 | ✅ live (v0.11.0, PR #6, merge `d2a7a46`, deployed 2026-11-20; 234 tests); live Check ✔️ (3 of 3 supported) |
+| **GitHub for each user, read-only (v0.12.0)**: Settings → Connections (GitHub App, encrypted tokens, one renewal at a time), 5 read-only tools, untrusted-content + leak guard, org/SSO messages, code-search fallback, 15-min cache with ETags, 10 requests per message, PR review in parts, Check via references; migration 0011 | 🔨 built 2026-11-20 (243 tests), not pushed yet (PR #7); needs the GitHub App + 4 secrets |
+| **Next: v0.12.1 new logo**, then v0.13.0 GitHub write actions (approval cards) | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -590,7 +662,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 234 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 243 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

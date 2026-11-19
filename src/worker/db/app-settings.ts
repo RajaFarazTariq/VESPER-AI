@@ -58,6 +58,7 @@ export const appSettingsSchema = z.object({
   answerCheckEnabled: z.boolean(),
   answerChecksPerDay: z.number().int().min(0).max(100),
   researchAutoCheck: z.boolean(),
+  githubForUsers: z.boolean(),
 });
 
 type Key = keyof AppSettingsDto;
@@ -90,6 +91,8 @@ export function defaultAppSettings(config: AppConfig): AppSettingsDto {
     answerCheckEnabled: true,
     answerChecksPerDay: 10,
     researchAutoCheck: true,
+    // GitHub (read-only, each user connects their own): admins first; switch on for users after a live test.
+    githubForUsers: false,
   };
 }
 
