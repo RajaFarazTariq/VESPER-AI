@@ -35,6 +35,8 @@ export type ChatRequestBody = {
   regenerate?: boolean;
   edit?: boolean;
   images?: ChatImageInput[];
+  /** Deep research (v0.9.8). */
+  research?: boolean;
 };
 
 export class ApiError extends Error {

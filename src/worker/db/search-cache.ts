@@ -18,10 +18,21 @@ export async function searchCacheKey(request: { query: string; topic: string; in
   );
 }
 
-export async function getCachedSearch(db: D1Database, key: string, now = Date.now()): Promise<string | null> {
+/**
+ * A saved search: its results and when the search was actually made (`checkedAt`, v0.9.8; null for rows saved by
+ * older code), so reused results show that date rather than today.
+ */
+export async function getCachedSearch(
+  db: D1Database,
+  key: string,
+  now = Date.now(),
+): Promise<{ body: string; checkedAt: number | null } | null> {
   try {
-    const row = await db.prepare("SELECT body FROM search_cache WHERE key = ?1 AND expires_at > ?2").bind(key, now).first<{ body: string }>();
-    return row?.body ?? null;
+    const row = await db
+      .prepare("SELECT body, checked_at FROM search_cache WHERE key = ?1 AND expires_at > ?2")
+      .bind(key, now)
+      .first<{ body: string; checked_at: number | null }>();
+    return row ? { body: row.body, checkedAt: row.checked_at ?? null } : null;
   } catch {
     return null;
   }
@@ -30,8 +41,11 @@ export async function getCachedSearch(db: D1Database, key: string, now = Date.no
 export async function putCachedSearch(db: D1Database, key: string, body: string, ttlMs: number, now = Date.now()): Promise<void> {
   try {
     await db
-      .prepare("INSERT INTO search_cache (key, body, expires_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET body = excluded.body, expires_at = excluded.expires_at")
-      .bind(key, body, now + ttlMs)
+      .prepare(
+        `INSERT INTO search_cache (key, body, expires_at, checked_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(key) DO UPDATE SET body = excluded.body, expires_at = excluded.expires_at, checked_at = excluded.checked_at`,
+      )
+      .bind(key, body, now + ttlMs, now)
       .run();
   } catch {
     // not cached: the next identical search just asks the service again

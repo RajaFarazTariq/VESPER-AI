@@ -28,6 +28,16 @@ export function featuresFor(env: Env, settings: AppSettingsDto): FeaturesDto {
       minutesPerDay: settings.speechMinutesPerDay,
       maxRecordingSeconds: MAX_RECORDING_SECONDS,
     },
+    research: {
+      // Needs web search: a Tavily key, web_search not switched off for everyone, and a daily cap above the
+      // searches kept for normal chat.
+      enabled:
+        settings.researchEnabled &&
+        Boolean(env.TAVILY_API_KEY) &&
+        !settings.disabledTools.includes("web_search") &&
+        settings.webSearchDailyLimit > settings.researchSearchReserve,
+      runsPerDay: settings.researchRunsPerDay,
+    },
   };
 }
 

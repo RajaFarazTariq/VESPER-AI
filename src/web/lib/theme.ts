@@ -2,6 +2,9 @@ export type ThemePreference = "system" | "light" | "dark";
 
 const KEY = "theme";
 
+/** Dark is the default (owner's choice, v0.9.8); a theme someone picked in Settings is kept. */
+export const DEFAULT_THEME: ThemePreference = "dark";
+
 export function getThemePreference(): ThemePreference {
   try {
     const stored = localStorage.getItem(KEY);
@@ -9,7 +12,7 @@ export function getThemePreference(): ThemePreference {
   } catch {
     // storage unavailable (private mode etc.)
   }
-  return "system";
+  return DEFAULT_THEME;
 }
 
 const media = () => window.matchMedia("(prefers-color-scheme: dark)");

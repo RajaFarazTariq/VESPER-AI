@@ -260,6 +260,28 @@ Each has an admin switch and a per-user daily limit (admin panel → App setting
 - Chats load each answer's current rating (`listMessages` LEFT JOINs `message_feedback`).
 - Admin → Feedback (`GET /api/admin/feedback`): Good/Bad totals and per-model counts, newest first, 30 per page.
 
+## 5g. Deep research (v0.9.8)
+
+One chat turn with `research: true` runs `llm/research.ts` instead of the agent loop:
+
+| Step | What happens | Model requests | Other calls |
+|---|---|---|---|
+| Check | Switch on, web search available, user's daily runs left (`consumeDailyResearch`), then **4 searches set aside** atomically on the shared daily counter, never touching the last N kept for chat (`holdResearchSearches`). Fewer than 2 → refused before anything starts; the message and run are given back | 0 | D1 only |
+| 1. Plan | 2–4 focused queries as JSON (`parsePlan`; unreadable → the question itself) | **1** | — |
+| 2. Search | Each query within the hold (`researchSearch`, `counted: false`); saved results are free; once the hold is used up only saved results can answer (`network: false` → skipped, noted). Knowledge base searched once (relevant passages only) | 0 | ≤ 4 Tavily |
+| 3. Read | Up to **3** pages (official/trusted first, no PDFs) with `fetchPageText`; the passages about the question are picked by word matching (`relevantPassages`); a page's own publish-date meta tag fills a missing date | **0** | ≤ 3 pages (+ redirects) |
+| 4. Write | One request, **no tools offered**; system prompt = `RESEARCH_RULES`; material wrapped as untrusted JSON under the question | **1** | — |
+| 5. Finish | The app appends the Sources list (type, published = Tavily date or page meta else "date unknown", checked = search date, saved searches keep their first date) and research notes; admin-only number check | 0 | — |
+| Settle | Unused searches given back (`releaseResearchSearches`); a run that didn't finish (error, cut off, stopped) is given back (`refundDailyResearch`); searches really made stay spent | 0 | D1 only |
+
+**Total: 2 model requests per run.** A provider failure adds one request per extra provider tried (and one retry
+for temporary errors), as in normal chat. Cloudflare outside calls per run ≈ 10–20, under the free plan's 50.
+
+Dates are never guessed: the date found in a snippet (`dateInText`, v0.9.5) only helps ranking and is never shown
+as a publish date. Safety: the material is labelled untrusted data, the rules forbid following instructions inside
+it, and the writing step has no tools, so a page can at worst distort wording, never trigger an action. No AI model
+is fully immune to instructions hidden in web text; that is a known limit.
+
 ## 6. Security model
 
 | Threat | Control |
@@ -300,6 +322,10 @@ tools are blocked once untrusted content is in context.
   on regenerate, note in later history, switch/limit/fake-image checks) and speech to text (Groq request, counting,
   limit, switch, no service); answer feedback (rate/change/undo, own answers only, kept through regenerate,
   admin-only list and counts, removed with the chat).
+- `tests/web.test.ts` also covers deep research with the search service, pages and model faked (CI never spends real
+  searches): a full run (2 model requests, no tools in the writing step, untrusted material, exact dates, saved
+  results keeping their first date, run limit), the 10-search reserve and running out partway, the atomic hold and
+  give-back, and a failed run not counting.
 - `tests/tools.test.ts` also covers source quality (country government/university domains, exact-name official sites,
   trusted/blocked, ranking by date without dropping official pages, near-duplicates), the paired knowledge search,
   the number check inside the agent loop and the R1–R7 prompt rules; `tests/units.test.ts` covers number
@@ -343,5 +369,6 @@ tools are blocked once untrusted content is in context.
 | 6d | **Telegram** bot (webhook into the same Worker) | Telegram Bot API |
 | ✅ 0.9.6 | Images (attach/paste/drop, Gemini → OpenRouter vision) and voice (Groq Whisper → Workers AI Whisper, browser read-aloud), admin switches + per-user daily limits | Gemini/OpenRouter free tiers, Groq free STT, Web Speech API |
 | ✅ 0.9.7 | Answer feedback: 👍/👎 with reasons, admin Feedback tab with per-model counts | D1 |
-| next | Deep-research mode, smarter memory | Free quotas (search-capped) |
+| ✅ 0.9.8 | Deep research (plan → searches set aside → ≤ 3 pages → brief with app-made sources and dates), dark theme by default | Tavily free plan (search-capped), free LLMs |
+| next | Smarter memory, answer verification, then GitHub integration | — |
 | 8 | Hardening: rolling summaries, memory, export/import, more tests | — |

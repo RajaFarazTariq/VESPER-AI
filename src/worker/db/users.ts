@@ -208,10 +208,16 @@ export async function deleteUser(db: D1Database, id: string): Promise<boolean> {
 
 // --- Admin listing -------------------------------------------------------------
 
-type AdminUserRow = UserRow & { today_messages: number; today_images: number; today_speech: number; conversations: number };
+type AdminUserRow = UserRow & {
+  today_messages: number;
+  today_images: number;
+  today_speech: number;
+  today_research: number;
+  conversations: number;
+};
 
 export function toAdminUserDto(
-  row: UserRow & { today_messages?: number; today_images?: number; today_speech?: number; conversations?: number },
+  row: UserRow & { today_messages?: number; today_images?: number; today_speech?: number; today_research?: number; conversations?: number },
   config: AppConfig,
 ): AdminUserDto {
   return {
@@ -221,6 +227,7 @@ export function toAdminUserDto(
     todayMessages: row.today_messages ?? 0,
     todayImages: row.today_images ?? 0,
     todaySpeechSeconds: row.today_speech ?? 0,
+    todayResearch: row.today_research ?? 0,
     conversations: row.conversations ?? 0,
     github: row.github_login !== null,
     google: row.google_sub !== null,
@@ -232,7 +239,7 @@ export function toAdminUserDto(
 const ADMIN_LIST_SQL = `SELECT ${USER_COLUMNS.split(", ")
   .map((c) => `u.${c}`)
   .join(", ")}, COALESCE(d.messages, 0) AS today_messages, COALESCE(d.images, 0) AS today_images,
-    COALESCE(d.speech_seconds, 0) AS today_speech,
+    COALESCE(d.speech_seconds, 0) AS today_speech, COALESCE(d.research_runs, 0) AS today_research,
     (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.id) AS conversations
   FROM users u LEFT JOIN user_usage_daily d ON d.user_id = u.id AND d.day = ?1`;
 
@@ -294,6 +301,31 @@ export async function consumeDailyImages(db: D1Database, userId: string, count: 
     .bind(userId, utcDay(), count, limit)
     .first<{ images: number }>();
   return row !== null;
+}
+
+/**
+ * Count one deep-research run against today's limit, atomically (false = limit reached, nothing counted). Counted
+ * when the run starts so two runs at once can't both slip through; refundDailyResearch gives it back if the run
+ * fails or is stopped, so only finished runs count.
+ */
+export async function consumeDailyResearch(db: D1Database, userId: string, limit: number): Promise<boolean> {
+  if (limit <= 0) return false;
+  const row = await db
+    .prepare(
+      `INSERT INTO user_usage_daily (user_id, day, messages, research_runs) VALUES (?1, ?2, 0, 1)
+       ON CONFLICT(user_id, day) DO UPDATE SET research_runs = research_runs + 1 WHERE research_runs < ?3
+       RETURNING research_runs`,
+    )
+    .bind(userId, utcDay(), limit)
+    .first<{ research_runs: number }>();
+  return row !== null;
+}
+
+export async function refundDailyResearch(db: D1Database, userId: string, day: string): Promise<void> {
+  await db
+    .prepare("UPDATE user_usage_daily SET research_runs = MAX(0, research_runs - 1) WHERE user_id = ?1 AND day = ?2")
+    .bind(userId, day)
+    .run();
 }
 
 /** Seconds of speech already turned into text today. */
