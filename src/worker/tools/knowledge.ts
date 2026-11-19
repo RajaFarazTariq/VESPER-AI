@@ -16,7 +16,7 @@ import { define } from "./types";
 
 const CANDIDATES = 30;
 const RESULTS = 6;
-const PASSAGE_CHARS = 1_100;
+const PASSAGE_CHARS = 800;
 const RERANK_MODEL = "@cf/baai/bge-reranker-base";
 const RERANK_TIMEOUT_MS = 8_000;
 
@@ -49,6 +49,37 @@ export function quotedOrganisations(text: string): string[] {
     names.add(name);
   }
   return [...names].slice(0, 3);
+}
+
+/** Common words that don't show what a question is about (besides the usual small words). */
+const COMMON_WORDS = new Set(
+  ("the and for are was were has had but not you can its our out who how why any all his her she him they use new one " +
+    "two get got may per via own too now off yet nor did does done say says said see seen way ask " +
+    "about according after also another because been before being between both could does each from have here into just " +
+    "like made make many more most much must only other over same should since some such than that their them then there " +
+    "these they this those through very what when where which while will with would your share percent percentage written " +
+    "write writes latest version current number total overall data report tell know").split(" "),
+);
+const wordKey = (w: string) => (w.length > 5 ? w.slice(0, 5) : w); // "developers" ~ "developer"
+
+/** The words that carry a question's topic: 3+ letters, not common words, not plain numbers (years). */
+export function topicWords(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 3 && !/^\d+$/.test(w) && !COMMON_WORDS.has(w))
+      .map(wordKey),
+  );
+}
+
+/** A passage is about a question when it shares at least two of the question's topic words (or its only one). */
+export function passageAboutQuestion(passage: string, words: ReadonlySet<string>): boolean {
+  if (words.size === 0) return false;
+  const own = topicWords(passage);
+  let shared = 0;
+  for (const w of words) if (own.has(w)) shared++;
+  return shared >= Math.min(2, words.size);
 }
 
 /** The source label for a passage: "your document", or "your document (quoting GitHub)". */
@@ -105,10 +136,9 @@ export const searchKnowledge = define({
   name: "search_knowledge",
   label: "Knowledge base",
   description:
-    "Search the knowledge base: documents the administrator added (for example handbooks, policies, books, notes and saved web pages). " +
-    "Returns the most relevant passages with their document name and page or section. Check it whenever a question relates to " +
-    "one of its folders (documents can be out of date: for things that change over time, compare with the web). Use specific key words from the topic; " +
-    "if nothing relevant comes back, try different words or synonyms before concluding the documents don't cover it.",
+    "Search the knowledge base: documents the administrator added (handbooks, policies, papers, saved web pages). Returns " +
+    "the most relevant passages with document name and page or section. Use it when a question relates to one of its folders; " +
+    "use specific key words, and try synonyms before concluding the documents don't cover it.",
   risk: "read",
   requiresMemory: false,
   isAvailable: ({ knowledgeReady }) => Boolean(knowledgeReady),
@@ -120,13 +150,15 @@ export const searchKnowledge = define({
     },
     required: ["query"],
   },
-  // `limit` isn't offered to the model: the server uses it for the smaller search it runs alongside a web search.
+  // `limit` and `relevantOnly` aren't offered to the model: the server uses them for the smaller search it runs
+  // alongside a web search, which keeps only passages that are about the question (no tokens spent on unrelated ones).
   schema: z.object({
     query: z.string().trim().min(2).max(300),
     folder: z.string().trim().max(80).optional(),
     limit: z.number().int().min(1).max(RESULTS).optional(),
+    relevantOnly: z.boolean().optional(),
   }),
-  async run({ query, folder, limit }, ctx) {
+  async run({ query, folder, limit, relevantOnly }, ctx) {
     const candidates = await searchChunks(ctx.db, query, { ...(folder ? { collection: folder } : {}), limit: CANDIDATES });
     if (candidates.length === 0) {
       return {
@@ -140,16 +172,31 @@ export const searchKnowledge = define({
         summary: `Nothing found for "${clip(query, 60)}"`,
       };
     }
-    const best = await rerank(ctx.ai, query, candidates, limit ?? RESULTS);
-    const results = best.map((h, i) => ({
-      ref: i + 1,
-      source: documentSourceLabel(h.text),
-      document: h.title,
-      ...(h.location ? { location: h.location } : {}),
-      folder: h.collection,
-      ...(h.sourceUrl ? { url: h.sourceUrl } : {}),
-      text: clip(h.text, PASSAGE_CHARS),
-    }));
+    const ranked = await rerank(ctx.ai, query, candidates, limit ?? RESULTS);
+    const words = topicWords(query);
+    const best = relevantOnly ? ranked.filter((h) => passageAboutQuestion(h.text, words)) : ranked;
+    if (best.length === 0) {
+      return {
+        content: JSON.stringify({ query, results: [], note: "Nothing in the documents is about this question." }),
+        summary: `Nothing relevant for "${clip(query, 60)}"`,
+      };
+    }
+    const results = best.map((h, i) => {
+      const quoted = quotedOrganisations(h.text);
+      // The warning sits in the passage text itself, where the model reads the figure.
+      const warning = quoted.length
+        ? `[This document quotes ${quoted.join(", ")}; it is not ${quoted.length === 1 ? `${quoted[0]}'s` : "their"} own publication] `
+        : "";
+      return {
+        ref: i + 1,
+        source: documentSourceLabel(h.text),
+        document: h.title,
+        ...(h.location ? { location: h.location } : {}),
+        folder: h.collection,
+        ...(h.sourceUrl ? { url: h.sourceUrl } : {}),
+        text: warning + clip(h.text, PASSAGE_CHARS),
+      };
+    });
     const documents = new Set(best.map((h) => h.documentId)).size;
     return {
       content: wrapUntrusted("the knowledge base", {

@@ -158,7 +158,7 @@ describe("web_search tool", () => {
     expect(content.data.results.map((r: any) => r.url)).not.toContain("javascript:alert(1)");
     expect(content.data.results[0]).toMatchObject({ title: "Result 1", published: "2026-11-10", source: expect.stringMatching(/^other website/) });
     expect(content.data.results[1].published).toBe("unknown");
-    expect(content.data.results[0].snippet.length).toBeLessThanOrEqual(601);
+    expect(content.data.results[0].snippet.length).toBeLessThanOrEqual(451);
     expect(out.sources).toHaveLength(5);
     expect(out.summary).toBe('5 results for "latest cricket score"');
   });
@@ -253,6 +253,99 @@ describe("web_search tool", () => {
     await tool("web_search").run({ query: "two" }, ctx({ userId: "someone-else", web: capped.web }));
     await expect(tool("web_search").run({ query: "three" }, capped)).rejects.toThrow(/allowance for this app is used up/);
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("reuses saved results for the same search (no search used); they expire after 6 hours, or 1 hour for 'latest' questions", async () => {
+    const HOUR = 60 * 60 * 1000;
+    const spy = mockFetch(() => json({ results: [{ title: "A", url: "https://a.example.com/x", content: "Some text about gardening tips" }] }));
+    const base = ctx({ web: { userAgent: "t", tavilyApiKey: "tvly-k", webSearchDailyLimit: 30, question: "gardening tips" } });
+    const later = (ms: number, web = base.web) => ctx({ now: new Date(base.now.getTime() + ms), ...(web ? { web } : {}) });
+    const first = await tool("web_search").run({ query: "Gardening tips" }, base);
+    const again = await tool("web_search").run({ query: "  gardening   TIPS " }, base); // same words: same saved result
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(again.summary).toContain("saved results");
+    expect(JSON.parse(again.content).data.results).toEqual(JSON.parse(first.content).data.results);
+    await tool("web_search").run({ query: "gardening tips" }, later(5 * HOUR));
+    expect(spy).toHaveBeenCalledTimes(1);
+    await tool("web_search").run({ query: "gardening tips" }, later(7 * HOUR));
+    expect(spy).toHaveBeenCalledTimes(2);
+    const latest = { ...base.web!, question: "What are the latest gardening tips?" };
+    await tool("web_search").run({ query: "latest gardening tips" }, later(0, latest));
+    await tool("web_search").run({ query: "latest gardening tips" }, later(61 * 60_000, latest));
+    expect(spy).toHaveBeenCalledTimes(4);
+  });
+
+  it("doesn't count saved results against the daily allowance", async () => {
+    const spy = mockFetch(() => json({ results: [] }));
+    const capped = ctx({ web: { userAgent: "t", tavilyApiKey: "tvly-k", webSearchDailyLimit: 1 } });
+    await tool("web_search").run({ query: "same words" }, capped);
+    await tool("web_search").run({ query: "same words" }, capped);
+    await expect(tool("web_search").run({ query: "different words" }, capped)).rejects.toThrow(/allowance for this app is used up/);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a date from the snippet when the service gives none (never a future date), and keeps the service's date", async () => {
+    mockFetch(() =>
+      json({
+        results: [
+          { title: "Release", url: "https://r.example.com/a", content: "Python 3.15.2 was released on Nov 10, 2026 with fixes." },
+          { title: "Plan", url: "https://f.example.com/b", content: "A launch planned for 12 March 2031." },
+          { title: "Dated", url: "https://d.example.com/c", content: "Older story", published_date: "2024-05-01" },
+        ],
+      }),
+    );
+    const out = await tool("web_search").run({ query: "python release" }, ctx({ now: new Date("2026-11-19T00:00:00Z") }));
+    const byHost = (host: string) => JSON.parse(out.content).data.results.find((r: any) => r.url.includes(host));
+    expect(byHost("r.example")).toMatchObject({ published: "unknown", date_in_text: "2026-11-10" });
+    expect(byHost("f.example").date_in_text).toBeUndefined();
+    expect(byHost("d.example")).toMatchObject({ published: "2024-05-01" });
+    expect("date_in_text" in byHost("d.example")).toBe(false);
+  });
+
+  it("passes at most 2 'other website' results when an official result has the figure", async () => {
+    const blogs = Array.from({ length: 5 }, (_, i) => ({ title: `Blog ${i}`, url: `https://blog${i}.example.com/x`, content: `Python 3.15.${i} news from blog number ${i}` }));
+    const web = { userAgent: "t", tavilyApiKey: "tvly-k", webSearchDailyLimit: 30, question: "What is the latest stable version of Python?" };
+    mockFetch(() => json({ results: [...blogs, { title: "Python.org", url: "https://www.python.org/downloads/", content: "Download Python 3.15.2" }] }));
+    const withOfficial = JSON.parse((await tool("web_search").run({ query: "latest Python version" }, ctx({ web }))).content).data.results;
+    expect(withOfficial[0].url).toBe("https://www.python.org/downloads/");
+    expect(withOfficial.filter((r: any) => r.source.startsWith("other website"))).toHaveLength(2);
+    vi.restoreAllMocks();
+    mockFetch(() => json({ results: blogs }));
+    const without = JSON.parse((await tool("web_search").run({ query: "Python blogs" }, ctx({ web }))).content).data.results;
+    expect(without).toHaveLength(5); // no official figure: nothing is cut
+  });
+
+  it("searches the organisation's own sites when the question quotes it and none of its pages came back", async () => {
+    const bodies: any[] = [];
+    mockFetch((_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      bodies.push(body);
+      return json({
+        results: body.include_domains
+          ? [{ title: "GitHub blog", url: "https://github.blog/news/x", content: "46% overall, and 61% among developers using Java" }]
+          : [{ title: "Stats", url: "https://stats.example.com/a", content: "Copilot writes 61% of Java code" }],
+      });
+    });
+    const web = { userAgent: "t", tavilyApiKey: "tvly-k", webSearchDailyLimit: 30, question: "According to GitHub, how much Java code does Copilot write?" };
+    const out = await tool("web_search").run({ query: "Copilot Java share" }, ctx({ web }));
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1].include_domains).toEqual(["github.com", "github.org", "github.blog", "github.co", "github.net"]);
+    const results = JSON.parse(out.content).data.results;
+    expect(results[0]).toMatchObject({ url: "https://github.blog/news/x", source: expect.stringMatching(/^official/) });
+    expect(out.summary).toContain("also searched GitHub's own sites");
+  });
+
+  it("doesn't search the organisation's sites when one of its pages came back, or when the question quotes nobody", async () => {
+    const spy = mockFetch(() => json({ results: [{ title: "GitHub blog", url: "https://github.blog/news/x", content: "61% among Java developers" }] }));
+    await tool("web_search").run(
+      { query: "Copilot Java share" },
+      ctx({ web: { userAgent: "t", tavilyApiKey: "tvly-k", webSearchDailyLimit: 30, question: "According to GitHub, how much Java code does Copilot write?" } }),
+    );
+    await tool("web_search").run(
+      { query: "Copilot Java share 2" },
+      ctx({ web: { userAgent: "t", tavilyApiKey: "tvly-k", webSearchDailyLimit: 30, question: "How much Java code does Copilot write?" } }),
+    );
+    expect(spy).toHaveBeenCalledTimes(2); // one search each, no extra ones
   });
 
   it("reports a bad key or an exhausted free plan clearly", async () => {
@@ -452,6 +545,39 @@ describe("web search in a real chat turn", () => {
     await call("/api/chat", { method: "POST", body: JSON.stringify({ message: "hi" }), cookie: tester, env: { GROQ_API_KEY: "k", GROQ_BASE_URL: "https://groq.test/v1" } });
     expect(body.tools.map((t: any) => t.function.name)).not.toContain("web_search");
     expect(body.messages[0].content).toContain("You can't search the web right now.");
+  });
+
+  it("searches first for a 'latest' question, so the model answers in one request that fits Groq's free budget", async () => {
+    const tester = await devLogin("tester");
+    const groqBodies: any[] = [];
+    const filler = "Details about the release, what changed and how to upgrade safely. ".repeat(12);
+    mockFetch((url, init) => {
+      if (url === "https://api.tavily.com/search") {
+        return json({
+          results: Array.from({ length: 8 }, (_, i) => ({ title: `Result ${i}`, url: `https://site${i}.example.com/p`, content: `Python 3.15.2 is the latest release. ${filler}` })),
+        });
+      }
+      groqBodies.push(JSON.parse(String(init?.body)));
+      return sse([{ choices: [{ delta: { content: "Python 3.15.2 ([Result 0](https://site0.example.com/p))." } }] }]);
+    });
+    const { text } = await call("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: "What is the latest stable version of Python?" }),
+      cookie: tester,
+      env: WITH_SEARCH,
+    });
+    expect(groqBodies).toHaveLength(1); // one model request, not two
+    const question = groqBodies[0].messages.filter((m: any) => m.role === "user").at(-1);
+    expect(question.content).toMatch(/^What is the latest stable version of Python\?/);
+    expect(question.content).toContain('The app already ran "Web search"');
+    expect(question.content).toContain("Python 3.15.2 is the latest release");
+    // Groq's free plan allows 8,000 tokens a minute, counting the reply allowance (2,048). At roughly 4 characters a
+    // token, the whole request (instructions, tools, question and results) must stay well under ~23,000 characters.
+    const size = JSON.stringify(groqBodies[0].messages).length + JSON.stringify(groqBodies[0].tools ?? []).length;
+    expect(size).toBeLessThan(20_000); // measured 9,433 characters on 2026-11-19 (~2,400 tokens)
+    const done = parseStream(text).at(-1) as Extract<ChatStreamEvent, { type: "done" }>;
+    expect(done.message.content).toContain("3.15.2");
+    expect(done.message.tools?.map((t) => t.name)).toEqual(["web_search"]); // users never see the number check
   });
 });
 

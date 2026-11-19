@@ -1,17 +1,4 @@
-import {
-  ArrowDown,
-  BookOpen,
-  CloudSun,
-  Code2,
-  Coins,
-  GraduationCap,
-  Mail,
-  Menu,
-  Newspaper,
-  Sparkles,
-  SquarePen,
-  type LucideIcon,
-} from "lucide-react";
+import { ArrowDown, Menu, Sparkles, SquarePen } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ConversationDto, ModelsResponse, PublicConfigDto, ToolInfoDto, UserDto, UserSettings } from "../shared/types";
 import { api, ApiError } from "./api/client";
@@ -83,17 +70,6 @@ export function App() {
     />
   );
 }
-
-/** Welcome-screen ideas. Ones that need a tool are only shown when that tool is actually available. */
-const SUGGESTIONS: { icon: LucideIcon; title: string; prompt: string; tool?: string }[] = [
-  { icon: Newspaper, title: "Catch up on the news", prompt: "What are today's top technology news stories?", tool: "web_search" },
-  { icon: CloudSun, title: "Check the weather", prompt: "What's the weather in Lahore this week?", tool: "weather" },
-  { icon: Coins, title: "Convert currency", prompt: "Convert 250 USD to PKR", tool: "currency" },
-  { icon: BookOpen, title: "Learn about a topic", prompt: "Tell me about Allama Iqbal's life and work", tool: "wikipedia" },
-  { icon: Code2, title: "Write some code", prompt: "Write a Python function that removes duplicates from a list while keeping order" },
-  { icon: GraduationCap, title: "Plan your learning", prompt: "Give me a 3-day study plan for learning SQL basics" },
-  { icon: Mail, title: "Draft an email", prompt: "Draft a polite email asking my manager for a day off next Friday" },
-];
 
 /** Short labels for the capability pills on the welcome screen. */
 const CAPABILITY_LABELS: Record<string, string> = {
@@ -313,7 +289,6 @@ function ChatApp({
   const empty = chat.messages.length === 0 && !chat.loading;
   const activeTitle = conversations.find((c) => c.id === chat.conversationId)?.title ?? null;
   const firstName = (user.name ?? "").trim().split(/\s+/)[0] || null;
-  const suggestions = SUGGESTIONS.filter((s) => !s.tool || activeNames.has(s.tool)).slice(0, 4);
   const capabilities = Object.keys(CAPABILITY_LABELS).filter((name) => activeNames.has(name));
 
   const composerControls = (
@@ -461,25 +436,6 @@ function ChatApp({
                 </div>
               ) : null}
 
-              {/* Wait for the tool list so the cards don't change (and jump) after it loads. */}
-              <div className={`mt-8 grid grid-cols-1 gap-2.5 sm:grid-cols-2 ${activeTools === null ? "invisible" : ""}`}>
-                {suggestions.map((s) => (
-                  <button
-                    key={s.title}
-                    type="button"
-                    onClick={() => void send(s.prompt)}
-                    className="group flex w-full min-w-0 items-start gap-3 rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] p-3.5 text-left shadow-[var(--shadow-sm)] transition-[border-color,box-shadow,transform] hover:-translate-y-px hover:border-[var(--border-strong)] hover:shadow-[var(--shadow-md)]"
-                  >
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
-                      <s.icon size={17} />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-sm font-medium text-[var(--text)]">{s.title}</span>
-                      <span className="mt-0.5 block truncate text-[13px] text-[var(--text-soft)]">{s.prompt}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
             </div>
           </div>
         ) : (

@@ -2,6 +2,7 @@ import type { ProviderId, ToolEventDto } from "../../shared/types";
 import type { ProviderHealth, ProviderStateStore } from "../db/provider-state";
 import { ToolInputError, type AgentTool, type ToolContext } from "../tools/registry";
 import { numberCheckEvent } from "./number-check";
+import { prefetchNote } from "./prefetch";
 import { executeRoute, type RouteError, type RouteTarget, type RouterEvents } from "./router";
 import type { ChatMessage, Provider, ToolCall, ToolSpec } from "./types";
 
@@ -34,7 +35,7 @@ function pairedKnowledgeCall(call: ToolCall, tools: Map<string, AgentTool>): Too
   return {
     id: `${call.id}-kb`,
     name: "search_knowledge",
-    arguments: JSON.stringify({ query: query.trim().slice(0, 300), limit: PAIRED_KNOWLEDGE_RESULTS }),
+    arguments: JSON.stringify({ query: query.trim().slice(0, 300), limit: PAIRED_KNOWLEDGE_RESULTS, relevantOnly: true }),
   };
 }
 
@@ -127,6 +128,8 @@ export async function runAgent(input: {
   events: AgentEvents;
   maxRounds?: number;
   sleep?: (ms: number) => Promise<void>;
+  /** A look-up the server runs before the first model request (see llm/prefetch.ts), or none. */
+  prefetch?: ToolCall | null;
 }): Promise<AgentResult> {
   const maxRounds = input.maxRounds ?? MAX_TOOL_ROUNDS;
   const toolMap = new Map(input.tools.map((t) => [t.name, t]));
@@ -148,6 +151,58 @@ export async function runAgent(input: {
     if (u.inputTokens !== null) result.usage.inputTokens = (result.usage.inputTokens ?? 0) + u.inputTokens;
     if (u.outputTokens !== null) result.usage.outputTokens = (result.usage.outputTokens ?? 0) + u.outputTokens;
   };
+  const running = (c: ToolCall): ToolEventDto => ({
+    id: c.id,
+    name: c.name,
+    label: toolMap.get(c.name)?.label ?? c.name,
+    args: {},
+    status: "running",
+    summary: null,
+  });
+
+  /**
+   * Runs one tool call (and, for a web look-up, the paired knowledge-base search) and returns what the model sees.
+   * Used for the model's own calls and for the server's prefetch alike.
+   */
+  const execute = async (call: ToolCall): Promise<{ content: string; ok: boolean }> => {
+    const paired = knowledgeChecked ? null : pairedKnowledgeCall(call, toolMap);
+    if (paired || call.name === "search_knowledge") knowledgeChecked = true;
+    await input.events.tool(running(call));
+    if (paired) await input.events.tool(running(paired));
+    const [main, extra] = await Promise.all([
+      runTool(call, toolMap, input.toolContext),
+      paired ? runTool(paired, toolMap, input.toolContext) : null,
+    ]);
+    result.tools.push(main.event);
+    await input.events.tool(main.event);
+    evidence.push(main.content, main.evidence ?? "");
+    let content = main.content;
+    if (extra) {
+      result.tools.push(extra.event);
+      await input.events.tool(extra.event);
+      // Only passages that are about the question come back (relevantOnly); none means nothing is added.
+      if (extra.evidence) {
+        evidence.push(extra.content, extra.evidence);
+        // One tool result per call id (providers require it), so the documents ride along with the web results.
+        content =
+          `${main.content}\n\n` +
+          "The knowledge base (the administrator's documents) was also searched automatically with the same query. " +
+          "Use these passages only if they are relevant, and compare them with the web results:\n" +
+          extra.content;
+      }
+    }
+    return { content, ok: main.event.status === "done" };
+  };
+
+  // Search first, answer in one call: the server's look-up goes under the user's question in the first request.
+  if (input.prefetch && toolMap.has(input.prefetch.name) && !input.signal.aborted) {
+    const { content, ok } = await execute(input.prefetch);
+    const last = messages.map((m) => m.role).lastIndexOf("user");
+    const question = messages[last];
+    if (ok && question && typeof question.content === "string") {
+      messages[last] = { ...question, content: question.content + prefetchNote(toolMap.get(input.prefetch.name)!.label, content) };
+    }
+  }
 
   for (let round = 0; round <= maxRounds; round++) {
     // The final round offers no tools, forcing a written answer.
@@ -210,37 +265,7 @@ export async function runAgent(input: {
     if (route.toolCalls.some((c) => c.name === "search_knowledge")) knowledgeChecked = true;
     for (const call of route.toolCalls) {
       if (input.signal.aborted) break;
-      const running = (c: ToolCall): ToolEventDto => ({
-        id: c.id,
-        name: c.name,
-        label: toolMap.get(c.name)?.label ?? c.name,
-        args: {},
-        status: "running",
-        summary: null,
-      });
-      const paired = knowledgeChecked ? null : pairedKnowledgeCall(call, toolMap);
-      if (paired) knowledgeChecked = true;
-      await input.events.tool(running(call));
-      if (paired) await input.events.tool(running(paired));
-      const [main, extra] = await Promise.all([
-        runTool(call, toolMap, input.toolContext),
-        paired ? runTool(paired, toolMap, input.toolContext) : null,
-      ]);
-      result.tools.push(main.event);
-      await input.events.tool(main.event);
-      evidence.push(main.content, main.evidence ?? "");
-      let content = main.content;
-      if (extra) {
-        result.tools.push(extra.event);
-        await input.events.tool(extra.event);
-        evidence.push(extra.content, extra.evidence ?? "");
-        // One tool result per call id (providers require it), so the documents ride along with the web results.
-        content =
-          `${main.content}\n\n` +
-          "The knowledge base (the administrator's documents) was also searched automatically with the same query. " +
-          "Use these passages only if they are relevant, and compare them with the web results:\n" +
-          extra.content;
-      }
+      const { content } = await execute(call);
       messages.push({ role: "tool", tool_call_id: call.id, name: call.name, content });
     }
     if (input.signal.aborted) {

@@ -103,5 +103,6 @@ export async function cleanup(db: D1Database): Promise<void> {
     db.prepare("DELETE FROM rate_limits WHERE window_start < ?1").bind(now - 24 * 60 * 60 * 1000),
     db.prepare("DELETE FROM usage_daily WHERE day < ?1").bind(utcDay(now - 90 * 24 * 60 * 60 * 1000)),
     db.prepare("DELETE FROM user_usage_daily WHERE day < ?1").bind(utcDay(now - 90 * 24 * 60 * 60 * 1000)),
+    db.prepare("DELETE FROM search_cache WHERE expires_at < ?1").bind(now),
   ]);
 }

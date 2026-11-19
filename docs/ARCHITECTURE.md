@@ -186,6 +186,28 @@ knowledge base for the admin's own material. Everything below is free (no extra 
 - **Groq short wait (v0.9.4)** (`llm/router.ts`): on a Groq rate limit whose wait (Retry-After header, or "try again
   in 6.5s" in the message) is 10 s or less, the router waits once and retries Groq; longer waits (usually 15–30 s for
   the per-minute token limit) fall back to the next provider at once.
+- **Search first, one request (v0.9.5)** (`llm/prefetch.ts`, `planPrefetch`; run in `llm/agent.ts`): word rules (no
+  model call) pick questions that clearly need a look-up: time-sensitive words ("latest", "current", prices,
+  versions, population, years 2024+…) or an organisation's own figure ("According to X", "does X say") → web search
+  first; "my PDF/document/file" → knowledge-base search first. Writing requests, sums, weather/currency (own tools),
+  long messages and everything else are left to the model. The results go under the user's question in the first
+  request (`prefetchNote`), so the answer takes one request (~9,400 characters ≈ 2,400 tokens in the test; with the
+  2,048-token reply allowance it fits Groq's 8,000 tokens/minute). If the look-up fails, the question is sent
+  unchanged. Prefetch and model calls share one code path (`execute`), so pairing, events and the number check apply.
+- **Fewer tokens (v0.9.5):** snippets 450 characters (was 600), document passages 800 (was 1,100), shorter tool
+  descriptions and rules; the paired document search (`relevantOnly`) keeps only passages sharing at least two of the
+  question's topic words (`topicWords`/`passageAboutQuestion` in `tools/knowledge.ts`), otherwise nothing is added;
+  when an official/government/trusted result has the figure, at most 2 "other website" results are passed.
+- **Search cache (v0.9.5)** (`db/search-cache.ts`, migration 0005): Tavily results keyed by SHA-256 of the normalised
+  words, topic and site filters; 1 hour for time-sensitive questions, 6 hours otherwise; a saved result costs no
+  search and doesn't count against the daily cap; ranking runs fresh on every use. Expired rows are deleted daily.
+- **Dates in text (v0.9.5)** (`dateInText`): when Tavily gives no publish date, the first plausible date in the
+  snippet ("Nov 10, 2026", "2026-11-10", "October 2026"; never a future date) is shown as `date_in_text` and used for
+  ranking newer results higher.
+- **Organisation's own sites (v0.9.5)** (`attributedOrganisation`/`organisationDomains`): for "According to GitHub…"
+  when none of GitHub's pages came back, one extra search limited to github.com/.org/.blog/.co/.net (counts as a
+  search unless saved; a failure keeps the first results). Quoting document passages now start with "[This document
+  quotes X; it is not X's own publication]".
 - **Accuracy test** (`npm run accuracy`, `tests/accuracy/questions.json`): 18 real questions with expected answers
   and sources (conflict, documents-only, latest, official statistics, stable facts, calculation, live rate,
   no-answer). "Latest" expectations are read live from python.org, nodejs.org, kernel.org and Frankfurter at run time.

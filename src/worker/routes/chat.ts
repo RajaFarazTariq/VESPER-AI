@@ -26,6 +26,7 @@ import { buildContext, buildSystemPrompt, normalizeTimeZone } from "../llm/conte
 import { presentEvent, presentMessage, viewerOf } from "../lib/present";
 import { getProviders } from "../llm/registry";
 import { runAgent } from "../llm/agent";
+import { planPrefetch } from "../llm/prefetch";
 import { planRoute } from "../llm/router";
 import { enabledTools, webToolContext, type AgentTool } from "../tools/registry";
 import { requireUser } from "../middleware/auth";
@@ -257,6 +258,8 @@ export const chatRoutes = new Hono<AppEnv>()
           signal: abort.signal,
           store,
           health,
+          // Questions that clearly need a look-up are searched first, so the model answers in one request.
+          prefetch: planPrefetch(turn.userMessage.content, new Set(tools.map((t) => t.name))),
           events: {
             attempt: (t) => send({ type: "attempt", provider: t.provider, model: t.model }),
             fallback: (from, reason) => send({ type: "fallback", from, reason }),

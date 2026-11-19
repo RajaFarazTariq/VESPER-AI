@@ -5,6 +5,7 @@ import { addMemory, listMemories, MAX_MEMORIES } from "../src/worker/db/memories
 import type { ProviderHealth, ProviderStateStore } from "../src/worker/db/provider-state";
 import { createUser } from "../src/worker/db/users";
 import { runAgent } from "../src/worker/llm/agent";
+import { planPrefetch } from "../src/worker/llm/prefetch";
 import { buildSystemPrompt } from "../src/worker/llm/context";
 import { ToolCallAccumulator, toWireMessages } from "../src/worker/llm/providers/openai-compatible";
 import {
@@ -29,7 +30,7 @@ import {
   MAX_KNOWLEDGE_CHARS,
   type KnowledgeHit,
 } from "../src/worker/db/knowledge";
-import { quotedOrganisations, rerank } from "../src/worker/tools/knowledge";
+import { passageAboutQuestion, quotedOrganisations, rerank, topicWords } from "../src/worker/tools/knowledge";
 import { nearDuplicate, organisationNames, QUALITY_BOOST, rankResults, sourceQuality } from "../src/worker/tools/web";
 
 describe("knowledge base search", () => {
@@ -127,6 +128,16 @@ describe("knowledge base search", () => {
     expect(quoted[0].source).toBe("your document (quoting GitHub)");
     const own = JSON.parse((await tool.run({ query: "build times projects" }, ctx())).content).data.results;
     expect(own[0].source).toBe("your document");
+  });
+
+  it("knows when a passage is about a question: two shared topic words (or the only one), ignoring common words and years", () => {
+    const copilot = topicWords("According to GitHub, what share of Java code does Copilot write?");
+    expect([...copilot].sort()).toEqual(["code", "copil", "githu", "java"]);
+    expect(passageAboutQuestion("In February 2023, GitHub reported that for Java only, Copilot wrote 62%.", copilot)).toBe(true);
+    expect(passageAboutQuestion("Version 2 of the leave policy, effective 2023.", topicWords("latest stable Python version 2023"))).toBe(false);
+    expect(passageAboutQuestion("Python was created by Guido van Rossum.", topicWords("Python"))).toBe(true);
+    expect([...topicWords("what is the latest version?")]).toEqual([]); // only common words: nothing to match
+    expect(passageAboutQuestion("The thing and the other.", topicWords("what is the latest version?"))).toBe(false);
   });
 
   it("recognises which organisation a passage quotes, but not authors or sentence starts", () => {
@@ -425,7 +436,10 @@ const noopStore: ProviderStateStore = {
   recordUsage: async () => {},
 };
 
-async function agent(providers: ScriptedProvider[], options: { maxRounds?: number; userId?: string; messages?: ChatMessage[] } = {}) {
+async function agent(
+  providers: ScriptedProvider[],
+  options: { maxRounds?: number; userId?: string; messages?: ChatMessage[]; prefetch?: ToolCall | null } = {},
+) {
   const map = new Map<ProviderId, Provider>(providers.map((p) => [p.id, p]));
   const toolEvents: ToolEventDto[] = [];
   const text: string[] = [];
@@ -444,6 +458,7 @@ async function agent(providers: ScriptedProvider[], options: { maxRounds?: numbe
     health: new Map(),
     sleep: async () => {},
     maxRounds: options.maxRounds,
+    prefetch: options.prefetch ?? null,
     events: {
       attempt: () => {},
       fallback: () => {},
@@ -478,7 +493,23 @@ describe("runAgent", () => {
     expect(groq.requests[0]!.tools?.map((t) => t.function.name)).toEqual(ALL_TOOLS.map((t) => t.name));
   });
 
+  async function addDocument(folder: string, title: string, pages: string[]) {
+    const collection = await createCollection(env.DB, { name: folder, description: "" });
+    const chunks = chunkUnits(pages.map((text, i) => ({ location: `page ${i + 1}`, text })));
+    const doc = await createDocument(env.DB, {
+      collectionId: collection.id,
+      title,
+      kind: "pdf",
+      pages: pages.length,
+      expectedChunks: chunks.length,
+      totalChars: chunks.reduce((n, c) => n + c.text.length, 0),
+    });
+    await addChunks(env.DB, doc.id, chunks);
+    await completeDocument(env.DB, doc.id);
+  }
+
   it("also searches the knowledge base when the model goes to the web first, once per reply", async () => {
+    await addDocument("Research", "Survey.pdf", ["GitHub reported that Copilot now writes a large share of developers' code."]);
     const groq = new ScriptedProvider("groq", [
       { calls: [call("web_search", { query: "Copilot share of code" })] },
       { calls: [call("web_search", { query: "Copilot Java share" }, "c_web2")] },
@@ -493,7 +524,55 @@ describe("runAgent", () => {
     const toolMessages = groq.requests.at(-1)!.messages.filter((m) => m.role === "tool");
     expect(toolMessages.map((m) => m.tool_call_id)).toEqual(["c_web_search", "c_web2"]);
     expect(toolMessages[0]!.content).toContain("knowledge base (the administrator's documents) was also searched automatically");
+    expect(toolMessages[0]!.content).toContain("[This document quotes GitHub; it is not GitHub's own publication]");
     expect(toolMessages[1]!.content).not.toContain("knowledge base");
+  });
+
+  it("adds no document passages to a web look-up they aren't about (no tokens spent on them)", async () => {
+    // Shares the word "version" with the search, so it's found, but it isn't about Python: it must not be added.
+    await addDocument("Policies", "Handbook.pdf", ["Version 2 of the leave policy: employees get 24 days of paid leave per year."]);
+    const groq = new ScriptedProvider("groq", [{ calls: [call("web_search", { query: "latest stable Python version" })] }, { text: "Done." }]);
+    const { result } = await agent([groq]);
+    expect(result.tools.map((t) => [t.name, t.summary])).toEqual([
+      ["web_search", expect.any(String)],
+      ["search_knowledge", 'Nothing relevant for "latest stable Python version"'],
+    ]);
+    const toolMessage = groq.requests.at(-1)!.messages.find((m) => m.role === "tool")!;
+    expect(toolMessage.content).not.toContain("knowledge base");
+  });
+
+  it("runs the server's look-up before the first request, so the model answers in one call", async () => {
+    await addDocument("Research", "Paper.pdf", ["CodeCompose at Meta: the acceptance rate from developers was 22% over 4.5 million suggestions."]);
+    const groq = new ScriptedProvider("groq", [{ text: "The PDF says 22% (Paper.pdf, page 1)." }]);
+    const question = "What does my PDF say about the CodeCompose acceptance rate?";
+    const { result, toolEvents } = await agent([groq], {
+      messages: [
+        { role: "system", content: "sys" },
+        { role: "user", content: question },
+      ],
+      prefetch: planPrefetch(question, new Set(ALL_TOOLS.map((t) => t.name))),
+    });
+    expect(groq.requests).toHaveLength(1);
+    const sent = groq.requests[0]!.messages.at(-1)!;
+    expect(sent.role).toBe("user");
+    expect(sent.content).toMatch(/^What does my PDF say about the CodeCompose acceptance rate\?/);
+    expect(sent.content).toContain('The app already ran "Knowledge base"');
+    expect(sent.content).toContain("acceptance rate from developers was 22%");
+    expect(result.tools[0]).toMatchObject({ name: "search_knowledge", status: "done" });
+    expect(toolEvents[0]).toMatchObject({ name: "search_knowledge", status: "running" });
+    expect(result.tools.at(-1)).toMatchObject({ name: "answer_check", status: "done" }); // 22% is in the passage
+  });
+
+  it("leaves the question as it is when the server's look-up fails, and the model works as before", async () => {
+    const groq = new ScriptedProvider("groq", [{ text: "I can't search right now." }]);
+    const question = "What is the latest stable version of Python?";
+    const { result } = await agent([groq], {
+      messages: [{ role: "user", content: question }],
+      prefetch: planPrefetch(question, new Set(ALL_TOOLS.map((t) => t.name))),
+    });
+    expect(result.tools[0]).toMatchObject({ name: "web_search", status: "error" }); // no search key in tests
+    expect(groq.requests[0]!.messages.at(-1)!.content).toBe(question);
+    expect(result.status).toBe("complete");
   });
 
   it("checks the answer's numbers against whole document passages, the question and the chat, and lists only the unsupported one", async () => {

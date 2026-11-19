@@ -14,6 +14,8 @@ import { classifyHttpError, parseRetryAfter, ProviderError } from "../src/worker
 import * as entry from "../src/worker/index";
 import { citedSources, plainDocumentLinks, tidyCitations } from "../src/web/lib/format";
 import { classifyHttpError as classifyError, retryAfterFromMessage } from "../src/worker/llm/types";
+import { planPrefetch } from "../src/worker/llm/prefetch";
+import { attributedOrganisation, dateInText, organisationDomains } from "../src/worker/tools/web";
 
 describe("document citations are never links", () => {
   const docs = ["AI in Software Engineering.pdf"];
@@ -32,6 +34,64 @@ describe("document citations are never links", () => {
     const text =
       '([Finance Division](https://www.finance.gov.pk/survey/12_Population.pdf)) and [GitHub blog](https://github.blog/x "GitHub")';
     expect(plainDocumentLinks(text, docs)).toBe(text);
+  });
+});
+
+describe("search first, answer in one call", () => {
+  const all = new Set(["web_search", "search_knowledge", "calculator", "weather", "currency", "read_page", "wikipedia"]);
+  const plan = (q: string, tools = all) => {
+    const c = planPrefetch(q, tools);
+    return c ? { name: c.name, args: JSON.parse(c.arguments) } : null;
+  };
+
+  it("searches the web first for questions about things that change, or an organisation's own figures", () => {
+    expect(plan("What is the latest stable version of Python?")).toEqual({
+      name: "web_search",
+      args: { query: "What is the latest stable version of Python?", time_range: "year" },
+    });
+    expect(plan("According to GitHub, what share of code does Copilot write?")?.name).toBe("web_search");
+    expect(plan("What does GitHub say about Copilot's share of Java code?")?.name).toBe("web_search");
+    expect(plan("Latest news headlines today")?.args).toMatchObject({ topic: "news" });
+    expect(plan("What was Pakistan's population in the 2023 census?")?.name).toBe("web_search");
+  });
+
+  it("searches the documents first for questions about the user's own files", () => {
+    expect(plan("What does my PDF say about Kubernetes costs?")).toEqual({
+      name: "search_knowledge",
+      args: { query: "What does my PDF say about Kubernetes costs?" },
+    });
+    expect(plan("What does my PDF say?", new Set(["web_search"]))).toBeNull(); // no documents: the model decides
+  });
+
+  it("leaves everything else to the model: writing, sums, weather and currency (own tools), stable facts", () => {
+    expect(plan("Write an email to my team about the latest release")).toBeNull();
+    expect(plan("What is 2025 minus 2024?")).toBeNull();
+    expect(plan("What's the weather in Lahore today?")).toBeNull();
+    expect(plan("Convert 100 USD to PKR at today's rate")).toBeNull();
+    expect(plan("Explain how recursion works")).toBeNull();
+    expect(plan("What does it say about rates?")).toBeNull(); // "it" isn't an organisation
+    expect(plan("What is the latest stable version of Python?", new Set(["calculator"]))).toBeNull(); // web search off
+  });
+});
+
+describe("dates and organisations in web search", () => {
+  const now = new Date("2026-11-19T00:00:00Z");
+  it("finds the first plausible date written in a snippet", () => {
+    expect(dateInText("Released Nov 10, 2026 with fixes", now)).toBe("2026-11-10");
+    expect(dateInText("Published 3rd March 2025.", now)).toBe("2025-03-03");
+    expect(dateInText("Updated 2026-11-02 at noon", now)).toBe("2026-11-02");
+    expect(dateInText("The October 2026 report", now)).toBe("2026-10");
+    expect(dateInText("Planned for 12 March 2031", now)).toBeUndefined(); // future
+    expect(dateInText("Version 3.15.2 is out", now)).toBeUndefined();
+  });
+
+  it("recognises the organisation a question asks to be quoted on, and its likely own sites", () => {
+    expect(attributedOrganisation("According to GitHub, what share of code does Copilot write?")).toBe("GitHub");
+    expect(attributedOrganisation("according to the Stack Overflow 2025 Developer Survey, how many use AI?")).toBe("Stack Overflow");
+    expect(attributedOrganisation("What does Meta say about CodeCompose?")).toBe("Meta");
+    expect(attributedOrganisation("What does my PDF say about Java?")).toBeNull();
+    expect(attributedOrganisation("According to the PDF, what is it?")).toBeNull();
+    expect(organisationDomains("Stack Overflow")).toEqual(["stackoverflow.com", "stackoverflow.org", "stackoverflow.blog", "stackoverflow.co", "stackoverflow.net"]);
   });
 });
 

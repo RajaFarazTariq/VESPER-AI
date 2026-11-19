@@ -12,8 +12,9 @@
 import { z } from "zod";
 import { hitRateLimit } from "../db/rate-limit";
 import { checkPublicUrl, clip, FetchFailed, fetchJson, readLimited, wrapUntrusted, DEFAULT_TIMEOUT_MS } from "./net";
-import { define, ToolInputError, type AgentTool, type ToolContext } from "./types";
+import { define, ToolInputError, type AgentTool, type ToolContext, type WebToolContext } from "./types";
 import { checkNumbers } from "../llm/number-check";
+import { getCachedSearch, HOUR_MS, putCachedSearch, searchCacheKey } from "../db/search-cache";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const userAgent = (ctx: ToolContext) => ctx.web?.userAgent ?? "VESPER-assistant";
@@ -253,18 +254,145 @@ async function officialPagePassages(
   }
 }
 
-interface TavilyResponse {
-  results?: { title?: string; url?: string; content?: string; published_date?: string | null }[];
+interface TavilyResult {
+  title?: string;
+  url?: string;
+  content?: string;
+  published_date?: string | null;
 }
+interface TavilyResponse {
+  results?: TavilyResult[];
+}
+
+// ------------------------------------------------------------------ dates, time-sensitive questions, organisations
+
+/** Questions about things that change: newer results rank higher and saved results expire after an hour. */
+const TIME_SENSITIVE =
+  /\b(?:latest|newest|current(?:ly)?|today|tonight|yesterday|this (?:week|month|year)|right now|nowadays|recent(?:ly)?|news|headlines?|price|prices|score|scores|ranking|rankings|population|version|releases?|released|election|ceo|president|prime minister|20(?:2[4-9]|3\d))\b/i;
+export const isTimeSensitive = (text: string) => TIME_SENSITIVE.test(text);
+
+const MONTH = String.raw`(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?`;
+const monthNumber = (name: string) => ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(name.slice(0, 3).toLowerCase()) + 1;
+
+/**
+ * The first plausible date written in a snippet ("Nov 10, 2026", "10 November 2026", "2026-11-10", "November 2026")
+ * as "2026-11-10" or "2026-11". Used only when the search service gives no publish date, and labelled as a date in
+ * the text (it may be an event date rather than the publish date). Future dates and years before 2000 are ignored.
+ */
+export function dateInText(text: string, now: Date): string | undefined {
+  const found: { y: number; m: number; d?: number; at: number }[] = [];
+  for (const x of text.matchAll(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g)) found.push({ y: +x[1]!, m: +x[2]!, d: +x[3]!, at: x.index });
+  for (const x of text.matchAll(new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+${MONTH},?\s+(20\d{2})\b`, "gi"))) {
+    found.push({ y: +x[3]!, m: monthNumber(x[2]!), d: +x[1]!, at: x.index });
+  }
+  for (const x of text.matchAll(new RegExp(String.raw`\b${MONTH}\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2})\b`, "gi"))) {
+    found.push({ y: +x[3]!, m: monthNumber(x[1]!), d: +x[2]!, at: x.index });
+  }
+  for (const x of text.matchAll(new RegExp(String.raw`\b${MONTH}\s+(20\d{2})\b`, "gi"))) found.push({ y: +x[2]!, m: monthNumber(x[1]!), at: x.index });
+  found.sort((a, b) => a.at - b.at);
+  for (const c of found) {
+    if (c.m < 1 || c.m > 12 || (c.d !== undefined && (c.d < 1 || c.d > 31))) continue;
+    if (c.y < 2000 || Date.UTC(c.y, c.m - 1, c.d ?? 1) > now.getTime() + DAY_MS) continue;
+    const month = String(c.m).padStart(2, "0");
+    return c.d !== undefined ? `${c.y}-${month}-${String(c.d).padStart(2, "0")}` : `${c.y}-${month}`;
+  }
+  return undefined;
+}
+
+const NAME_WORDS = String.raw`[A-Z][\w&.'-]*(?:\s+[A-Z][\w&.'-]*){0,3}`;
+const ATTRIBUTION = [
+  new RegExp(String.raw`\b[Aa]ccording to (?:the\s+)?(${NAME_WORDS})`),
+  new RegExp(String.raw`\b(?:does|did|do)\s+(${NAME_WORDS})\s+(?:say|says|report|state|claim|publish|show)\b`),
+  new RegExp(String.raw`\b(${NAME_WORDS})'s\s+(?:own\s+)?(?:report|survey|data|figures?|statistics|blog|website|announcement|numbers)\b`),
+];
+const NOT_ORGANISATIONS = new Set(["PDF", "Document", "File", "The", "This", "My", "Your", "Our", "I", "You", "We", "It"]);
+
+/** The organisation a question asks to be quoted on ("According to GitHub, …" → "GitHub"), if any. */
+export function attributedOrganisation(question: string): string | null {
+  for (const pattern of ATTRIBUTION) {
+    const m = pattern.exec(question);
+    const name = m?.[1]?.trim().replace(/[.,;:]+$/, "");
+    if (name && !NOT_ORGANISATIONS.has(name.split(/\s+/)[0]!)) return name;
+  }
+  return null;
+}
+
+/** Likely own websites of an organisation, for a search limited to them ("GitHub" → github.com, github.blog…). */
+export function organisationDomains(name: string): string[] {
+  const key = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return key.length >= 3 ? ["com", "org", "blog", "co", "net"].map((tld) => `${key}.${tld}`) : [];
+}
+
+const SNIPPET_CHARS = 450;
+/** When an official result has the figure, at most this many "other website" results go to the model. */
+const MAX_OTHER_WITH_OFFICIAL = 2;
+const STRONG_SOURCES = new Set<SourceQuality>(["trusted", "government", "official"]);
+
+/**
+ * One Tavily search, through the cache: a saved result (same words, topic and site filters, not expired) costs
+ * nothing; otherwise it counts against the app's daily allowance and is saved for next time.
+ */
+async function tavilySearch(
+  web: WebToolContext,
+  ctx: ToolContext,
+  request: { query: string; topic: "general" | "news"; include?: string[]; maxResults: number },
+  ttlMs: number,
+): Promise<{ results: TavilyResult[]; cached: boolean }> {
+  const exclude = web.blockedSites ?? [];
+  const key = await searchCacheKey({ query: request.query, topic: request.topic, ...(request.include ? { include: request.include } : {}), exclude });
+  const saved = await getCachedSearch(ctx.db, key, ctx.now.getTime());
+  if (saved) {
+    try {
+      return { results: (JSON.parse(saved) as TavilyResponse).results ?? [], cached: true };
+    } catch {
+      // unreadable entry: search again
+    }
+  }
+  // One shared allowance for the whole app per UTC day (the free plan is shared by everyone).
+  const { allowed } = await hitRateLimit(ctx.db, "tool:web_search", web.webSearchDailyLimit, DAY_MS);
+  if (!allowed) {
+    throw new ToolInputError(
+      "Today's web search allowance for this app is used up. Answer from your own knowledge and tell the user it may be out of date.",
+    );
+  }
+  const response = await fetchJson<TavilyResponse>("https://api.tavily.com/search", "Web search", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${web.tavilyApiKey}`, "Content-Type": "application/json" },
+    // No time_range is sent: a hard date filter would also drop older official pages, so recency only changes the
+    // ranking (rankResults).
+    body: JSON.stringify({
+      query: request.query,
+      search_depth: "basic",
+      max_results: request.maxResults,
+      topic: request.topic,
+      include_answer: false,
+      ...(request.include ? { include_domains: request.include } : {}),
+      ...(exclude.length ? { exclude_domains: exclude } : {}),
+    }),
+    userAgent: web.userAgent,
+    timeoutMs: 15_000,
+    signal: ctx.signal,
+  });
+  const results = response.results ?? [];
+  await putCachedSearch(ctx.db, key, JSON.stringify({ results }), ttlMs, ctx.now.getTime());
+  return { results, cached: false };
+}
+
+const asFound = (r: TavilyResult, now: Date) => ({
+  title: clip(r.title || r.url!, 150),
+  url: r.url!,
+  ...(r.published_date ? { published: r.published_date } : {}),
+  snippet: clip(r.content ?? "", SNIPPET_CHARS),
+  ...(!r.published_date && dateInText(r.content ?? "", now) ? { dateInText: dateInText(r.content ?? "", now)! } : {}),
+});
 
 const webSearch = define({
   name: "web_search",
   label: "Web search",
   description:
-    "Search the web for current or specific information: news, recent events, prices, schedules, sports results, " +
-    "current office holders, product details, anything that may have changed recently or that you're unsure about. " +
-    "Returns up to 6 results, best sources first, each with title, URL, source type (official, university or other), " +
-    "publish date (when known) and a text snippet. Use read_page to read a result in full when the snippet isn't enough.",
+    "Search the web for current or specific information (news, prices, results, office holders, versions, anything " +
+    "that may have changed or that you're unsure about). Returns up to 6 results, best sources first, with source type, " +
+    "date and a snippet. Use read_page for the full page.",
   risk: "read",
   requiresMemory: false,
   isAvailable: ({ web }) => Boolean(web?.tavilyApiKey) && (web?.webSearchDailyLimit ?? 0) > 0,
@@ -289,65 +417,70 @@ const webSearch = define({
   async run({ query, topic, time_range }, ctx) {
     const web = ctx.web;
     if (!web?.tavilyApiKey || web.webSearchDailyLimit <= 0) throw new ToolInputError("Web search isn't available right now.");
-    // One shared allowance for the whole app per UTC day (the free plan is shared by everyone).
-    const { allowed } = await hitRateLimit(ctx.db, "tool:web_search", web.webSearchDailyLimit, DAY_MS);
-    if (!allowed) {
-      throw new ToolInputError(
-        "Today's web search allowance for this app is used up. Answer from your own knowledge and tell the user it may be out of date.",
-      );
-    }
-    const response = await fetchJson<TavilyResponse>("https://api.tavily.com/search", "Web search", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${web.tavilyApiKey}`, "Content-Type": "application/json" },
-      // 8 results cost the same single search as 5; the best 6 go to the model. No time_range is sent: a hard date
-      // filter would also drop older official pages, so recency only changes the ranking (rankResults).
-      body: JSON.stringify({
-        query,
-        search_depth: "basic",
-        max_results: SEARCH_RESULTS,
-        topic: topic ?? "general",
-        include_answer: false,
-        ...(web.blockedSites?.length ? { exclude_domains: web.blockedSites } : {}),
-      }),
-      userAgent: web.userAgent,
-      timeoutMs: 15_000,
-      signal: ctx.signal,
-    });
-    const found = (response.results ?? [])
-      .filter((r) => typeof r.url === "string" && /^https?:\/\//i.test(r.url))
-      .map((r) => ({
-        title: clip(r.title || r.url!, 150),
-        url: r.url!,
-        ...(r.published_date ? { published: r.published_date } : {}),
-        snippet: clip(r.content ?? "", 600),
-      }));
     const about = `${web.question ?? ""} ${query}`; // the question and the search words
-    const ranked = rankResults(found, {
-      trusted: web.trustedSites ?? [],
-      blocked: web.blockedSites ?? [],
-      about,
-      ...(time_range ? { prefer: time_range } : {}),
-      now: ctx.now,
-      keep: RESULTS_FOR_MODEL,
-    });
+    // Saved results expire sooner for things that change.
+    const ttl = isTimeSensitive(about) || topic === "news" || time_range === "day" || time_range === "week" ? HOUR_MS : 6 * HOUR_MS;
+    // 8 results cost the same single search as 5; the best 6 go to the model.
+    const first = await tavilySearch(web, ctx, { query, topic: topic ?? "general", maxResults: SEARCH_RESULTS }, ttl);
+    const valid = (r: TavilyResult) => typeof r.url === "string" && /^https?:\/\//i.test(r.url);
+    let found = first.results.filter(valid).map((r) => asFound(r, ctx.now));
+    const notes: string[] = first.cached ? ["saved results"] : [];
+
+    // The question asks for an organisation's own figure ("According to GitHub…") but none of its pages came back:
+    // one more search, limited to its likely own websites (counts as a search unless saved).
+    const organisation = attributedOrganisation(web.question ?? "");
+    const domains = organisation ? organisationDomains(organisation) : [];
+    if (domains.length && !found.some((r) => domains.includes(siteParts(r.url)?.domain ?? ""))) {
+      try {
+        const own = await tavilySearch(web, ctx, { query, topic: topic ?? "general", include: domains, maxResults: 5 }, ttl);
+        const extra = own.results.filter(valid).map((r) => asFound(r, ctx.now));
+        if (extra.length) notes.push(`also searched ${organisation}'s own sites`);
+        found = [...extra, ...found];
+      } catch (error) {
+        if (ctx.signal?.aborted) throw error;
+        // allowance used up or the service failed: the first results are still good to use
+      }
+    }
+
+    const ranked = rankResults(
+      found.map((r) => ({ ...r, ...(r.published || !r.dateInText ? {} : { published: r.dateInText }) })),
+      {
+        trusted: web.trustedSites ?? [],
+        blocked: web.blockedSites ?? [],
+        about,
+        ...(time_range ? { prefer: time_range } : isTimeSensitive(about) ? { prefer: "year" as const } : {}),
+        now: ctx.now,
+        keep: RESULTS_FOR_MODEL,
+      },
+    );
     const officialPage = await officialPagePassages(ranked, about, ctx);
-    const results = ranked.map((r) => ({
-      title: r.title,
-      url: r.url,
-      source: QUALITY_LABEL[r.quality],
-      published: r.published ?? "unknown",
-      snippet: r.snippet,
-      ...(officialPage && officialPage.url === r.url
-        ? {
-            official_page_passages: officialPage.passages,
-            official_page_note: "Read automatically: the most relevant passages of this official page (its snippet had no figure).",
-          }
-        : {}),
-    }));
+    if (officialPage) notes.push(`read the official page ${siteParts(officialPage.url)?.host ?? ""}`);
+    // An official result has the figure: keep only the best 1–2 "other website" results (fewer tokens, less temptation).
+    const strong = ranked.some((r) => STRONG_SOURCES.has(r.quality) && (hasFigure(r.snippet) || officialPage?.url === r.url));
+    let others = 0;
+    const kept = strong ? ranked.filter((r) => r.quality !== "other" || ++others <= MAX_OTHER_WITH_OFFICIAL) : ranked;
+    const original = new Map(found.map((r) => [r.url, r]));
+    const results = kept.map((r) => {
+      const raw = original.get(r.url);
+      return {
+        title: r.title,
+        url: r.url,
+        source: QUALITY_LABEL[r.quality],
+        published: raw?.published ?? "unknown",
+        ...(raw && !raw.published && raw.dateInText ? { date_in_text: raw.dateInText } : {}),
+        snippet: r.snippet,
+        ...(officialPage && officialPage.url === r.url
+          ? {
+              official_page_passages: officialPage.passages,
+              official_page_note: "Read automatically: the most relevant passages of this official page (its snippet had no figure).",
+            }
+          : {}),
+      };
+    });
     const heading = results.length ? `${results.length} results for "${clip(query, 80)}"` : `No results for "${clip(query, 80)}"`;
     return {
       content: wrapUntrusted("a web search", { query, retrieved: ctx.now.toISOString().slice(0, 10), results }),
-      summary: officialPage ? `${heading}; read the official page ${siteParts(officialPage.url)?.host ?? ""}` : heading,
+      summary: notes.length ? `${heading}; ${notes.join("; ")}` : heading,
       sources: results.map((r) => ({ title: r.title, url: r.url })),
     };
   },

@@ -4,8 +4,74 @@ Read this first when resuming work. Last updated: **2026-11-19**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-19)
 
-**State:** **v0.9.3 is live** (commit `f2a676b`, verified 2026-11-19: `/api/health` → `0.9.3`). **v0.9.4 is ready
-locally, not pushed yet** (if `/api/health` shows `0.9.4`, it's deployed).
+**State:** **v0.9.4 is live** (commit `4758a66`). **v0.9.5 is finished and handed to the owner to push**
+(2026-11-19; 201 tests, typecheck and build clean). If `/api/health` shows `0.9.5`, it's deployed. The deploy also
+applies migration `0005_search_cache.sql` (add-only).
+
+**v0.9.5 "fewer tokens" (built 2026-11-19, owner approved all 10 steps):**
+1. **Search first, one request** (`llm/prefetch.ts`): questions that clearly need a look-up ("latest", "current",
+   prices, versions, population, years 2024+, "According to X", "does X say") are searched before the first model
+   request, and "my PDF/document" questions search the knowledge base first; the results go under the question, so
+   the answer takes one request (~9,400 characters ≈ 2,400 tokens measured; fits Groq's 8,000 tokens/min with the
+   2,048-token reply allowance). Writing, sums, weather/currency and everything else are left to the model.
+2. **Trimmed:** snippets 450 chars (was 600), document passages 800 (was 1,100), shorter tool descriptions and rules.
+3. **"Private folders"** (owner accepted this reading): the paired document search keeps only passages sharing ≥ 2
+   of the question's topic words; otherwise nothing is added (no tokens on unrelated passages).
+4. **Search cache** (migration 0005, table `search_cache`): same search reused for 1 h ("latest" questions) or 6 h;
+   saved results cost no search and don't count against the daily cap; the daily cron deletes expired rows.
+5. **Dates in text:** when Tavily has no publish date, the first plausible date in the snippet is used
+   (`date_in_text`, never a future date).
+6. **Fewer weak results:** when an official/government/trusted result has the figure, at most 2 "other website"
+   results go to the model.
+7. **Warning inside quoting passages:** "[This document quotes X; it is not X's own publication]".
+8. **Organisation's own sites:** "According to GitHub…" with none of GitHub's pages in the results → one extra search
+   limited to github.com/.org/.blog/.co/.net (counts as a search unless saved).
+9. **Welcome screen** (owner's request, same release): the 4 suggestion cards were removed; the greeting, message box
+   and capability chips stay.
+
+**v0.9.5 accuracy (local, same PDF, fallback off, same scoring rules):**
+| Run | 0.9.4 | 0.9.5 |
+|---|---|---|
+| Gemini (`gemini-3.5-flash-lite`) | 87.3%, 13/18 fully right | **91.2%, 14/18** |
+| Groq (`openai/gpt-oss-120b`) | not measurable (search questions never finished) | **measurable now**: first 9 questions: Copilot 5/5, CodeCompose 3/3, Regression Oracle 3/3, PDF Java 2/3, HumanEval 4/4, no-answer 2/2, Python 2/2, Node.js 2/2 (better than Gemini), Linux kernel error (the model ran extra searches of its own, so it hit the per-minute limit again). Full Groq score: see below once the run ends. |
+- Copilot/Java is now right with Gemini too: 46% and **61% from GitHub's own blog** (found by the organisation-site
+  search), the PDF's 62% as a correctly attributed note.
+- Still imprecise with Gemini: Linux kernel ("7.3" though it cited kernel.org) and Node.js (called Node 22 the main
+  LTS line). Groq got Node.js right.
+
+**Next (agreed 2026-11-19): v0.9.6 = image attachments + voice, built together**, each with its own on/off switch
+in the Admin panel. Owner said OK to these steps and defaults; start after 0.9.5 is pushed:
+1. 📎 attach button + paste + drag-and-drop (up to 3 images per message), preview with ✕.
+2. Browser resizes to ~1280 px JPEG before sending.
+3. Server accepts images on chat messages; body limit raised for `/api/chat` only (256 KB → ~4 MB).
+4. Images go only to models that can see them: Gemini first, then a free image-capable OpenRouter model; Groq's main
+   model is skipped for image messages; questions without images unchanged.
+5. Chat history keeps a small thumbnail (~20 KB), not the full image: add-only migration (new column on `messages`).
+6. Limit: **10 images per user per day** (admin can change it).
+7. 🎤 mic button: record → Groq's free speech-to-text (Whisper; English and Urdu), Cloudflare Workers AI Whisper as
+   backup → the text appears in the box to check before sending.
+8. Allow the microphone for VESPER's own pages (`public/_headers` Permissions-Policy `microphone=(self)`).
+9. 🔊 "Read aloud" on answers with the device's built-in voices, plus an optional "read answers automatically"
+   setting.
+10. Limit: **15 minutes of speech per user per day** (admin can change it).
+11. Tests, one full check, version 0.9.6, docs, push commands, short live test (one image + one spoken question).
+- **No privacy note in the app** (owner's earlier decision stands). For the record: Gemini's free tier may use
+  uploaded images, and Groq processes the voice recordings.
+- Before building: confirm Groq's current free Whisper limits and the Workers AI Whisper input format.
+
+**v0.9.4 live re-test (2026-11-19):**
+- Copilot (Gemini Flash-Lite): still says "GitHub's official figures state … 62%" citing the PDF, and puts GitHub's
+  real 61% in a note as "third-party reporting". No GitHub page was among the 6 search results (Medium, statistics
+  sites, a magazine, arXiv), so the official-page step had nothing to open. The PDF citation is plain text now ✔️.
+- "What does my PDF say (Java)" (**Groq** answered: small request, no search, used the earlier messages): "The PDF
+  states … 62% (page 4)" ✔️.
+- Latest Python (Gemini Flash-Lite): "Python 3.15" citing Wikipedia although python.org was result #1 (its snippet
+  already had a figure, so the page wasn't opened); last time 3.15.2 from python.org. No needless "Note:" ✔️.
+- Conclusion: the smallest model ignores some rules (R1, R3b) now that the instructions are long; Groq does answer
+  when requests are small. **Proposed for v0.9.5** (server-enforced): when an official/government result contains the
+  figure, pass at most 1–2 "other website" results; put "[This document quotes X; it is not X's own publication]"
+  inside quoting passages' text; optional extra search limited to the organisation's own site when none of its pages
+  came back (costs 1 search). Awaiting the owner's decision.
 
 **v0.9.3 live re-test (2026-11-19, all answered by Gemini Flash-Lite after Groq's rate limit):** Python ✔️ 3.15.2
 from python.org; census ✔️ 241.49 million from PBS + Finance Division, Wikipedia's 247.5 million kept as a note;
@@ -113,15 +179,15 @@ Problems", 23 pages). Upload, folder, space meter, search, re-ranker and page ci
   always (`citedSources` in `web/lib/format.ts`). (C) 【 】 citations are shown as ( ) (`tidyCitations`).
 
 **First thing to do next session (in this order):**
-1. Health check. If still `0.9.3`, give him the push commands for 0.9.4 (section "How the owner wants each task run"
-   below). Ask whether he **replaced the GitHub token** (pasted into a chat on 2026-11-17, see section 8) and whether
-   he **deleted the keys from `.dev.vars`** after the accuracy runs.
-2. After the 0.9.4 deploy: re-ask on the live site (new chat, model Auto) the Copilot question; "According to my PDF,
-   what does GitHub say about Copilot's share of Java code?"; and "What is the latest stable version of Python?".
-   Expect 61% from GitHub's own page with the PDF's 62% as a note, the PDF cited as quoting GitHub, no link on the
-   PDF citation, and no needless "Note:" on the Python answer.
-3. Then start v0.9.5 (token reduction, above).
-3. Older re-test reference (knowledge-base questions; pages checked against the PDF):
+1. Health check → `0.9.5` (if still `0.9.4`, he hasn't pushed yet: give him the push commands). Ask whether he
+   **replaced the GitHub token** (pasted into a chat on 2026-11-17, expires 2026-12-09, see section 8), and check
+   that the **`.dev.vars` key lines are empty** (he re-added Groq/Gemini/Tavily keys for the 0.9.5 runs on 2026-11-19
+   and was to empty them after the Groq run).
+2. After the 0.9.5 deploy: re-ask on the live site (new chat, model Auto) the Copilot question, "What is the latest
+   stable version of Python?" and "What was Pakistan's population in the 2023 census?". Expect Groq (not Gemini) to
+   answer most of them now, 61% for Java from GitHub's own blog, 3.15.2 from python.org, 241.49 million.
+3. Then build **v0.9.6 (images + voice)**, steps above; send the numbered steps again for a quick OK.
+4. Older re-test reference (knowledge-base questions; pages checked against the PDF):
    | Question | Correct answer | Page |
    |---|---|---|
    | At Meta, what was the developer acceptance rate for the CodeCompose code completion tool? | 22%; 4.5M suggestions in 15 days; 92% positive | 6 |
@@ -171,8 +237,10 @@ free-tier terms for serving other users (not done yet; fine for a few testers).
 - **UI style:** professional, enterprise-grade (see the design rule in section 5).
 
 **Local machine notes:** `.dev.vars` exists in the project folder (git-ignored) with `DEV_LOGIN=true` /
-`ADMIN_GITHUB_USERS=admin`. On 2026-11-19 the owner put his **Groq, Gemini and Tavily keys** in it for the accuracy
-runs; remind him to empty those lines (or delete the file) when done. The accuracy runs used two temporary local
+`ADMIN_GITHUB_USERS=admin`. On 2026-11-19 the owner put his Groq, Gemini, OpenRouter and Tavily keys in it for the
+accuracy runs and emptied them the same day; he **re-added Groq, Gemini and Tavily keys for the 0.9.5 runs** (later
+on 2026-11-19), to be emptied once the Groq run ends: check next session. For each accuracy run he adds them back
+temporarily, then empties them. The accuracy runs used two temporary local
 servers (0.9.2 copy on :8788, 0.9.3 on :8787) with fresh databases in the session's temporary folder; they are
 stopped at the end. To re-run: start `npx wrangler dev --port 8787 --local --persist-to <empty folder>`, then
 `npm run accuracy -- --setup --provider groq --pdf <the PDF>` once, then one run per provider. Screenshot/browser-test
@@ -268,8 +336,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Knowledge base fixes (v0.9.1)**: thinking-only replies fall back; Tools menu refresh; 0-page meter; "documents first" prompt | ✅ live (v0.9.1, commit `f48b00e`, deployed 2026-11-19; 155 tests) |
 | **Search both + source rules (v0.9.2)**: paired knowledge search on web look-ups, 4 conflict rules, cited-only page chips, 【 】 → ( ) | ✅ live (v0.9.2, commit `a665288`, deployed 2026-11-19; 158 tests); live re-test: both searches run, cited-only chips work; conflict wording still weak with Flash-Lite |
 | **Trusted sources (v0.9.3)**: source labels + ranking, trusted/blocked sites, R1–R7, admin-only number check, accuracy test set | ✅ live (v0.9.3, commit `f2a676b`, deployed 2026-11-19; 175 tests); live re-test: Python and census right, Copilot Java figures reversed |
-| **Source fixes (v0.9.4)**: server reads official pages, "quoting X" labels + R3b, plain document citations, Note only for disagreements, Groq ≤10 s wait | ⏳ ready locally (184 tests), not pushed; accuracy in section 0 |
-| **Next: token reduction (v0.9.5)** so Groq can answer search questions | ⏳ |
+| **Source fixes (v0.9.4)**: server reads official pages, "quoting X" labels + R3b, plain document citations, Note only for disagreements, Groq ≤10 s wait | ✅ live (v0.9.4, commit `4758a66`, deployed 2026-11-19; 184 tests); Gemini accuracy 87.3% (section 0); live re-test pending |
+| **Fewer tokens (v0.9.5)**: search first / one request, trimmed passages, relevant-only document passages, search cache, dates in text, fewer weak results, quoting warning, organisation-site search; welcome cards removed | ⏳ handed to the owner to push (201 tests); Gemini 91.2%, Groq measurable (section 0) |
+| **Next: images + voice (v0.9.6)** | ⏳ agreed, not started |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -306,7 +375,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 184 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 201 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
@@ -364,8 +433,8 @@ Apply new migrations locally first: `npx wrangler d1 migrations apply DB --local
 - Delete the GitHub fine-grained token (VESPER-AI only) and its Windows Credential Manager entry when the project is done.
 - **Replace the current GitHub token** (it was pasted into a chat on 2026-11-17; it expires 2026-12-09): delete it on
   GitHub and create a new fine-grained token (VESPER-AI only, Contents: read and write).
-- Delete `.dev.vars` when local testing is done, so no keys stay on the PC (on 2026-11-19 it holds his Groq,
-  Gemini and Tavily keys for the accuracy runs).
+- Delete `.dev.vars` when local testing is done, so no keys stay on the PC (keys used for the 2026-11-19 accuracy
+  runs were emptied the same day).
 - **OpenRouter key "VESPER AI" expires 2027-02-17** (created 2026-11-19, 90 days): before then create a new one
   (credit limit at the minimum) and replace the Cloudflare secret `OPENROUTER_API_KEY`. Until it's replaced, VESPER
   just skips OpenRouter. If OpenRouter answers "No endpoints found matching your data policy", allow free models in
