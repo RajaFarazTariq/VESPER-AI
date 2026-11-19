@@ -5,6 +5,7 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import type { Pluggable } from "unified";
 import { normalizeMath } from "../../shared/math";
+import { remarkLineBreakTags } from "../lib/markdown";
 
 // KaTeX (~80 KB gzipped) is only downloaded when a reply actually contains math.
 const MathMarkdown = lazy(() => import("./MathMarkdown"));
@@ -85,7 +86,7 @@ export const highlightPlugin: Pluggable = [rehypeHighlight, { detect: false, ign
 
 function PlainMarkdown({ text }: { text: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[highlightPlugin]} components={components}>
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkLineBreakTags]} rehypePlugins={[highlightPlugin]} components={components}>
       {text}
     </ReactMarkdown>
   );

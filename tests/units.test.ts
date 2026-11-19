@@ -451,3 +451,22 @@ describe("v0.10.0: which memories go with a message", () => {
     expect(selectMemories(saved, "Please forget the thing about my cat").selected).toHaveLength(6);
   });
 });
+
+describe("v0.10.1: <br> in answers", () => {
+  it("turns only a <br> tag into a line break; other HTML stays text", async () => {
+    const { remarkLineBreakTags } = await import("../src/web/lib/markdown");
+    const cell = {
+      type: "tableCell",
+      children: [
+        { type: "text", value: "Thermal tops" },
+        { type: "html", value: "<br>" },
+        { type: "text", value: "Leggings" },
+        { type: "html", value: "<BR />" },
+        { type: "html", value: "<script>alert(1)</script>" },
+      ],
+    };
+    const tree = { type: "root", children: [{ type: "table", children: [{ type: "tableRow", children: [cell] }] }] };
+    remarkLineBreakTags()(tree);
+    expect(cell.children.map((c) => c.type)).toEqual(["text", "break", "text", "break", "html"]);
+  });
+});

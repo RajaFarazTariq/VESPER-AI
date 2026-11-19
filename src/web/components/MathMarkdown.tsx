@@ -2,6 +2,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { remarkLineBreakTags } from "../lib/markdown";
 import { components, highlightPlugin } from "./Markdown";
 
 /**
@@ -12,7 +13,7 @@ import { components, highlightPlugin } from "./Markdown";
 export default function MathMarkdown({ text }: { text: string }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
+      remarkPlugins={[remarkGfm, remarkLineBreakTags, [remarkMath, { singleDollarTextMath: false }]]}
       rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: "ignore", trust: false, output: "mathml" }], highlightPlugin]}
       components={components}
     >

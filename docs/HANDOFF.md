@@ -4,16 +4,35 @@ Read this first when resuming work. Last updated: **2026-11-19**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-20)
 
-**State:** **v0.10.0 (smarter memory + long chats keep context) is built and checked locally, not pushed yet** (to
-go on branch `release/v0.10.0-smarter-memory` + PR #4). Live is **v0.9.10** (Tools menu fix + local models hidden for
-users): `release/v0.9.10-menu-local-models` (commit `e0704f9`) → **PR #3** → merge commit `ba2b34a` → `/api/health`
-→ `0.9.10`. Earlier: v0.9.9 via PR #2 (merge `65ab220`), v0.9.8 via PR #1 (merge `7131695`). The owner added a
-**branch protection rule for `main`** (exact ticks not confirmed yet; see section 2), so **`main` can't be pushed to
-directly**: every change, docs included, goes on a branch + PR. The deploy will apply migration
-`0009_smarter_memory.sql` (add-only, revert-safe). The owner replaced the GitHub token (confirmed 2026-11-19).
-`.dev.vars` key lines were empty on 2026-11-19.
+**State:** **v0.10.1 (display fix: `<br>` in tables, no mid-word breaks) is built and checked locally, not pushed
+yet** (to go on branch `release/v0.10.1-table-display` + PR #5). Live is **v0.10.0** (smarter memory; merged via
+PR #4, `/api/health` → `0.10.0`, migration 0009 applied). Earlier: v0.9.10 via PR #3 (merge `ba2b34a`), v0.9.9 via
+PR #2, v0.9.8 via PR #1. The owner added a **branch protection rule for `main`** (exact ticks not confirmed yet; see
+section 2), so **`main` can't be pushed to directly**: every change, docs included, goes on a branch + PR. The owner
+replaced the GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-19.
+**Agreed order (owner, 2026-11-20): v0.10.1 display fix → v0.11.0 Answer verification** (plan below).
 **Pending owner checks:** v0.9.9 live research test, v0.9.10 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6),
 branch-protection ticks.
+
+**v0.10.0 live test (owner, 2026-11-20):** ✔️ phone number refused with the reason; memories "planning a trip to
+Skardu in Dec or Jan" (edited) and "favourite colour is Black" (saved in chat); "What should I pack for my trip?" →
+a winter packing list for Skardu Dec/Jan using the weather tool (−0.2 °C, lows −3.6 °C) and suggesting black gear
+(both memories sent: the list is short, ≤ 800 chars). Found: (1) the model's `<br>` in table cells showed as text;
+(2) table columns broke words mid-word ("Catego ry"); (3) admin number check flagged general-knowledge numbers
+("SPF 30", "230 V") → to be handled in v0.11.0.
+
+**v0.10.1 (built 2026-11-20, owner approved):** `remarkLineBreakTags` (`web/lib/markdown.ts`, used by both Markdown
+renderers) turns only `<br>`/`<br/>` into real line breaks (other raw HTML still shows as text); table cells use
+`overflow-wrap: break-word` + `min-width: 6.5rem` (`.md th/td` in `styles.css`) so words wrap at spaces and wide
+tables scroll inside their box. Checked in headless Edge (desktop + phone, no sideways page scroll). 225 tests.
+**Still to do: branch + PR + merge, then a quick look at any answer with a table.**
+
+**v0.11.0 Answer verification (approved 2026-11-20, build after v0.10.1 is merged):** (1) "Check this answer" button
+under answers that used sources (web, documents, research): 1 extra model request (Gemini/non-Groq first) that rates
+each key claim Supported / Contradicted / Not in the sources, with the source; (2) deep-research briefs checked
+automatically (admin switch, default on; +1 request per run); (3) smarter number check: only figures in sentences
+that state facts from sources; no flags for general-knowledge numbers like "SPF 30"; (4) admin settings: both switches
++ "answer checks per user per day" (default 10, admins unlimited); (5) tests, version, docs, branch + PR, live test.
 
 **v0.10.0 "smarter memory" (built 2026-11-20; owner approved the 6 steps):**
 1. **Only relevant memories** go with each message (`selectMemories` in `db/memories.ts`, word matching, no model
@@ -506,7 +525,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Deep research (v0.9.8)** + dark theme default: Research button → plan (1 model request) → 2–4 searches set aside/given back, last 10 kept for chat → ≤ 3 pages (no model calls) → brief written with no tools + app-made Sources list with exact dates; per-user daily runs (failed runs don't count); migration 0008 | ✅ live (v0.9.8, PR #1, merge commit `7131695`, deployed 2026-11-19; 212 tests); live research test ✔️ (2026-11-19, problems fixed in v0.9.9) |
 | **Research sources (v0.9.9)**: [S1] citations become links (renumbered in reading order); Sources list + chips show only cited sources; number check accepts simple calculations from stated, supported figures | ✅ live (v0.9.9, PR #2, merge commit `65ab220`, deployed 2026-11-20; 214 tests); live research test pending |
 | **Menu fix + local models for users (v0.9.10)**: Tools menu fits the screen (shared `useMenuLayout`); admin switch "Local models (Ollama) for users" (off) hides and refuses local models for users | ✅ live (v0.9.10, PR #3, merge commit `ba2b34a`, deployed 2026-11-20; 215 tests) |
-| **Smarter memory (v0.10.0)**: relevant + pinned memories per message; pin/edit/export; sensitive data refused; long chats summarised once into kept notes; migration 0009 | ✅ built and checked locally 2026-11-20; **branch + PR not done yet**; live test pending |
+| **Smarter memory (v0.10.0)**: relevant + pinned memories per message; pin/edit/export; sensitive data refused; long chats summarised once into kept notes; migration 0009 | ✅ live (v0.10.0, PR #4, deployed 2026-11-20; 224 tests); live test ✔️ (2026-11-20) |
 | **Next: answer verification, then GitHub integration** | ⏳ to propose after v0.10.0 is merged |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
@@ -545,7 +564,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 224 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 225 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
