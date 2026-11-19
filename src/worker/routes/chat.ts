@@ -478,7 +478,10 @@ export const chatRoutes = new Hono<AppEnv>()
     if (body.images?.length) throw badRequest("Images work with the cloud models only. Choose Auto or another cloud model.");
     if (body.research) throw badRequest("Deep research needs a cloud model. Choose Auto or another cloud model.");
     // Local models run on the user's own computer, so they don't count against the daily limit.
-    const { botInstructions } = await getAppSettings(c.env.DB, getConfig(c.env));
+    const { botInstructions, localModelsForUsers } = await getAppSettings(c.env.DB, getConfig(c.env));
+    if (user.role !== "admin" && !localModelsForUsers) {
+      throw new AppError(403, "local_models_off", "Local models aren't available. Choose Auto or another model.");
+    }
     const turn = await prepareTurn(c, user, body, selection, {
       tools: [],
       adminInstructions: botInstructions,

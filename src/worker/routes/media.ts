@@ -14,7 +14,7 @@ import { requireUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/security";
 
 /** What the chat screen may offer: the admin's switches, and whether a service that can do it is set up. */
-export function featuresFor(env: Env, settings: AppSettingsDto): FeaturesDto {
+export function featuresFor(env: Env, settings: AppSettingsDto, admin: boolean): FeaturesDto {
   const providers = getProviders(env);
   const canSeeImages = (["gemini", "openrouter"] as const).some((id) => {
     const p = providers.get(id);
@@ -38,6 +38,7 @@ export function featuresFor(env: Env, settings: AppSettingsDto): FeaturesDto {
         settings.webSearchDailyLimit > settings.researchSearchReserve,
       runsPerDay: settings.researchRunsPerDay,
     },
+    localModels: admin || settings.localModelsForUsers,
   };
 }
 
@@ -61,7 +62,9 @@ const minutes = (seconds: number) => Math.max(0, Math.floor(seconds / 60));
 export const mediaRoutes = new Hono<AppEnv>()
   .use(requireUser)
 
-  .get("/features", async (c) => c.json(featuresFor(c.env, await getAppSettings(c.env.DB, getConfig(c.env)))))
+  .get("/features", async (c) =>
+    c.json(featuresFor(c.env, await getAppSettings(c.env.DB, getConfig(c.env)), c.get("user").role === "admin")),
+  )
 
   /** Microphone: speech → text. The text goes into the message box; nothing is sent to the chat. */
   .post("/transcribe", voiceLimiter, async (c) => {

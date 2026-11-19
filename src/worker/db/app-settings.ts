@@ -54,6 +54,7 @@ export const appSettingsSchema = z.object({
   researchEnabled: z.boolean(),
   researchRunsPerDay: z.number().int().min(0).max(100),
   researchSearchReserve: z.number().int().min(0).max(1_000),
+  localModelsForUsers: z.boolean(),
 });
 
 type Key = keyof AppSettingsDto;
@@ -80,6 +81,8 @@ export function defaultAppSettings(config: AppConfig): AppSettingsDto {
     researchRunsPerDay: 3,
     // With the default 30 searches a day, research can use 20 (about 5–10 runs for the whole app).
     researchSearchReserve: 10,
+    // Local models need Ollama installed and configured on the user's own computer: hidden from users unless allowed.
+    localModelsForUsers: false,
   };
 }
 
@@ -144,9 +147,13 @@ export async function releaseResearchSearches(db: D1Database, hold: SearchHold, 
     .run();
 }
 
-/** Whether a regular user may use this model selection. Auto and local (browser-side) models are always allowed. */
+/**
+ * Whether a regular user may use this model selection. Auto is always allowed; local (browser-side Ollama) models
+ * only when the admin allows local models for users; cloud models only from the admin's list.
+ */
 export function userMayUseModel(settings: AppSettingsDto, selection: string): boolean {
-  return selection === "auto" || selection.startsWith("ollama:") || settings.userModels.some((m) => m.value === selection);
+  if (selection.startsWith("ollama:")) return settings.localModelsForUsers;
+  return selection === "auto" || settings.userModels.some((m) => m.value === selection);
 }
 
 /** Stored values override the defaults; anything missing or invalid falls back to the default. */

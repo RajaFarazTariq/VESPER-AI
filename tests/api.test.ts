@@ -775,3 +775,29 @@ describe("v0.9.7: answer feedback", () => {
     expect((await call("/api/admin/feedback?rating=all", { cookie: admin })).json.summary).toMatchObject({ up: 0, down: 0 });
   });
 });
+
+describe("v0.9.10: local models (Ollama) for users", () => {
+  it("are hidden from users unless the admin allows them; admins can always use them", async () => {
+    const admin = await login();
+    const tester = await login("tester");
+    const prepare = (cookie: string) =>
+      call("/api/chat/local/prepare", { method: "POST", body: JSON.stringify({ message: "hi", model: "ollama:llama3.2" }), cookie });
+
+    // Off by default for users: no Settings tab, the switch has no effect, and local chats are refused.
+    expect((await call("/api/media/features", { cookie: tester })).json.localModels).toBe(false);
+    expect((await call("/api/media/features", { cookie: admin })).json.localModels).toBe(true);
+    const saved = await call("/api/settings", { method: "PUT", body: JSON.stringify({ ollamaEnabled: true }), cookie: tester });
+    expect(saved.json.settings.ollamaEnabled).toBe(false);
+    expect((await call("/api/settings", { cookie: tester })).json.settings.ollamaEnabled).toBe(false);
+    const refused = await prepare(tester);
+    expect(refused.response.status).toBe(403);
+    expect(refused.json.error.code).toBe("local_models_off");
+    expect((await prepare(admin)).response.status).toBe(200);
+
+    // Allowed by the admin: the user's own choice applies again.
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ localModelsForUsers: true }), cookie: admin });
+    expect((await call("/api/media/features", { cookie: tester })).json.localModels).toBe(true);
+    expect((await call("/api/settings", { cookie: tester })).json.settings.ollamaEnabled).toBe(true);
+    expect((await prepare(tester)).response.status).toBe(200);
+  });
+});

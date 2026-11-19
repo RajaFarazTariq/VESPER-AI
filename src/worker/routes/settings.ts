@@ -10,12 +10,16 @@ import { requireUser } from "../middleware/auth";
 
 /**
  * The settings as this user may use them: a regular user's saved default model that the admin has
- * since removed from the list (admin panel → Models) becomes Auto.
+ * since removed from the list (admin panel → Models) becomes Auto, and local models (Ollama) are off
+ * unless the admin allows them for users.
  */
 export async function effectiveSettings(db: D1Database, env: AppEnv["Bindings"], user: SessionUser): Promise<UserSettings> {
-  if (user.role === "admin" || user.settings.defaultModel === "auto") return user.settings;
+  if (user.role === "admin" || (user.settings.defaultModel === "auto" && !user.settings.ollamaEnabled)) return user.settings;
   const app = await getAppSettings(db, getConfig(env));
-  return userMayUseModel(app, user.settings.defaultModel) ? user.settings : { ...user.settings, defaultModel: "auto" };
+  let settings = user.settings;
+  if (!userMayUseModel(app, settings.defaultModel)) settings = { ...settings, defaultModel: "auto" };
+  if (settings.ollamaEnabled && !app.localModelsForUsers) settings = { ...settings, ollamaEnabled: false };
+  return settings;
 }
 
 export const settingsRoutes = new Hono<AppEnv>()
@@ -34,5 +38,6 @@ export const settingsRoutes = new Hono<AppEnv>()
     }
     const settings = { ...current, ...patch };
     await updateSettings(c.env.DB, user.id, settings);
-    return c.json({ settings });
+    // What the user may actually use (e.g. local models stay off unless the admin allows them for users).
+    return c.json({ settings: await effectiveSettings(c.env.DB, c.env, { ...user, settings }) });
   });

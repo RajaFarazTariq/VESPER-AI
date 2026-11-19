@@ -1,6 +1,7 @@
 import { Check, ChevronDown, Cpu, RefreshCw, Search, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModelsResponse } from "../../shared/types";
+import { useMenuLayout } from "../hooks/useMenuLayout";
 import { formatRelative, selectionLabel } from "../lib/format";
 
 interface Props {
@@ -20,36 +21,13 @@ const formatContext = (n?: number) => (n ? (n >= 1000 ? `${Math.round(n / 1000)}
 export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError, onRefresh, refreshing, placement = "down" }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // Which side the menu opens on and how tall it may be, measured on open so it never runs off-screen.
-  const [layout, setLayout] = useState<{ up: boolean; maxHeight: number }>({ up: placement === "up", maxHeight: 480 });
   const root = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
+  // Which side the menu opens on and how tall it may be, measured on open so it never runs off-screen.
+  const layout = useMenuLayout(root, open, placement);
 
   useEffect(() => {
     if (!open) return;
-    const measure = () => {
-      const rect = root.current?.getBoundingClientRect();
-      if (!rect) return;
-      // The menu is cut off by the nearest scrolling/clipping container (e.g. the welcome screen's
-      // scroll area below the top bar), so measure the room inside that, not the whole window.
-      let clip: DOMRect | null = null;
-      for (let el = root.current?.parentElement; el; el = el.parentElement) {
-        if (/(auto|scroll|hidden)/.test(getComputedStyle(el).overflowY)) {
-          clip = el.getBoundingClientRect();
-          break;
-        }
-      }
-      const top = Math.max(0, clip?.top ?? 0);
-      const bottom = Math.min(window.innerHeight, clip?.bottom ?? window.innerHeight);
-      const above = rect.top - top - 12;
-      const below = bottom - rect.bottom - 12;
-      // Keep the requested side when it has room; otherwise use the side with more space.
-      const up = placement === "up" ? above >= 320 || above >= below : below < 320 && above > below;
-      const room = up ? above : below;
-      setLayout({ up, maxHeight: Math.max(160, Math.min(room, Math.round(window.innerHeight * 0.7))) });
-    };
-    measure();
-    window.addEventListener("resize", measure);
     const onDown = (e: MouseEvent) => {
       if (root.current && !root.current.contains(e.target as Node)) setOpen(false);
     };
@@ -60,9 +38,8 @@ export function ModelPicker({ value, onChange, models, ollamaModels, ollamaError
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", measure);
     };
-  }, [open, placement]);
+  }, [open]);
 
   const q = query.trim().toLowerCase();
   const groups = useMemo(() => {
