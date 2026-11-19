@@ -2,6 +2,7 @@ import { ArrowUp, Check, LoaderCircle, Mic, Paperclip, Settings2, Square, Telesc
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import type { SpeechLanguage, ToolInfoDto } from "../../shared/types";
 import { api, ApiError } from "../api/client";
+import { useMenuLayout } from "../hooks/useMenuLayout";
 import { imageFiles, type PendingImage } from "../lib/images";
 import { canRecord, RecordingError, VoiceRecorder } from "../lib/voice";
 import { TOOL_ICONS } from "./ToolActivity";
@@ -373,6 +374,9 @@ export function ResearchToggle({ on, onChange, runsPerDay }: { on: boolean; onCh
 export function ToolsButton({ tools, onManage }: { tools: ToolInfoDto[] | null; onManage: () => void }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  // Fits the space on screen (opens upward; downward when there's more room below) and scrolls inside when the list
+  // is long, so the top of the list is never cut off.
+  const layout = useMenuLayout(root, open, "up", 280);
 
   useEffect(() => {
     if (!open) return;
@@ -409,12 +413,15 @@ export function ToolsButton({ tools, onManage }: { tools: ToolInfoDto[] | null; 
         <div
           role="dialog"
           aria-label="Active tools"
-          className="absolute bottom-full left-0 z-30 mb-2 w-72 rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] p-2 shadow-[var(--shadow-lg)]"
+          className={`absolute left-0 z-30 flex w-72 max-w-[85vw] flex-col rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] p-2 shadow-[var(--shadow-lg)] ${
+            layout.up ? "bottom-full mb-2" : "top-full mt-2"
+          }`}
+          style={{ maxHeight: layout.maxHeight }}
         >
-          <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+          <div className="shrink-0 px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
             {tools.length > 0 ? "The assistant can use" : "Tools are switched off"}
           </div>
-          <ul className="space-y-0.5">
+          <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto thin-scroll">
             {tools.map((t) => {
               const Icon = TOOL_ICONS[t.name] ?? Wrench;
               return (
@@ -433,7 +440,7 @@ export function ToolsButton({ tools, onManage }: { tools: ToolInfoDto[] | null; 
               setOpen(false);
               onManage();
             }}
-            className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+            className="mt-1 flex w-full shrink-0 items-center gap-2 rounded-lg border-t border-[var(--border)] px-2 py-2 text-sm text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
           >
             <Settings2 size={15} /> Manage tools
           </button>

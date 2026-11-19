@@ -75,6 +75,8 @@ export interface AppSettingsDto {
   researchRunsPerDay: number;
   /** The last N of the day's web searches are kept for normal chat: research can't use them. */
   researchSearchReserve: number;
+  /** Let regular users run local models through Ollama on their own computer (admins always can). */
+  localModelsForUsers: boolean;
 }
 
 /** What the chat screen may offer right now (admin switches + whether a capable service is set up). */
@@ -87,6 +89,8 @@ export interface FeaturesDto {
   voice: { enabled: boolean; speechToText: boolean; minutesPerDay: number; maxRecordingSeconds: number };
   /** The Research button: switch on, web search set up, and the daily cap above the searches kept for chat. */
   research: { enabled: boolean; runsPerDay: number };
+  /** Settings → Local models (Ollama): always for admins; for users only when the admin allows it. */
+  localModels: boolean;
 }
 
 export interface TranscriptionDto {

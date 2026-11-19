@@ -103,7 +103,8 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
     ["tools", "Tools"],
     ["memory", "Memory"],
     ...(micAvailable || readAloudAvailable ? ([["voice", "Voice"]] as [Tab, string][]) : []),
-    ["local", "Local models"],
+    // Local models (Ollama on the user's own computer): admins always; users only when the admin allows it.
+    ...(features?.localModels ? ([["local", "Local models"]] as [Tab, string][]) : []),
     ["appearance", "Appearance"],
   ];
 

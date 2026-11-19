@@ -399,6 +399,12 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         label="Show the assistant's thinking notes to users"
         hint="Some models write out their reasoning before answering. Off: users see only the answer (you always see everything)."
       />
+      <Toggle
+        checked={draft.localModelsForUsers}
+        onChange={(localModelsForUsers) => setDraft({ ...draft, localModelsForUsers })}
+        label="Local models (Ollama) for users"
+        hint="Lets users run open models on their own computer with the Ollama app (Settings → Local models). Needs a technical setup on each computer, so it's off by default. You can always use it yourself."
+      />
       <Field label="Messages per user per day" hint="Applies to everyone without a personal limit (set those in Users). Admins are unlimited. Resets at 00:00 UTC.">
         <input
           value={limitText}
