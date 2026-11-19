@@ -7,6 +7,10 @@
  * and a rounder figure counts ("4.5 million" for 4,512,000, "46%" for 46.2%). Not checked: years, dates, times,
  * list numbers, page references, ordinals ("21st"), small whole numbers (under 10) and anything in code or links.
  * Version numbers like 3.15.2 must appear exactly.
+ *
+ * Simple calculations count too (v0.9.9): a figure that is the difference, sum, percentage change or share of two
+ * other figures **stated in the same answer and found in the sources** ("207.7 million to 241.5 million, up 33.8
+ * million, about 16%"). Only pairs the answer itself states are tried, so a made-up number can't pass by chance.
  */
 import type { ToolEventDto } from "../../shared/types";
 
@@ -90,6 +94,28 @@ function supported(claim: Figure, evidence: Figure[]): boolean {
   );
 }
 
+/** A computed value written the way the claim is written (its significant digits or decimals). */
+function writtenAs(claim: Figure, value: number): boolean {
+  if (!Number.isFinite(value)) return false;
+  return (
+    same(claim.value, value) ||
+    (claim.scaled && same(roundTo(value, claim.significant), claim.value)) ||
+    same(Number(value.toFixed(claim.decimals)), claim.value)
+  );
+}
+
+/** The claim is a sum, difference, percentage change or share (as a percentage) of two of the given figures. */
+function derived(claim: Figure, from: number[]): boolean {
+  for (const a of from) {
+    for (const b of from) {
+      if (a === b) continue;
+      if (writtenAs(claim, a - b) || writtenAs(claim, a + b)) return true;
+      if (b !== 0 && (writtenAs(claim, ((a - b) / b) * 100) || writtenAs(claim, (a / b) * 100))) return true;
+    }
+  }
+  return false;
+}
+
 export interface NumberCheck {
   /** How many numbers in the answer were checked. */
   checked: number;
@@ -108,11 +134,16 @@ export function checkNumbers(answer: string, evidenceText: string): NumberCheck 
   }
   text = text.replace(VERSION, " ");
   const known = figures(evidence);
+  const unsupported: Figure[] = [];
+  const stated: number[] = []; // figures in the answer that the sources support: the inputs for calculations
   for (const claim of figures(text)) {
     if (isYear(claim) || isSmallCount(claim)) continue;
     checked++;
-    if (!supported(claim, known)) missing.push(claim.text);
+    if (supported(claim, known)) {
+      if (!stated.some((v) => same(v, claim.value))) stated.push(claim.value);
+    } else unsupported.push(claim);
   }
+  for (const claim of unsupported) if (!derived(claim, stated.slice(0, 40))) missing.push(claim.text);
   return { checked, missing: [...new Set(missing)] };
 }
 

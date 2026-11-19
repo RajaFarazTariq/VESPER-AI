@@ -95,16 +95,41 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : /(?:ch
 const linkText = (text: string) => text.replace(/[[\]]/g, (c) => (c === "[" ? "(" : ")")).replace(/\s+/g, " ").trim();
 const linkUrl = (url: string) => url.replace(/\(/g, "%28").replace(/\)/g, "%29").replace(/\s/g, "%20");
 
-/** The Sources list the app adds under the brief (exact dates, never from the model). */
-export function sourcesSection(sources: ResearchSource[], documents: SourceDto[], notes: string[]): string {
-  const lines = ["", "", "## Sources"];
-  if (sources.length === 0) lines.push("No web sources were found.");
+/** [S2], (S1, S3), 【S4】: source ids the brief cites (not ones already written as a link). */
+const CITATION = /[[(【]\s*(S\d{1,2}(?:\s*(?:[,;]|and)\s*S\d{1,2})*)\s*[\])】](?!\()/g;
+
+/**
+ * Turns the brief's source ids into links and keeps only the sources it cites, renumbered S1, S2… in the order the
+ * reader meets them (so the text, the Sources list and the numbered chips under the answer all match). A source the
+ * model linked by its address counts as cited too. Ids that don't exist stay as plain text.
+ */
+export function linkCitations(text: string, sources: ResearchSource[]): { text: string; used: ResearchSource[] } {
+  const idsIn = (group: string) =>
+    [...group.matchAll(/S(\d{1,2})/g)].map((m) => Number(m[1]) - 1).filter((i) => i >= 0 && i < sources.length);
+  const order: number[] = [];
+  for (const m of text.matchAll(CITATION)) for (const i of idsIn(m[1]!)) if (!order.includes(i)) order.push(i);
   sources.forEach((s, i) => {
+    if (!order.includes(i) && text.includes(s.url)) order.push(i);
+  });
+  const label = new Map(order.map((original, k) => [original, k + 1]));
+  const linked = text.replace(CITATION, (whole, group: string) => {
+    const ids = [...new Set(idsIn(group))];
+    return ids.length ? `(${ids.map((i) => `[S${label.get(i)}](${linkUrl(sources[i]!.url)})`).join(", ")})` : whole;
+  });
+  return { text: linked, used: order.map((i) => sources[i]!) };
+}
+
+/** The Sources list the app adds under the brief (exact dates, never from the model): only the cited sources. */
+export function sourcesSection(used: ResearchSource[], documents: SourceDto[], notes: string[], uncited: number): string {
+  const lines = ["", "", "## Sources"];
+  if (used.length === 0 && !documents.length) lines.push("No web sources were found.");
+  used.forEach((s, i) => {
     const checked = s.checked === "unknown" ? "date unknown" : s.checked;
     lines.push(
-      `${i + 1}. [${linkText(s.title)}](${linkUrl(s.url)}) · ${s.kind} · published: ${s.published ?? "date unknown"} · checked: ${checked}${s.saved ? " (saved search)" : ""}`,
+      `- **S${i + 1}** · [${linkText(s.title)}](${linkUrl(s.url)}) · ${s.kind} · published: ${s.published ?? "date unknown"} · checked: ${checked}${s.saved ? " (saved search)" : ""}`,
     );
   });
+  if (uncited > 0) lines.push("", `${plural(uncited, "other source")} ${uncited === 1 ? "was" : "were"} checked but not cited.`);
   if (documents.length) {
     lines.push("", `Documents: ${documents.map((d) => (d.location ? `${d.title} (${d.location})` : d.title)).join("; ")}`);
   }
@@ -206,11 +231,11 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
       const searched = await researchSearch(web, ctx, query, about, { network: result.searchesUsed < input.searches });
       if (!searched.cached) result.searchesUsed++;
       for (const s of searched.sources) if (!found.some((f) => normal(f.url) === normal(s.url))) found.push(s);
+      // No sources on the step itself: only the ones the brief cites are shown under the answer (see the end).
       await emit({
         ...event,
         status: "done",
         summary: `${plural(searched.sources.length, "result")} for "${clip(query, 80)}"${searched.cached ? " (saved results)" : ""}`,
-        sources: searched.sources.map((s) => ({ title: s.title, url: s.url })),
       });
     } catch (error) {
       if (input.signal.aborted) return stopped();
@@ -256,7 +281,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
         const page = await researchPage(source.url, about, ctx);
         if (page.passages.length) source.passages = page.passages;
         source.published ??= page.published;
-        await emit({ ...event, status: "done", summary: `Read "${clip(page.title, 80)}"`, sources: [{ title: page.title, url: page.url }] });
+        await emit({ ...event, status: "done", summary: `Read "${clip(page.title, 80)}"` });
       } catch {
         unread++;
         await emit({ ...event, status: "error", summary: "Couldn't open the page" });
@@ -314,11 +339,20 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
     return result;
   }
 
-  // The app's own Sources list (exact dates), then the admin-only number check over everything the run collected.
-  const section = sourcesSection(sources, knowledge?.sources ?? [], notes);
-  result.text += section;
+  // Ids become links; only cited sources are listed (all of them if the brief cited none, so nothing is hidden).
+  const cited = linkCitations(write.text, sources);
+  const used = cited.used.length ? cited.used : sources;
+  if (!cited.used.length && sources.length) notes.push("The report didn't mark which source supports which point, so every source it was given is listed.");
+  const section = sourcesSection(used, knowledge?.sources ?? [], notes, sources.length - used.length);
   await input.events.text(section);
+  result.text = cited.text + section;
   result.status = "complete";
+  // The numbered chips under the answer: the listed sources, in the same order as S1, S2…
+  const planIndex = result.tools.findIndex((t) => t.id === planEvent.id);
+  if (planIndex >= 0) {
+    result.tools[planIndex] = { ...result.tools[planIndex]!, sources: used.map((s) => ({ title: s.title, url: s.url })) };
+    await input.events.tool(result.tools[planIndex]!);
+  }
   const check = numberCheckEvent(result.text, [material, knowledge?.evidence ?? "", knowledge?.content ?? "", input.question]);
   if (check) {
     result.tools.push(check);
