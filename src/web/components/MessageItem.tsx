@@ -1,7 +1,9 @@
-import { AlertTriangle, Brain, ChevronDown, Info, Pencil, RotateCcw, Square, Volume2 } from "lucide-react";
+import { AlertTriangle, Brain, ChevronDown, Info, Pencil, RotateCcw, Square, ThumbsDown, ThumbsUp, Volume2 } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
+import { FEEDBACK_REASONS, type FeedbackReason, type MessageFeedbackDto } from "../../shared/types";
+import { api, ApiError } from "../api/client";
 import type { UiMessage } from "../hooks/useChat";
-import { citedSources, plainDocumentLinks, providerLabel, tidyCitations } from "../lib/format";
+import { citedSources, FEEDBACK_LABELS, plainDocumentLinks, providerLabel, tidyCitations } from "../lib/format";
 import { canSpeak, speak, stopSpeaking, useSpeakingId } from "../lib/voice";
 import { CopyButton, Markdown } from "./Markdown";
 import { collectSources, SourceList, ToolActivity } from "./ToolActivity";
@@ -23,18 +25,14 @@ interface Props {
 const actionButton =
   "inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]";
 
-export const MessageItem = memo(function MessageItem({
-  message,
-  isLast,
-  canRetry,
-  onRetry,
-  isAdmin = false,
-  canEdit = false,
-  onEdit,
-  readAloud = false,
-}: Props) {
+export const MessageItem = memo(function MessageItem(props: Props) {
+  const { message, canEdit = false, onEdit } = props;
   if (message.role === "user") return <UserMessage message={message} canEdit={canEdit} onEdit={onEdit} />;
+  return <AssistantMessage {...props} />;
+});
 
+function AssistantMessage({ message, isLast, canRetry, onRetry, isAdmin = false, readAloud = false }: Props) {
+  const feedback = useFeedback(message);
   const working = message.streaming && !message.content;
   const runningTool = message.tools?.some((t) => t.status === "running");
   const failed = message.status === "error" || message.status === "partial";
@@ -100,6 +98,30 @@ export const MessageItem = memo(function MessageItem({
           >
             {message.content ? <CopyButton text={content} /> : null}
             {readAloud && message.content && canSpeak() ? <ReadAloudButton id={message.id} text={content} /> : null}
+            {feedback.available ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => feedback.rate(1)}
+                  className={`${actionButton} ${feedback.value?.rating === 1 ? "text-[var(--accent)]" : ""}`}
+                  title={feedback.value?.rating === 1 ? "Take back “Good answer”" : "Good answer"}
+                  aria-label="Good answer"
+                  aria-pressed={feedback.value?.rating === 1}
+                >
+                  <ThumbsUp size={14} fill={feedback.value?.rating === 1 ? "currentColor" : "none"} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => feedback.rate(-1)}
+                  className={`${actionButton} ${feedback.value?.rating === -1 ? "text-[var(--accent)]" : ""}`}
+                  title={feedback.value?.rating === -1 ? "Take back “Bad answer”" : "Bad answer"}
+                  aria-label="Bad answer"
+                  aria-pressed={feedback.value?.rating === -1}
+                >
+                  <ThumbsDown size={14} fill={feedback.value?.rating === -1 ? "currentColor" : "none"} />
+                </button>
+              </>
+            ) : null}
             {canRetry && isLast && !failed ? (
               <button type="button" onClick={onRetry} className={actionButton} title="Regenerate">
                 <RotateCcw size={14} />
@@ -111,12 +133,132 @@ export const MessageItem = memo(function MessageItem({
                 {providerLabel(message.provider)} · {message.model}
               </span>
             ) : null}
+            {feedback.notice ? (
+              <span className="ml-1 text-xs text-[var(--text-soft)]" role="status">
+                {feedback.notice}
+              </span>
+            ) : null}
           </div>
         ) : null}
+
+        {feedback.panelOpen ? <FeedbackPanel onSend={feedback.sendDetails} onSkip={feedback.closePanel} /> : null}
       </div>
     </div>
   );
-});
+}
+
+/** 👍/👎 for one answer: saved at once; a 👎 then asks (optionally) what was wrong. Clicking the same thumb again takes it back. */
+function useFeedback(message: UiMessage) {
+  const [value, setValue] = useState<MessageFeedbackDto | null>(message.feedback ?? null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => setValue(message.feedback ?? null), [message.feedback]);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  const flash = (text: string) => {
+    setNotice(text);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setNotice(null), 3500);
+  };
+
+  const save = async (body: { rating: 1 | -1 | 0; reason?: FeedbackReason | null; note?: string | null }, optimistic: MessageFeedbackDto | null) => {
+    const previous = value;
+    setValue(optimistic);
+    try {
+      const { feedback } = await api.feedback(message.id, body);
+      setValue(feedback);
+      return true;
+    } catch (e) {
+      setValue(previous);
+      flash(e instanceof ApiError && e.status === 429 ? "Too many clicks; try again in a minute." : "Couldn't save your feedback.");
+      return false;
+    }
+  };
+
+  return {
+    // Only finished answers saved on the server (not the temporary ones still streaming).
+    available: !message.streaming && Boolean(message.content) && !message.id.startsWith("local-"),
+    value,
+    panelOpen,
+    notice,
+    rate: async (rating: 1 | -1) => {
+      if (value?.rating === rating) {
+        setPanelOpen(false);
+        await save({ rating: 0 }, null);
+        return;
+      }
+      setPanelOpen(rating === -1);
+      const ok = await save({ rating }, { rating, reason: null, note: null });
+      if (!ok) setPanelOpen(false);
+      else if (rating === 1) flash("Thanks for your feedback.");
+    },
+    sendDetails: async (reason: FeedbackReason | null, note: string) => {
+      setPanelOpen(false);
+      if (await save({ rating: -1, reason, note: note.trim() || null }, { rating: -1, reason, note: note.trim() || null })) {
+        flash("Thanks for your feedback.");
+      }
+    },
+    closePanel: () => {
+      setPanelOpen(false);
+      flash("Thanks for your feedback.");
+    },
+  };
+}
+
+function FeedbackPanel({ onSend, onSkip }: { onSend: (reason: FeedbackReason | null, note: string) => void; onSkip: () => void }) {
+  const [reason, setReason] = useState<FeedbackReason | null>(null);
+  const [note, setNote] = useState("");
+  return (
+    <div className="rise-in rounded-xl border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-sm" role="group" aria-label="What was wrong with this answer?">
+      <div className="mb-2 font-medium">
+        What was wrong? <span className="font-normal text-[var(--text-soft)]">(optional)</span>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {FEEDBACK_REASONS.map((r) => (
+          <button
+            key={r}
+            type="button"
+            onClick={() => setReason(reason === r ? null : r)}
+            aria-pressed={reason === r}
+            className={`rounded-full border px-3 py-1 text-xs ${
+              reason === r
+                ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+                : "border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-soft)] hover:text-[var(--text)]"
+            }`}
+          >
+            {FEEDBACK_LABELS[r]}
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        maxLength={1000}
+        rows={2}
+        placeholder="Add details, e.g. the correct figure or source (optional)"
+        aria-label="Feedback details"
+        className="mt-2 w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-sm"
+      />
+      <div className="mt-2 flex justify-end gap-2">
+        <button type="button" onClick={onSkip} className="rounded-lg px-3 py-1.5 text-xs text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]">
+          Skip
+        </button>
+        <button
+          type="button"
+          onClick={() => onSend(reason, note)}
+          disabled={!reason && !note.trim()}
+          className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-[var(--accent-text)] hover:bg-[var(--accent-strong)] disabled:opacity-40"
+        >
+          Send
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function UserMessage({ message, canEdit, onEdit }: { message: UiMessage; canEdit: boolean; onEdit?: (text: string) => Promise<boolean> }) {
   const [editing, setEditing] = useState(false);

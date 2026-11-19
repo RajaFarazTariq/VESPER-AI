@@ -233,7 +233,41 @@ export interface MessageDto {
   tools: ToolEventDto[] | null;
   /** Small previews (JPEG data URLs) of images attached to a user message. The full images are not kept. */
   images?: string[] | null;
+  /** The user's 👍/👎 on this answer (assistant messages only). */
+  feedback?: MessageFeedbackDto | null;
   createdAt: number;
+}
+
+// ------------------------------------------------------------------ Answer feedback (👍/👎, v0.9.7)
+
+export type FeedbackReason = "wrong" | "outdated" | "unanswered" | "other";
+export const FEEDBACK_REASONS: readonly FeedbackReason[] = ["wrong", "outdated", "unanswered", "other"];
+
+export interface MessageFeedbackDto {
+  /** 1 = 👍, -1 = 👎 */
+  rating: 1 | -1;
+  reason: FeedbackReason | null;
+  note: string | null;
+}
+
+/** One rating as the admin sees it (Admin panel → Feedback), with its own copy of the question and answer. */
+export interface FeedbackItemDto extends MessageFeedbackDto {
+  messageId: string;
+  user: { login: string; name: string | null };
+  question: string;
+  answer: string;
+  provider: string | null;
+  model: string | null;
+  sources: SourceDto[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface FeedbackSummaryDto {
+  up: number;
+  down: number;
+  /** Ratings per model (most rated first). */
+  byModel: { provider: string | null; model: string | null; up: number; down: number }[];
 }
 
 /** An image attached to a chat message: the resized image for the model and a small preview to keep. */

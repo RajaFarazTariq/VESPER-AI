@@ -7,6 +7,9 @@ import type {
   ChatStreamEvent,
   ConversationDto,
   FeaturesDto,
+  FeedbackItemDto,
+  FeedbackReason,
+  FeedbackSummaryDto,
   KnowledgeChunkInput,
   KnowledgeCollectionDto,
   KnowledgeDocKind,
@@ -15,6 +18,7 @@ import type {
   LocalPrepareResponse,
   MemoryDto,
   MessageDto,
+  MessageFeedbackDto,
   ModelsResponse,
   PublicConfigDto,
   SpeechLanguage,
@@ -108,6 +112,12 @@ export const api = {
 
   tools: () => request<{ tools: ToolInfoDto[] }>("/api/tools"),
   features: () => request<FeaturesDto>("/api/media/features"),
+  /** rating 0 takes a 👍/👎 back. */
+  feedback: (messageId: string, body: { rating: 1 | -1 | 0; reason?: FeedbackReason | null; note?: string | null }) =>
+    request<{ feedback: MessageFeedbackDto | null }>(`/api/feedback/${encodeURIComponent(messageId)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   transcribe: (body: { audio: string; mimeType: string; seconds: number; language?: SpeechLanguage }) =>
     request<TranscriptionDto>("/api/media/transcribe", { method: "POST", body: JSON.stringify(body) }),
   listMemories: () => request<{ memories: MemoryDto[] }>("/api/memories"),
@@ -126,6 +136,10 @@ export const api = {
       ),
     updateSettings: (patch: Partial<AppSettingsDto>) =>
       request<{ settings: AppSettingsDto }>("/api/admin/settings", { method: "PUT", body: JSON.stringify(patch) }),
+    feedback: (rating: "up" | "down" | "all", before?: number) =>
+      request<{ items: FeedbackItemDto[]; hasMore: boolean; summary: FeedbackSummaryDto }>(
+        `/api/admin/feedback?rating=${rating}${before ? `&before=${before}` : ""}`,
+      ),
 
     knowledge: {
       list: () => request<{ collections: KnowledgeCollectionDto[]; usage: KnowledgeUsageDto }>("/api/admin/knowledge"),

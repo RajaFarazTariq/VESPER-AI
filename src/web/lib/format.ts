@@ -1,4 +1,12 @@
-import type { ConversationDto, ModelsResponse, ProviderId, SourceDto } from "../../shared/types";
+import type { ConversationDto, FeedbackReason, ModelsResponse, ProviderId, SourceDto } from "../../shared/types";
+
+/** What a 👎 can say was wrong (same words for users and the admin). */
+export const FEEDBACK_LABELS: Record<FeedbackReason, string> = {
+  wrong: "Wrong facts",
+  outdated: "Out of date",
+  unanswered: "Didn't answer the question",
+  other: "Other",
+};
 
 /** Some models (e.g. gpt-oss) cite in 【 】 brackets: show those as normal round brackets. */
 export const tidyCitations = (text: string) => text.replace(/【([^【】\n]{1,300})】/g, "($1)");

@@ -247,6 +247,19 @@ Each has an admin switch and a per-user daily limit (admin panel → App setting
   "read answers aloud automatically". The admin's Voice switch hides both.
 - `public/_headers`: `Permissions-Policy: microphone=(self)` (camera and location stay blocked).
 
+## 5f. Answer feedback (v0.9.7)
+
+- 👍/👎 under each finished answer (`MessageItem.tsx`, `useFeedback`): saved at once with `PUT /api/feedback/:id`
+  (`rating` 1, -1, or 0 to take it back); 👎 opens an optional reason (wrong / outdated / unanswered / other) + note.
+  Only answers in the user's own chats can be rated (checked through `conversations.user_id`).
+- `message_feedback` (`db/feedback.ts`): one row per answer, keyed by the message id but **without** a foreign key to
+  `messages`, so Regenerate (which deletes the old answer) doesn't delete the 👎. Each row copies the question (the
+  last user message before the answer, with an "[N images attached]" note), the answer (≤ 20,000 characters),
+  provider, model and the answer's sources. `conversation_id` and `user_id` cascade, so deleting a chat or a user
+  removes its feedback.
+- Chats load each answer's current rating (`listMessages` LEFT JOINs `message_feedback`).
+- Admin → Feedback (`GET /api/admin/feedback`): Good/Bad totals and per-model counts, newest first, 30 per page.
+
 ## 6. Security model
 
 | Threat | Control |
@@ -285,7 +298,8 @@ tools are blocked once untrusted content is in context.
 - `tests/api.test.ts`: full HTTP flows inside workerd with a real local D1: auth, OAuth callback, CSRF, streaming + fallback + persistence, regenerate, validation, rate limiting, isolation between
   users, settings, model lists, local-model endpoints; images (Gemini only, image parts, preview stored and re-sent
   on regenerate, note in later history, switch/limit/fake-image checks) and speech to text (Groq request, counting,
-  limit, switch, no service).
+  limit, switch, no service); answer feedback (rate/change/undo, own answers only, kept through regenerate,
+  admin-only list and counts, removed with the chat).
 - `tests/tools.test.ts` also covers source quality (country government/university domains, exact-name official sites,
   trusted/blocked, ranking by date without dropping official pages, near-duplicates), the paired knowledge search,
   the number check inside the agent loop and the R1–R7 prompt rules; `tests/units.test.ts` covers number
@@ -328,4 +342,6 @@ tools are blocked once untrusted content is in context.
 | 6c | **Gmail** (draft-first, send with approval), **Google Calendar** | Google APIs (free) via OAuth |
 | 6d | **Telegram** bot (webhook into the same Worker) | Telegram Bot API |
 | ✅ 0.9.6 | Images (attach/paste/drop, Gemini → OpenRouter vision) and voice (Groq Whisper → Workers AI Whisper, browser read-aloud), admin switches + per-user daily limits | Gemini/OpenRouter free tiers, Groq free STT, Web Speech API |
+| ✅ 0.9.7 | Answer feedback: 👍/👎 with reasons, admin Feedback tab with per-model counts | D1 |
+| next | Deep-research mode, smarter memory | Free quotas (search-capped) |
 | 8 | Hardening: rolling summaries, memory, export/import, more tests | — |

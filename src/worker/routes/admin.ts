@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app-env";
 import { appSettingsSchema, getAppSettings, updateAppSettings, webSearchesToday } from "../db/app-settings";
+import { feedbackSummary, listFeedback } from "../db/feedback";
 import { hasSearchableKnowledge } from "../db/knowledge";
 import { deleteUserSessions } from "../db/sessions";
 import { deleteUser, getUserById, getUserForAdmin, listUsersForAdmin, roleOf, updateUser } from "../db/users";
@@ -76,4 +77,17 @@ export const adminRoutes = new Hono<AppEnv>()
   .put("/settings", async (c) => {
     const patch = await parseJson(c, appSettingsSchema.partial());
     return c.json({ settings: await updateAppSettings(c.env.DB, getConfig(c.env), patch) });
+  })
+
+  /** 👍/👎 on answers, newest first (?rating=up|down, ?before=<updatedAt> for the next page), plus counts per model. */
+  .get("/feedback", async (c) => {
+    const ratingParam = c.req.query("rating");
+    const rating = ratingParam === "up" ? 1 : ratingParam === "down" ? -1 : undefined;
+    const before = Number(c.req.query("before"));
+    const limit = 30;
+    const [items, summary] = await Promise.all([
+      listFeedback(c.env.DB, { ...(rating ? { rating } : {}), limit: limit + 1, ...(before > 0 ? { before } : {}) }),
+      feedbackSummary(c.env.DB),
+    ]);
+    return c.json({ items: items.slice(0, limit), hasMore: items.length > limit, summary });
   });

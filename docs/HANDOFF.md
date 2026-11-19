@@ -4,10 +4,28 @@ Read this first when resuming work. Last updated: **2026-11-19**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-19)
 
-**State:** **v0.9.6 (images + voice) is built and checked locally, not pushed yet.** Live is still **v0.9.5**
-(commit `208b3a8`). Waiting for the owner to push: the earlier docs commit `1f853c1` plus the v0.9.6 changes (one
-commit). The deploy will apply migration `0006_images_voice.sql` (add-only). The owner **replaced the GitHub token**
-(confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-19.
+**State:** **v0.9.7 (👍/👎 answer feedback) is built and checked locally, not pushed yet.** Live is **v0.9.6**
+(images + voice). The deploy will apply migration `0007_message_feedback.sql` (add-only). The owner **replaced the
+GitHub token** (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-19.
+
+**v0.9.7 "answer feedback" (built 2026-11-19, owner approved the 6 steps):**
+1. 👍/👎 under each answer (after Copy / Read aloud), saved at once; clicking the same thumb again takes it back.
+2. 👎 opens a small optional box: Wrong facts / Out of date / Didn't answer the question / Other + a note (≤ 1,000
+   characters); Skip keeps the 👎 without details.
+3. Table `message_feedback` (one row per answer). Each row keeps its **own copy** of the question, answer, provider,
+   model and sources, so a 👎 survives Regenerate (which deletes the old answer). Rows go when their chat or user is
+   deleted. `PUT /api/feedback/:messageId` (`rating` 1 / -1 / 0), own answers only, 60/min per user.
+4. Admin panel → **Feedback** tab: Good/Bad counts per model, filter Bad / Good / All (Bad first), each entry with
+   user, date, model, reason, note, question, "Show answer" + its sources, "Load more" (30 at a time).
+   `GET /api/admin/feedback?rating=down|up|all&before=`.
+5. Users only rate their own answers; only the admin sees the list.
+6. 207 tests (1 new + the automatic migration check), typecheck, build. **Still to do: push, then the short live test** (rate an answer 👎 with a
+   reason, open Admin → Feedback, check it's listed; press 👍 on another).
+- Live status of v0.9.6 (owner, 2026-11-19): image question ✔️, Read aloud ✔️, 🎤 voice input not tested yet.
+
+**v0.9.6 live test (owner, 2026-11-19):** image question ✔️ (the "AUTOMATION" wolf wallpaper read and described
+correctly, preview shown in the chat); 🔊 Read aloud ✔️. 🎤 voice input: **not tested yet** (owner will test later).
+Docs-only change after the push: this live-test note (push with the next release).
 
 **v0.9.6 "images + voice" (built 2026-11-19, owner approved the 11 steps and defaults):**
 1. 📎 attach button + paste + drag-and-drop, up to 3 images per message, previews with ✕ (`Composer.tsx`).
@@ -193,11 +211,12 @@ Problems", 23 pages). Upload, folder, space meter, search, re-ranker and page ci
   always (`citedSources` in `web/lib/format.ts`). (C) 【 】 citations are shown as ( ) (`tidyCitations`).
 
 **First thing to do next session (in this order):**
-1. Health check. If it still says `0.9.5`, the owner hasn't pushed v0.9.6 yet: give him the push commands again
-   (section 2; one `git add`/`commit`/`push` covers `1f853c1` and the v0.9.6 changes). After the push, watch
-   `/api/health` until it says `0.9.6`. Check the **`.dev.vars` key lines are still empty**.
-2. Short live test of v0.9.6 (see "Live test for v0.9.6" above).
-3. Owner said he'll do these later: re-ask on the live site (new chat, model Auto) the Copilot question, "What is the
+1. Health check. `0.9.6` means v0.9.7 isn't pushed yet: give him the push commands (section 2). After the push,
+   watch `/api/health` until it says `0.9.7`, then the short live test above. Check the **`.dev.vars` key lines are
+   still empty**.
+2. Ask whether he tested 🎤 voice input on the live site (the image question and Read aloud already passed).
+3. Next per the roadmap: deep-research mode, then smarter memory (see item 4 below).
+4. Owner said he'll do these later: re-ask on the live site (new chat, model Auto) the Copilot question, "What is the
    latest stable version of Python?" and "What was Pakistan's population in the 2023 census?". Expect Groq (not
    Gemini) to answer most of them, 61% for Java from GitHub's own blog, 3.15.2 from python.org, 241.49 million.
    (Don't re-test on the same day as a local Groq accuracy run: they share Groq's daily allowance.)
@@ -354,7 +373,8 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Trusted sources (v0.9.3)**: source labels + ranking, trusted/blocked sites, R1–R7, admin-only number check, accuracy test set | ✅ live (v0.9.3, commit `f2a676b`, deployed 2026-11-19; 175 tests); live re-test: Python and census right, Copilot Java figures reversed |
 | **Source fixes (v0.9.4)**: server reads official pages, "quoting X" labels + R3b, plain document citations, Note only for disagreements, Groq ≤10 s wait | ✅ live (v0.9.4, commit `4758a66`, deployed 2026-11-19; 184 tests); Gemini accuracy 87.3% (section 0); live re-test pending |
 | **Fewer tokens (v0.9.5)**: search first / one request, trimmed passages, relevant-only document passages, search cache, dates in text, fewer weak results, quoting warning, organisation-site search; welcome cards removed | ✅ live (v0.9.5, commit `208b3a8`, deployed 2026-11-19; 201 tests); Gemini 91.2%, Groq 95.8% on the first 8 questions (section 0); live re-test pending |
-| **Images + voice (v0.9.6)**: 📎/paste/drop images → Gemini/OpenRouter vision, previews kept; 🎤 Groq Whisper → Workers AI backup; 🔊 read aloud; admin switches + daily limits; migration 0006 | ✅ built and checked locally 2026-11-19 (205 tests, headless browser check); **not pushed yet**; live test pending |
+| **Images + voice (v0.9.6)**: 📎/paste/drop images → Gemini/OpenRouter vision, previews kept; 🎤 Groq Whisper → Workers AI backup; 🔊 read aloud; admin switches + daily limits; migration 0006 | ✅ live (v0.9.6, deployed 2026-11-19; 205 tests); live-checked: image question ✔️, Read aloud ✔️, voice input not yet tested |
+| **Answer feedback (v0.9.7)**: 👍/👎 + optional reason/note under answers; Admin → Feedback (per-model counts, list with question/answer/sources); migration 0007 | ✅ built and checked locally 2026-11-19 (207 tests); **not pushed yet**; live test pending |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -392,7 +412,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 205 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 207 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

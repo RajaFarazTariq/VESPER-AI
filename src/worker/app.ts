@@ -8,6 +8,7 @@ import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { chatRoutes } from "./routes/chat";
 import { conversationRoutes } from "./routes/conversations";
+import { feedbackRoutes } from "./routes/feedback";
 import { knowledgeRoutes } from "./routes/knowledge";
 import { mediaRoutes } from "./routes/media";
 import { memoryRoutes, toolRoutes } from "./routes/memories";
@@ -39,6 +40,7 @@ app.route("/api/settings", settingsRoutes);
 app.route("/api/memories", memoryRoutes);
 app.route("/api/tools", toolRoutes);
 app.route("/api/media", mediaRoutes);
+app.route("/api/feedback", feedbackRoutes);
 app.route("/api/admin/knowledge", knowledgeRoutes);
 app.route("/api/admin", adminRoutes);
 

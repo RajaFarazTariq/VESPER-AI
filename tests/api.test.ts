@@ -715,3 +715,63 @@ describe("v0.9.6: images and voice", () => {
     expect((await call("/api/media/features", { cookie: tester, env: VOICE_ENV })).json.voice).toMatchObject({ enabled: true, speechToText: true });
   });
 });
+
+describe("v0.9.7: answer feedback", () => {
+  it("saves 👍/👎 on your own answers, keeps a copy through regenerate, and lists them for the admin only", async () => {
+    const admin = await login();
+    const tester = await login("tester");
+    let reply = 0;
+    mockFetch((url) => (url.endsWith("/chat/completions") ? sseResponse([`Answer ${++reply}`]) : new Response("unexpected " + url, { status: 500 })));
+    const chat = await call("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: "Capital of Pakistan?", model: "auto" }),
+      cookie: tester,
+      env: PROVIDERS,
+    });
+    const events = parseEvents(chat.text);
+    const conversationId = (events[0] as Extract<ChatStreamEvent, { type: "conversation" }>).conversation.id;
+    const question = (events[1] as Extract<ChatStreamEvent, { type: "user_message" }>).message;
+    const answer = (events.at(-1) as Extract<ChatStreamEvent, { type: "done" }>).message;
+    const rate = (id: string, body: object, cookie = tester) => call(`/api/feedback/${id}`, { method: "PUT", body: JSON.stringify(body), cookie });
+
+    // 👍, then changed to 👎 with a reason and a note; shown again when the chat is opened.
+    expect((await rate(answer.id, { rating: 1 })).json.feedback).toEqual({ rating: 1, reason: null, note: null });
+    const down = { rating: -1, reason: "wrong", note: "It is Islamabad" };
+    expect((await rate(answer.id, down)).json.feedback).toEqual(down);
+    const detail = await call(`/api/conversations/${conversationId}`, { cookie: tester });
+    expect(detail.json.messages[1].feedback).toEqual(down);
+    expect(detail.json.messages[0].feedback).toBeNull();
+
+    // Someone else's answer, a question instead of an answer, bad input: refused.
+    expect((await rate(answer.id, { rating: 1 }, admin)).response.status).toBe(404);
+    expect((await rate(question.id, { rating: 1 })).response.status).toBe(400);
+    expect((await rate(answer.id, { rating: 5 })).response.status).toBe(400);
+    expect((await rate(answer.id, { rating: -1, reason: "rude" })).response.status).toBe(400);
+
+    // Regenerate deletes the old answer, but its 👎 (with the copy of the question and answer) stays for the admin.
+    await call("/api/chat", { method: "POST", body: JSON.stringify({ conversationId, regenerate: true, model: "auto" }), cookie: tester, env: PROVIDERS });
+    const list = await call("/api/admin/feedback?rating=down", { cookie: admin });
+    expect(list.response.status).toBe(200);
+    expect(list.json.items).toHaveLength(1);
+    expect(list.json.items[0]).toMatchObject({
+      messageId: answer.id,
+      ...down,
+      question: "Capital of Pakistan?",
+      answer: "Answer 1",
+      provider: "groq",
+      user: { login: "tester" },
+    });
+    expect(list.json.summary).toMatchObject({ up: 0, down: 1 });
+    expect(list.json.summary.byModel[0]).toMatchObject({ provider: "groq", up: 0, down: 1 });
+    expect((await call("/api/admin/feedback?rating=up", { cookie: admin })).json.items).toHaveLength(0);
+    expect((await call("/api/admin/feedback", { cookie: tester })).response.status).toBe(403);
+
+    // Taking a rating back; deleting the chat removes its feedback too.
+    const fresh = (await call(`/api/conversations/${conversationId}`, { cookie: tester })).json.messages[1];
+    expect(fresh.content).toBe("Answer 2");
+    await rate(fresh.id, { rating: 1 });
+    expect((await rate(fresh.id, { rating: 0 })).json.feedback).toBeNull();
+    await call(`/api/conversations/${conversationId}`, { method: "DELETE", cookie: tester });
+    expect((await call("/api/admin/feedback?rating=all", { cookie: admin })).json.summary).toMatchObject({ up: 0, down: 0 });
+  });
+});

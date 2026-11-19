@@ -1,12 +1,12 @@
-import { ExternalLink, RefreshCw, Trash2, X } from "lucide-react";
+import { ChevronDown, ExternalLink, RefreshCw, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AdminUserDto, AppSettingsDto, ModelsResponse, ToolInfoDto, UserModelOption } from "../../shared/types";
+import type { AdminUserDto, AppSettingsDto, FeedbackItemDto, FeedbackSummaryDto, ModelsResponse, ToolInfoDto, UserModelOption } from "../../shared/types";
 import { api, ApiError } from "../api/client";
-import { formatRelative } from "../lib/format";
+import { FEEDBACK_LABELS, formatRelative, providerLabel } from "../lib/format";
 import { KnowledgeTab } from "./KnowledgeTab";
 import { Field, Toggle } from "./SettingsDialog";
 
-type Tab = "users" | "settings" | "models" | "knowledge" | "providers";
+type Tab = "users" | "settings" | "models" | "knowledge" | "feedback" | "providers";
 
 interface Props {
   currentUserId: string;
@@ -46,6 +46,7 @@ export function AdminDialog({ currentUserId, models, refreshingModels, onRefresh
     ["settings", "App settings"],
     ["models", "Models"],
     ["knowledge", "Knowledge"],
+    ["feedback", "Feedback"],
     ["providers", "Providers"],
   ];
 
@@ -90,6 +91,7 @@ export function AdminDialog({ currentUserId, models, refreshingModels, onRefresh
           {tab === "settings" ? <SettingsTab onNotice={onNotice} /> : null}
           {tab === "models" ? <ModelsTab models={models} onNotice={onNotice} /> : null}
           {tab === "knowledge" ? <KnowledgeTab onNotice={onNotice} /> : null}
+          {tab === "feedback" ? <FeedbackTab /> : null}
           {tab === "providers" ? <ProvidersTab models={models} refreshing={refreshingModels} onRefresh={onRefreshModels} /> : null}
         </div>
       </div>
@@ -674,6 +676,200 @@ function ModelsTab({ models, onNotice }: { models: ModelsResponse | null; onNoti
         </button>
       </div>
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ Feedback (👍/👎 on answers)
+
+type FeedbackFilter = "down" | "up" | "all";
+
+function FeedbackTab() {
+  const [filter, setFilter] = useState<FeedbackFilter>("down");
+  const [items, setItems] = useState<FeedbackItemDto[] | null>(null);
+  const [summary, setSummary] = useState<FeedbackSummaryDto | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const load = useCallback(async (which: FeedbackFilter) => {
+    setError(null);
+    setItems(null);
+    try {
+      const r = await api.admin.feedback(which);
+      setItems(r.items);
+      setSummary(r.summary);
+      setHasMore(r.hasMore);
+    } catch (e) {
+      setItems([]);
+      setError(errorText(e, "Could not load feedback."));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load(filter);
+  }, [filter, load]);
+
+  const more = async () => {
+    const oldest = items?.[items.length - 1];
+    if (!oldest) return;
+    setLoadingMore(true);
+    try {
+      const r = await api.admin.feedback(filter, oldest.updatedAt);
+      setItems((list) => [...(list ?? []), ...r.items.filter((i) => !(list ?? []).some((x) => x.messageId === i.messageId))]);
+      setHasMore(r.hasMore);
+    } catch (e) {
+      setError(errorText(e, "Could not load more."));
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const filters: [FeedbackFilter, string][] = [
+    ["down", `Bad answers${summary ? ` (${summary.down})` : ""}`],
+    ["up", `Good answers${summary ? ` (${summary.up})` : ""}`],
+    ["all", "All"],
+  ];
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-[var(--text-soft)]">
+        What users (and you) said about answers with the thumbs up / thumbs down buttons. Each entry keeps its own copy of the question
+        and answer, so it stays here even if the answer was regenerated afterwards.
+      </p>
+
+      {summary && summary.byModel.length > 0 ? (
+        <div className="overflow-x-auto rounded-xl border border-[var(--border)] thin-scroll">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-[var(--bg-soft)] text-xs text-[var(--text-soft)]">
+              <tr>
+                <th className="px-3 py-2 font-medium">Model</th>
+                <th className="px-3 py-2 text-right font-medium">Good</th>
+                <th className="px-3 py-2 text-right font-medium">Bad</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.byModel.map((m) => (
+                <tr key={`${m.provider}:${m.model}`} className="border-t border-[var(--border)]">
+                  <td className="px-3 py-1.5">
+                    {m.provider ? `${providerLabel(m.provider)} · ${m.model ?? "?"}` : <span className="text-[var(--text-soft)]">Unknown model</span>}
+                  </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{m.up}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{m.down}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Show">
+        {filters.map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="radio"
+            aria-checked={filter === id}
+            onClick={() => setFilter(id)}
+            className={`rounded-full border px-3 py-1 text-xs ${
+              filter === id ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]" : "border-[var(--border)] text-[var(--text-soft)] hover:text-[var(--text)]"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => void load(filter)}
+          className="ml-auto inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs hover:bg-[var(--bg-hover)]"
+        >
+          <RefreshCw size={12} /> Refresh
+        </button>
+      </div>
+
+      {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
+      {items === null ? <p className="text-sm text-[var(--text-soft)]">Loading…</p> : null}
+      {items?.length === 0 && !error ? (
+        <p className="rounded-lg bg-[var(--bg-soft)] px-3 py-3 text-sm text-[var(--text-soft)]">
+          {filter === "down" ? "No bad answers reported yet." : filter === "up" ? "No good answers marked yet." : "No feedback yet."}
+        </p>
+      ) : null}
+      <ul className="space-y-2">
+        {(items ?? []).map((item) => (
+          <FeedbackRow key={item.messageId} item={item} />
+        ))}
+      </ul>
+      {hasMore ? (
+        <button
+          type="button"
+          onClick={() => void more()}
+          disabled={loadingMore}
+          className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-[var(--bg-hover)] disabled:opacity-40"
+        >
+          {loadingMore ? "Loading…" : "Load more"}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function FeedbackRow({ item }: { item: FeedbackItemDto }) {
+  const [open, setOpen] = useState(false);
+  const up = item.rating === 1;
+  return (
+    <li className="rounded-xl border border-[var(--border)] p-3">
+      <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--text-soft)]">
+        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${up ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-[var(--danger)]/15 text-[var(--danger)]"}`}>
+          {up ? <ThumbsUp size={11} /> : <ThumbsDown size={11} />}
+          {up ? "Good" : "Bad"}
+        </span>
+        {item.reason ? <Badge>{FEEDBACK_LABELS[item.reason]}</Badge> : null}
+        <span>{item.user.name || item.user.login}</span>
+        <span>· {formatDate(item.updatedAt)}</span>
+        {item.provider ? (
+          <span className="truncate">
+            · {providerLabel(item.provider)} · {item.model}
+          </span>
+        ) : null}
+      </div>
+      {item.note ? <p className="mt-2 rounded-lg bg-[var(--bg-soft)] px-3 py-2 text-sm">“{item.note}”</p> : null}
+      <p className="mt-2 text-sm font-medium">{item.question || <span className="text-[var(--text-soft)]">(no question text)</span>}</p>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="mt-1 inline-flex items-center gap-1 text-xs text-[var(--accent)]"
+      >
+        {open ? "Hide answer" : "Show answer"}
+        <ChevronDown size={12} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open ? (
+        <div className="mt-2 space-y-2">
+          <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-[var(--border)] px-3 py-2 text-sm leading-relaxed thin-scroll">
+            {item.answer}
+          </div>
+          {item.sources.length > 0 ? (
+            <ul className="space-y-0.5 text-xs">
+              {item.sources.map((s, i) => (
+                <li key={i} className="truncate">
+                  {s.url ? (
+                    <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-[var(--accent)] hover:underline">
+                      {s.title || s.url}
+                    </a>
+                  ) : (
+                    <span className="text-[var(--text-soft)]">
+                      {s.title}
+                      {s.location ? ` · ${s.location}` : ""}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-[var(--text-soft)]">No sources were used for this answer.</p>
+          )}
+        </div>
+      ) : null}
+    </li>
   );
 }
 

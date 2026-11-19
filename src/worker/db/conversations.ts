@@ -1,4 +1,4 @@
-import type { ConversationDto, MessageDto, MessageRole, MessageStatus, ToolEventDto } from "../../shared/types";
+import type { ConversationDto, FeedbackReason, MessageDto, MessageRole, MessageStatus, ToolEventDto } from "../../shared/types";
 import { newId } from "../lib/crypto";
 
 interface ConversationRow {
@@ -21,6 +21,10 @@ interface MessageRow {
   tools: string | null;
   images: string | null;
   created_at: number;
+  /** From message_feedback (null when not rated). */
+  fb_rating?: number | null;
+  fb_reason?: string | null;
+  fb_note?: string | null;
 }
 
 function parseImages(raw: string | null): string[] | null {
@@ -62,6 +66,10 @@ const toMessage = (r: MessageRow): MessageDto => ({
   error: r.error,
   tools: parseTools(r.tools),
   images: parseImages(r.images),
+  feedback:
+    r.fb_rating === 1 || r.fb_rating === -1
+      ? { rating: r.fb_rating, reason: (r.fb_reason as FeedbackReason | null) ?? null, note: r.fb_note ?? null }
+      : null,
   createdAt: r.created_at,
 });
 
@@ -161,9 +169,11 @@ export async function listMessages(db: D1Database, conversationId: string, limit
   const { results } = await db
     .prepare(
       `SELECT * FROM (
-         SELECT id, role, content, reasoning, provider, model, status, error, tools, images, created_at, rowid AS rid
-         FROM messages WHERE conversation_id = ?1
-         ORDER BY created_at DESC, rid DESC LIMIT ?2
+         SELECT m.id, m.role, m.content, m.reasoning, m.provider, m.model, m.status, m.error, m.tools, m.images,
+                m.created_at, m.rowid AS rid, f.rating AS fb_rating, f.reason AS fb_reason, f.note AS fb_note
+         FROM messages m LEFT JOIN message_feedback f ON f.message_id = m.id
+         WHERE m.conversation_id = ?1
+         ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?2
        ) ORDER BY created_at ASC, rid ASC`,
     )
     .bind(conversationId, limit)
