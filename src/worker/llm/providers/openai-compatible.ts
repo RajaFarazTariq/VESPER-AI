@@ -36,6 +36,12 @@ export interface OpenAiCompatibleOptions {
   supportsTools?: boolean;
   /** Include `name` on tool-result messages (Mistral expects it; OpenAI-style APIs don't). */
   toolMessageName?: boolean;
+  /** Image support: which models can see images, and which one Auto uses for image questions. */
+  vision?: {
+    accepts: (model: string, info: ModelInfo | undefined) => boolean;
+    /** Gets the live model list only if it needs one. */
+    pick: (defaultModel: string, models: () => Promise<ModelInfo[]>) => Promise<string | null>;
+  };
 }
 
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:/@+-]{1,200}$/;
@@ -76,6 +82,20 @@ export class OpenAiCompatibleProvider implements Provider {
   /** Let the registry provide a cached list so defaultModel() doesn't refetch. */
   primeModels(models: ModelInfo[]): void {
     this.cachedModels = models;
+  }
+
+  canSeeImages(model: string): boolean {
+    const vision = this.options.vision;
+    if (!vision || !this.isAllowedModel(model)) return false;
+    return vision.accepts(model, this.cachedModels?.find((m) => m.id === model));
+  }
+
+  async imageModel(): Promise<string | null> {
+    const vision = this.options.vision;
+    if (!vision || !this.isConfigured()) return null;
+    const fallback = await this.defaultModel().catch(() => "");
+    const picked = await vision.pick(fallback, async () => this.cachedModels ?? (await this.fetchModels().catch(() => [])));
+    return picked && this.isAllowedModel(picked) ? picked : null;
   }
 
   async defaultModel(): Promise<string> {
@@ -208,6 +228,16 @@ export function toWireMessages(messages: ChatMessage[], toolMessageName: boolean
     if (m.role === "tool") {
       return { role: "tool", tool_call_id: m.tool_call_id, content: m.content, ...(toolMessageName ? { name: m.name } : {}) };
     }
+    if (m.role === "user" && m.images?.length) {
+      // OpenAI-style multi-part content: the text, then each image as a data URL.
+      return {
+        role: "user",
+        content: [
+          ...(m.content.trim() ? [{ type: "text", text: m.content }] : []),
+          ...m.images.map((url) => ({ type: "image_url", image_url: { url } })),
+        ],
+      };
+    }
     return { role: m.role, content: m.content ?? "" };
   });
 }
@@ -269,6 +299,14 @@ export function* parseOpenAiChunk(json: Record<string, unknown>): Generator<Stre
       outputTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : null,
     };
   }
+}
+
+/** OpenRouter lists what each model accepts: `architecture.input_modalities` includes "image" for vision models. */
+export function acceptsImages(raw: Record<string, unknown>): boolean {
+  const arch = raw.architecture as Record<string, unknown> | undefined;
+  const inputs = arch?.input_modalities;
+  if (Array.isArray(inputs)) return inputs.includes("image");
+  return typeof arch?.modality === "string" && /image.*->/.test(arch.modality);
 }
 
 function defaultMapModel(raw: Record<string, unknown>): ModelInfo | null {

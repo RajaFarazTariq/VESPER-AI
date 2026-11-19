@@ -214,6 +214,39 @@ knowledge base for the admin's own material. Everything below is free (no extra 
   Runs against a local server with real keys, one provider at a time (fallback off); scores are recorded in
   HANDOFF.md. Locally the re-ranker isn't available (keyword order), the same for every run.
 
+## 5e. Images and voice (v0.9.6)
+
+Each has an admin switch and a per-user daily limit (admin panel → App settings); the chat screen asks
+`GET /api/media/features` what to show (switch on **and** a capable service configured).
+
+**Images** (`lib/images.ts` on both sides, `routes/chat.ts`, `llm/router.ts`):
+1. 📎 button, paste or drag-and-drop, up to 3 per message. The browser decodes the file (`createImageBitmap`, EXIF
+   orientation applied), draws it on a canvas and sends two JPEG data URLs: ~1280 px for the model (re-encoded smaller
+   until under ~1.1 MB) and a ~384 px preview (~20 KB). The original file never leaves the device.
+2. `/api/chat` accepts bodies up to 4 MB (other routes 256 KB). Each data URL must be JPEG/PNG/WebP **and** its first
+   bytes must match that type; previews max 60,000 characters.
+3. Routing: `planRoute({ images: true })` uses only providers with `imageModel()` (Gemini's default model; OpenRouter's
+   best `:free` model whose live model list says `input_modalities` includes "image"), in PROVIDER_ORDER, so Gemini
+   comes first. Groq, Mistral and Workers AI are skipped. A manually picked model that can't see images is replaced by
+   that chain. Text-only questions are routed exactly as before.
+4. Wire format: the user turn becomes OpenAI-style parts `[{type:"text"}, {type:"image_url", image_url:{url}}]`.
+5. Storage: only the previews (`messages.images`, JSON). Regenerate/Edit re-send the stored previews. Older messages'
+   images become a note in the history ("[The user attached an image … no longer available …]").
+6. Limits: images counted per user per day (`user_usage_daily.images`, atomic); the message counter is given back if
+   the image limit refuses the request, so nothing is half-counted.
+
+**Voice** (`lib/speech.ts`, `routes/media.ts`, web `lib/voice.ts`):
+- 🎤 `MediaRecorder` (WebM/Opus 32 kbps; MP4 on Safari), max 2 minutes, then `POST /api/media/transcribe` (base64 in
+  JSON, ≤ 1.4 M characters). Groq `whisper-large-v3-turbo` (`verbose_json`, gives the duration), Workers AI
+  `@cf/openai/whisper-large-v3-turbo` (base64 `audio`, `vad_filter`) if Groq fails. Language: the user's setting
+  (auto / en / ur). The text is put in the message box, never sent automatically. The recording isn't stored.
+- Limit: seconds per user per day (`user_usage_daily.speech_seconds`), checked before (with the browser's length) and
+  counted after (with the service's measured length), so one recording can overrun the limit by at most its length.
+- 🔊 Read aloud: Web Speech API on the device (Markdown stripped, code skipped, read in short pieces because long
+  utterances get cut off in some browsers; Urdu text uses an Urdu voice when the device has one). Optional
+  "read answers aloud automatically". The admin's Voice switch hides both.
+- `public/_headers`: `Permissions-Policy: microphone=(self)` (camera and location stay blocked).
+
 ## 6. Security model
 
 | Threat | Control |
@@ -228,7 +261,8 @@ knowledge base for the admin's own material. Everything below is free (no extra 
 | CSRF | Mutating requests must be same-origin (Origin / Sec-Fetch-Site) and `application/json` |
 | OAuth CSRF | Random `state` in a short-lived HttpOnly cookie, compared in constant time |
 | XSS / data exfiltration via model output | No raw HTML in Markdown, links forced to `http(s)`/`mailto`, remote images shown as links, strict CSP (`script-src 'self'`, `connect-src` limited to self + localhost) |
-| Abuse / runaway cost | Per-user chat limit, per-IP auth limit, body size caps, message length caps, free-only providers |
+| Abuse / runaway cost | Per-user chat limit, per-IP auth limit, body size caps, message length caps, free-only providers; per-user daily image and speech limits, 12 transcriptions/minute per user |
+| Malicious uploads | Images are re-encoded to JPEG in the browser; the server accepts only JPEG/PNG/WebP data URLs whose first bytes match the type, with size caps, and never stores the full image; previews render as `<img src="data:…">` (allowed by the CSP's `img-src data:`), never as HTML. Audio: allowed audio types only, size-capped, passed straight to the speech service and not stored |
 | Secret leakage | Keys only in Cloudflare secrets; `.env`/`.dev.vars` git-ignored; never returned by the API |
 | Data isolation | Every conversation query is scoped by `user_id`; foreign keys cascade on delete |
 | Dev login in prod | Requires `DEV_LOGIN=true` **and** a localhost hostname, which a workers.dev request can't have |
@@ -249,7 +283,9 @@ tools are blocked once untrusted content is in context.
   network), page text extraction, exact Tavily/Open-Meteo/Wikipedia/Frankfurter requests, daily search cap, error
   messages, a full chat turn with search (untrusted labelling, sources for users), admin controls.
 - `tests/api.test.ts`: full HTTP flows inside workerd with a real local D1: auth, OAuth callback, CSRF, streaming + fallback + persistence, regenerate, validation, rate limiting, isolation between
-  users, settings, model lists, local-model endpoints.
+  users, settings, model lists, local-model endpoints; images (Gemini only, image parts, preview stored and re-sent
+  on regenerate, note in later history, switch/limit/fake-image checks) and speech to text (Groq request, counting,
+  limit, switch, no service).
 - `tests/tools.test.ts` also covers source quality (country government/university domains, exact-name official sites,
   trusted/blocked, ranking by date without dropping official pages, near-duplicates), the paired knowledge search,
   the number check inside the agent loop and the R1–R7 prompt rules; `tests/units.test.ts` covers number
@@ -272,6 +308,10 @@ tools are blocked once untrusted content is in context.
 - Knowledge base: scanned PDFs (images without a text layer) can't be read (no OCR yet); PDFs that need CMaps (some
   CJK/Arabic-script fonts) may extract poorly; no Excel (.xlsx) or old Word (.doc), save as CSV/.docx; keyword
   recall can miss passages that use completely different words (the model is told to retry with synonyms).
+- Images: only previews are stored, so Regenerate/Edit on an image message use the ~384 px preview (fine for photos,
+  weak for small text). Image questions can't use Groq (its main model has no image input) or local Ollama models.
+- Voice: Whisper may write Urdu speech in Hindi script when the language is "Detect automatically" (users can pick
+  Urdu in Settings → Voice). Read aloud depends on the voices installed on the device.
 
 ## 9. Roadmap
 
@@ -287,5 +327,5 @@ tools are blocked once untrusted content is in context.
 | 6b | **GitHub** integration (repos, issues, PRs: read freely, write with approval) + the approval gate | GitHub REST API, incremental OAuth scopes |
 | 6c | **Gmail** (draft-first, send with approval), **Google Calendar** | Google APIs (free) via OAuth |
 | 6d | **Telegram** bot (webhook into the same Worker) | Telegram Bot API |
-| 6e | Voice (Groq Whisper STT, browser TTS), images (Workers AI) | Free quotas |
+| ✅ 0.9.6 | Images (attach/paste/drop, Gemini → OpenRouter vision) and voice (Groq Whisper → Workers AI Whisper, browser read-aloud), admin switches + per-user daily limits | Gemini/OpenRouter free tiers, Groq free STT, Web Speech API |
 | 8 | Hardening: rolling summaries, memory, export/import, more tests | — |

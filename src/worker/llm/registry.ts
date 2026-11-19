@@ -1,6 +1,6 @@
 import type { ModelInfo, ProviderId } from "../../shared/types";
 import { getConfig, type Env } from "../env";
-import { OpenAiCompatibleProvider } from "./providers/openai-compatible";
+import { acceptsImages, OpenAiCompatibleProvider } from "./providers/openai-compatible";
 import { WorkersAiProvider } from "./providers/workers-ai";
 import type { Provider } from "./types";
 
@@ -32,6 +32,20 @@ export function pickOpenRouterDefault(models: ModelInfo[]): string | null {
   }
   return [...models].sort((a, b) => (b.contextLength ?? 0) - (a.contextLength ?? 0))[0]?.id ?? null;
 }
+
+/** For image questions: a free OpenRouter model that accepts images (well-known ones first). */
+export function pickOpenRouterVision(models: ModelInfo[]): string | null {
+  const vision = models.filter((m) => m.vision);
+  const preferences = [/gemma/i, /qwen.*vl/i, /llama-4/i, /mistral-small/i];
+  for (const pattern of preferences) {
+    const match = vision.filter((m) => pattern.test(m.id)).sort((a, b) => (b.contextLength ?? 0) - (a.contextLength ?? 0))[0];
+    if (match) return match.id;
+  }
+  return [...vision].sort((a, b) => (b.contextLength ?? 0) - (a.contextLength ?? 0))[0]?.id ?? null;
+}
+
+/** Gemini chat models all accept images (the free default, Flash-Lite, included). */
+const GEMINI_NO_IMAGES = /tts|embed|image-generation|live|audio|aqa/i;
 
 export function createProviders(env: Env): Map<ProviderId, Provider> {
   const config = getConfig(env);
@@ -70,6 +84,10 @@ export function createProviders(env: Env): Map<ProviderId, Provider> {
         "Very long context window, good for long conversations.",
       ],
       signupUrl: "https://aistudio.google.com/apikey",
+      vision: {
+        accepts: (model) => model.startsWith("gemini") && !GEMINI_NO_IMAGES.test(model),
+        pick: async (defaultModel) => defaultModel,
+      },
       mapModel: (raw) => {
         const rawId = typeof raw.id === "string" ? raw.id : "";
         const id = rawId.replace(/^models\//, "");
@@ -95,12 +113,16 @@ export function createProviders(env: Env): Map<ProviderId, Provider> {
       extraBody: { stream_options: { include_usage: true } },
       allowModel: (model) => model.endsWith(":free"),
       pickDefault: pickOpenRouterDefault,
+      vision: {
+        accepts: (_model, info) => info?.vision === true,
+        pick: async (_defaultModel, models) => pickOpenRouterVision(await models()),
+      },
       mapModel: (raw) => {
         const id = typeof raw.id === "string" ? raw.id : "";
         if (!id.endsWith(":free")) return null;
         const label = typeof raw.name === "string" ? raw.name : id;
         const contextLength = contextOf(raw);
-        return { id, label, ...(contextLength ? { contextLength } : {}) };
+        return { id, label, ...(contextLength ? { contextLength } : {}), ...(acceptsImages(raw) ? { vision: true } : {}) };
       },
     }),
     new OpenAiCompatibleProvider({

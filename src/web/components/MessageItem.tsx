@@ -1,7 +1,8 @@
-import { AlertTriangle, Brain, ChevronDown, Info, Pencil, RotateCcw } from "lucide-react";
+import { AlertTriangle, Brain, ChevronDown, Info, Pencil, RotateCcw, Square, Volume2 } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import type { UiMessage } from "../hooks/useChat";
 import { citedSources, plainDocumentLinks, providerLabel, tidyCitations } from "../lib/format";
+import { canSpeak, speak, stopSpeaking, useSpeakingId } from "../lib/voice";
 import { CopyButton, Markdown } from "./Markdown";
 import { collectSources, SourceList, ToolActivity } from "./ToolActivity";
 
@@ -15,12 +16,23 @@ interface Props {
   /** Only the last message you sent can be edited (the reply after it is replaced). */
   canEdit?: boolean;
   onEdit?: (text: string) => Promise<boolean>;
+  /** Show "Read aloud" on answers (the admin's Voice switch). */
+  readAloud?: boolean;
 }
 
 const actionButton =
   "inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]";
 
-export const MessageItem = memo(function MessageItem({ message, isLast, canRetry, onRetry, isAdmin = false, canEdit = false, onEdit }: Props) {
+export const MessageItem = memo(function MessageItem({
+  message,
+  isLast,
+  canRetry,
+  onRetry,
+  isAdmin = false,
+  canEdit = false,
+  onEdit,
+  readAloud = false,
+}: Props) {
   if (message.role === "user") return <UserMessage message={message} canEdit={canEdit} onEdit={onEdit} />;
 
   const working = message.streaming && !message.content;
@@ -87,6 +99,7 @@ export const MessageItem = memo(function MessageItem({ message, isLast, canRetry
             }`}
           >
             {message.content ? <CopyButton text={content} /> : null}
+            {readAloud && message.content && canSpeak() ? <ReadAloudButton id={message.id} text={content} /> : null}
             {canRetry && isLast && !failed ? (
               <button type="button" onClick={onRetry} className={actionButton} title="Regenerate">
                 <RotateCcw size={14} />
@@ -180,11 +193,25 @@ function UserMessage({ message, canEdit, onEdit }: { message: UiMessage; canEdit
 
   return (
     <div className="rise-in group flex flex-col items-end gap-1">
-      <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-3xl rounded-br-lg bg-[var(--user-bubble)] px-4 py-2.5 text-[15px] leading-relaxed">
-        {message.content}
-      </div>
+      {message.images?.length ? (
+        <div className="flex max-w-[85%] flex-wrap justify-end gap-2">
+          {message.images.map((src, i) => (
+            <img
+              key={i}
+              src={src}
+              alt={`Attached image ${i + 1}`}
+              className="h-32 w-32 rounded-xl border border-[var(--border)] object-cover sm:h-36 sm:w-36"
+            />
+          ))}
+        </div>
+      ) : null}
+      {message.content ? (
+        <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-3xl rounded-br-lg bg-[var(--user-bubble)] px-4 py-2.5 text-[15px] leading-relaxed">
+          {message.content}
+        </div>
+      ) : null}
       <div className="flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-        <CopyButton text={message.content} />
+        {message.content ? <CopyButton text={message.content} /> : null}
         {canEdit && onEdit ? (
           <button
             type="button"
@@ -201,6 +228,23 @@ function UserMessage({ message, canEdit, onEdit }: { message: UiMessage; canEdit
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** Reads the answer with the device's built-in voice; press again to stop. */
+function ReadAloudButton({ id, text }: { id: string; text: string }) {
+  const speaking = useSpeakingId() === id;
+  return (
+    <button
+      type="button"
+      onClick={() => (speaking ? stopSpeaking() : speak(id, text))}
+      className={actionButton}
+      title={speaking ? "Stop reading" : "Read aloud"}
+      aria-pressed={speaking}
+    >
+      {speaking ? <Square size={12} fill="currentColor" /> : <Volume2 size={14} />}
+      <span className="sr-only sm:not-sr-only">{speaking ? "Stop" : "Read aloud"}</span>
+    </button>
   );
 }
 

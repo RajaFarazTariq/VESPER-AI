@@ -4,8 +4,43 @@ Read this first when resuming work. Last updated: **2026-11-19**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-19)
 
-**State:** **v0.9.5 is live** (commit `208b3a8`, deployed 2026-11-19; `/api/health` → `0.9.5`; 201 tests,
-typecheck and build clean). The deploy applied migration `0005_search_cache.sql` (add-only).
+**State:** **v0.9.6 (images + voice) is built and checked locally, not pushed yet.** Live is still **v0.9.5**
+(commit `208b3a8`). Waiting for the owner to push: the earlier docs commit `1f853c1` plus the v0.9.6 changes (one
+commit). The deploy will apply migration `0006_images_voice.sql` (add-only). The owner **replaced the GitHub token**
+(confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-19.
+
+**v0.9.6 "images + voice" (built 2026-11-19, owner approved the 11 steps and defaults):**
+1. 📎 attach button + paste + drag-and-drop, up to 3 images per message, previews with ✕ (`Composer.tsx`).
+2. The browser shrinks each image to ~1280 px JPEG (and a ~384 px, ~16–20 KB preview) before sending (`web/lib/images.ts`).
+3. `/api/chat` accepts up to 4 MB (other routes still 256 KB); the server checks each image's type and first bytes.
+4. Image questions go only to models that can see images: Gemini first, then a free OpenRouter vision model
+   (picked from the live list). Groq/Mistral/Workers AI are skipped; a manually picked model that can't see images is
+   replaced by that chain automatically. Text questions are routed exactly as before.
+5. Only the preview is stored (`messages.images`); Regenerate/Edit re-send the preview; older images become a note.
+6. Limit: 10 images per user per day (admin setting; admins unlimited but counted, like messages).
+7. 🎤 mic: records up to 2 minutes → Groq `whisper-large-v3-turbo` → Workers AI Whisper as backup → text in the box.
+   Each user picks the language in Settings → **Voice** (Detect / English / Urdu; Urdu avoids Hindi-script output).
+8. `public/_headers`: `microphone=(self)`.
+9. 🔊 "Read aloud" under answers (device voices) + optional "Read answers aloud automatically" (Settings → Voice).
+10. Limit: 15 minutes of speech per user per day (admin setting; admins unlimited but counted).
+11. Done locally: 205 tests (3 new in `tests/api.test.ts`), typecheck, build; headless Edge check with the mock AI:
+    image attached (preview 15.9 KB) → answered by Gemini, preview shown in the chat, Read aloud button, fake-mic
+    recording → text in the box, phone width without sideways scrolling. **Still to do: push, then the short live test.**
+- My own choices within the agreed plan (tell the owner if asked): both switches default **on**; the Voice switch also
+  hides Read aloud; welcome screen got two chips ("Understands images", "Voice input"); Admin → Users shows today's
+  images and voice minutes; the offline mock (`npm run mock:llm`) now answers speech-to-text too.
+- Checked before building (2026-11-19): Groq free STT = 20 requests/min, 2,000/day, 28,800 audio s/day, min 10 s
+  billed per request, 25 MB files; Workers AI Whisper turbo takes base64 `audio` and returns `text` +
+  `transcription_info.duration`.
+- No privacy note in the app (owner's decision). For the record: Gemini's free tier may use uploaded images; Groq
+  processes voice recordings; VESPER stores neither the full image nor the audio.
+
+**Live test for v0.9.6 (after the push, ~2 minutes):** new chat, Auto → 📎 a photo + "What is in this picture?"
+(expect a Gemini answer and the preview in the chat) → 🎤 say one short question, check the text, send → press 🔊
+Read aloud under the answer. On a phone the browser asks for microphone permission the first time.
+
+**Previous release, v0.9.5** (commit `208b3a8`, deployed 2026-11-19; 201 tests at the time). The deploy applied
+migration `0005_search_cache.sql` (add-only).
 
 **v0.9.5 "fewer tokens" (built 2026-11-19, owner approved all 10 steps):**
 1. **Search first, one request** (`llm/prefetch.ts`): questions that clearly need a look-up ("latest", "current",
@@ -37,26 +72,6 @@ typecheck and build clean). The deploy applied migration `0005_search_cache.sql`
   search), the PDF's 62% as a correctly attributed note.
 - Still imprecise with Gemini: Linux kernel ("7.3" though it cited kernel.org) and Node.js (called Node 22 the main
   LTS line). Groq got Node.js right.
-
-**Next (agreed 2026-11-19): v0.9.6 = image attachments + voice, built together**, each with its own on/off switch
-in the Admin panel. Owner said OK to these steps and defaults; start after 0.9.5 is pushed:
-1. 📎 attach button + paste + drag-and-drop (up to 3 images per message), preview with ✕.
-2. Browser resizes to ~1280 px JPEG before sending.
-3. Server accepts images on chat messages; body limit raised for `/api/chat` only (256 KB → ~4 MB).
-4. Images go only to models that can see them: Gemini first, then a free image-capable OpenRouter model; Groq's main
-   model is skipped for image messages; questions without images unchanged.
-5. Chat history keeps a small thumbnail (~20 KB), not the full image: add-only migration (new column on `messages`).
-6. Limit: **10 images per user per day** (admin can change it).
-7. 🎤 mic button: record → Groq's free speech-to-text (Whisper; English and Urdu), Cloudflare Workers AI Whisper as
-   backup → the text appears in the box to check before sending.
-8. Allow the microphone for VESPER's own pages (`public/_headers` Permissions-Policy `microphone=(self)`).
-9. 🔊 "Read aloud" on answers with the device's built-in voices, plus an optional "read answers automatically"
-   setting.
-10. Limit: **15 minutes of speech per user per day** (admin can change it).
-11. Tests, one full check, version 0.9.6, docs, push commands, short live test (one image + one spoken question).
-- **No privacy note in the app** (owner's earlier decision stands). For the record: Gemini's free tier may use
-  uploaded images, and Groq processes the voice recordings.
-- Before building: confirm Groq's current free Whisper limits and the Workers AI Whisper input format.
 
 **v0.9.4 live re-test (2026-11-19):**
 - Copilot (Gemini Flash-Lite): still says "GitHub's official figures state … 62%" citing the PDF, and puts GitHub's
@@ -178,16 +193,15 @@ Problems", 23 pages). Upload, folder, space meter, search, re-ranker and page ci
   always (`citedSources` in `web/lib/format.ts`). (C) 【 】 citations are shown as ( ) (`tidyCitations`).
 
 **First thing to do next session (in this order):**
-1. Health check → `0.9.5` (live since 2026-11-19), and ask him to push this docs update if not done. Ask whether he
-   **replaced the GitHub token** (pasted into a chat on 2026-11-17, expires 2026-12-09, see section 8), and check
-   that the **`.dev.vars` key lines are empty** (he re-added Groq/Gemini/Tavily keys for the 0.9.5 runs on 2026-11-19
-   and was to empty them after the Groq run).
-2. After the 0.9.5 deploy: re-ask on the live site (new chat, model Auto) the Copilot question, "What is the latest
-   stable version of Python?" and "What was Pakistan's population in the 2023 census?". Expect Groq (not Gemini) to
-   answer most of them now, 61% for Java from GitHub's own blog, 3.15.2 from python.org, 241.49 million. (Don't
-   re-test on the same day as a local Groq accuracy run: they share Groq's daily allowance.)
+1. Health check. If it still says `0.9.5`, the owner hasn't pushed v0.9.6 yet: give him the push commands again
+   (section 2; one `git add`/`commit`/`push` covers `1f853c1` and the v0.9.6 changes). After the push, watch
+   `/api/health` until it says `0.9.6`. Check the **`.dev.vars` key lines are still empty**.
+2. Short live test of v0.9.6 (see "Live test for v0.9.6" above).
+3. Owner said he'll do these later: re-ask on the live site (new chat, model Auto) the Copilot question, "What is the
+   latest stable version of Python?" and "What was Pakistan's population in the 2023 census?". Expect Groq (not
+   Gemini) to answer most of them, 61% for Java from GitHub's own blog, 3.15.2 from python.org, 241.49 million.
+   (Don't re-test on the same day as a local Groq accuracy run: they share Groq's daily allowance.)
    Optional: finish the Groq score for questions 9–18 on a fresh day (the 8 done are in the table above).
-3. Then build **v0.9.6 (images + voice)**, steps above; send the numbered steps again for a quick OK.
 4. Older re-test reference (knowledge-base questions; pages checked against the PDF):
    | Question | Correct answer | Page |
    |---|---|---|
@@ -215,7 +229,8 @@ the app UI stays as it is for now; knowledge base built zero-setup (FTS5 + re-ra
 PC**: everything the owner does happens on the live site. Confirmed live: `TAVILY_API_KEY` is active.
 
 **Open decisions / known limits:** Edit works on the last user message only; chat search matches loaded titles only;
-not built (so no buttons): image upload in chat, voice, projects, agents. Open-Meteo's free tier is non-commercial (a
+not built (so no buttons): projects, agents. Images: Regenerate/Edit use the stored ~384 px preview (weak for small
+text); image questions never use Groq or Ollama. Open-Meteo's free tier is non-commercial (a
 public commercial launch would need their paid plan). Before opening the app to the public: check each AI provider's
 free-tier terms for serving other users (not done yet; fine for a few testers).
 
@@ -339,7 +354,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Trusted sources (v0.9.3)**: source labels + ranking, trusted/blocked sites, R1–R7, admin-only number check, accuracy test set | ✅ live (v0.9.3, commit `f2a676b`, deployed 2026-11-19; 175 tests); live re-test: Python and census right, Copilot Java figures reversed |
 | **Source fixes (v0.9.4)**: server reads official pages, "quoting X" labels + R3b, plain document citations, Note only for disagreements, Groq ≤10 s wait | ✅ live (v0.9.4, commit `4758a66`, deployed 2026-11-19; 184 tests); Gemini accuracy 87.3% (section 0); live re-test pending |
 | **Fewer tokens (v0.9.5)**: search first / one request, trimmed passages, relevant-only document passages, search cache, dates in text, fewer weak results, quoting warning, organisation-site search; welcome cards removed | ✅ live (v0.9.5, commit `208b3a8`, deployed 2026-11-19; 201 tests); Gemini 91.2%, Groq 95.8% on the first 8 questions (section 0); live re-test pending |
-| **Next: images + voice (v0.9.6)** | ⏳ agreed, not started |
+| **Images + voice (v0.9.6)**: 📎/paste/drop images → Gemini/OpenRouter vision, previews kept; 🎤 Groq Whisper → Workers AI backup; 🔊 read aloud; admin switches + daily limits; migration 0006 | ✅ built and checked locally 2026-11-19 (205 tests, headless browser check); **not pushed yet**; live test pending |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -355,8 +370,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
   account menu with Settings/Admin/Theme/Sign out); welcome screen + docked composer in `App.tsx`; `Composer.tsx`
   holds the model picker (`placement="up"`) and `ToolsButton`; `MessageItem.tsx` (assistant mark, actions, Edit on
   the last user message → `POST /api/chat` with `edit: true`).
-- Not built (no fake buttons): image upload in chat, voice, projects, agents. (Document upload exists only in the
-  admin panel → Knowledge, since v0.9.0.)
+- Not built (no fake buttons): projects, agents. (Document upload exists only in the admin panel → Knowledge, since
+  v0.9.0.) Since v0.9.6 the composer has 📎 (left of the model picker) and 🎤 (left of Send); they appear only when
+  `GET /api/media/features` says so.
 - **Owner's design rule (2026-11-17): professional, enterprise-grade, globally competitive.** No playful decoration
   (stars, typing animations, gradient text, glow effects, oversized rounded cards); restrained colour, standard 8px
   corners, clear hierarchy, minimal motion. Applies to new UI work.
@@ -376,7 +392,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 201 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 205 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
@@ -435,8 +451,8 @@ Apply new migrations locally first: `npx wrangler d1 migrations apply DB --local
 
 ## 8. Housekeeping the owner planned
 - Delete the GitHub fine-grained token (VESPER-AI only) and its Windows Credential Manager entry when the project is done.
-- **Replace the current GitHub token** (it was pasted into a chat on 2026-11-17; it expires 2026-12-09): delete it on
-  GitHub and create a new fine-grained token (VESPER-AI only, Contents: read and write).
+- ~~Replace the GitHub token pasted into a chat on 2026-11-17~~: **done** (owner confirmed 2026-11-19). Note the new
+  token's expiry date and renew it before then (fine-grained, VESPER-AI only, Contents: read and write).
 - Delete `.dev.vars` when local testing is done, so no keys stay on the PC (keys used for the 2026-11-19 accuracy
   runs were emptied the same day).
 - **OpenRouter key "VESPER AI" expires 2027-02-17** (created 2026-11-19, 90 days): before then create a new one

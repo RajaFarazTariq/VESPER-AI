@@ -52,6 +52,8 @@ export const settingsSchema = z.object({
   toolsEnabled: z.boolean(),
   disabledTools: z.array(z.string().trim().min(1).max(64)).max(50),
   memoryEnabled: z.boolean(),
+  speechLanguage: z.enum(["auto", "en", "ur"]),
+  readAloud: z.boolean(),
 });
 
 /** Parse stored settings, falling back to defaults for anything missing or invalid. */
@@ -206,14 +208,19 @@ export async function deleteUser(db: D1Database, id: string): Promise<boolean> {
 
 // --- Admin listing -------------------------------------------------------------
 
-type AdminUserRow = UserRow & { today_messages: number; conversations: number };
+type AdminUserRow = UserRow & { today_messages: number; today_images: number; today_speech: number; conversations: number };
 
-export function toAdminUserDto(row: UserRow & { today_messages?: number; conversations?: number }, config: AppConfig): AdminUserDto {
+export function toAdminUserDto(
+  row: UserRow & { today_messages?: number; today_images?: number; today_speech?: number; conversations?: number },
+  config: AppConfig,
+): AdminUserDto {
   return {
     ...toUserDto(row, config),
     status: row.status,
     dailyLimit: row.daily_limit,
     todayMessages: row.today_messages ?? 0,
+    todayImages: row.today_images ?? 0,
+    todaySpeechSeconds: row.today_speech ?? 0,
     conversations: row.conversations ?? 0,
     github: row.github_login !== null,
     google: row.google_sub !== null,
@@ -224,7 +231,8 @@ export function toAdminUserDto(row: UserRow & { today_messages?: number; convers
 
 const ADMIN_LIST_SQL = `SELECT ${USER_COLUMNS.split(", ")
   .map((c) => `u.${c}`)
-  .join(", ")}, COALESCE(d.messages, 0) AS today_messages,
+  .join(", ")}, COALESCE(d.messages, 0) AS today_messages, COALESCE(d.images, 0) AS today_images,
+    COALESCE(d.speech_seconds, 0) AS today_speech,
     (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.id) AS conversations
   FROM users u LEFT JOIN user_usage_daily d ON d.user_id = u.id AND d.day = ?1`;
 
@@ -258,4 +266,51 @@ export async function consumeDailyMessage(db: D1Database, userId: string, limit:
     .bind(userId, utcDay(), limit)
     .first<{ messages: number }>();
   return row !== null;
+}
+
+/** Give back one message counted by consumeDailyMessage (when a later check refuses the same request). */
+export async function refundDailyMessage(db: D1Database, userId: string): Promise<void> {
+  await db
+    .prepare("UPDATE user_usage_daily SET messages = MAX(0, messages - 1) WHERE user_id = ?1 AND day = ?2")
+    .bind(userId, utcDay())
+    .run();
+}
+
+// --- Daily image and speech limits ---------------------------------------------
+
+/**
+ * Count `count` images against today's limit, atomically. Returns false (and counts nothing) when
+ * they don't all fit. Admins pass Number.MAX_SAFE_INTEGER (counted for the usage view, never limited).
+ */
+export async function consumeDailyImages(db: D1Database, userId: string, count: number, limit: number): Promise<boolean> {
+  if (count <= 0) return true;
+  if (count > limit) return false;
+  const row = await db
+    .prepare(
+      `INSERT INTO user_usage_daily (user_id, day, messages, images) VALUES (?1, ?2, 0, ?3)
+       ON CONFLICT(user_id, day) DO UPDATE SET images = images + ?3 WHERE images + ?3 <= ?4
+       RETURNING images`,
+    )
+    .bind(userId, utcDay(), count, limit)
+    .first<{ images: number }>();
+  return row !== null;
+}
+
+/** Seconds of speech already turned into text today. */
+export async function speechSecondsToday(db: D1Database, userId: string): Promise<number> {
+  const row = await db
+    .prepare("SELECT speech_seconds FROM user_usage_daily WHERE user_id = ?1 AND day = ?2")
+    .bind(userId, utcDay())
+    .first<{ speech_seconds: number }>();
+  return row?.speech_seconds ?? 0;
+}
+
+export async function addSpeechSeconds(db: D1Database, userId: string, seconds: number): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO user_usage_daily (user_id, day, messages, speech_seconds) VALUES (?1, ?2, 0, ?3)
+       ON CONFLICT(user_id, day) DO UPDATE SET speech_seconds = speech_seconds + ?3`,
+    )
+    .bind(userId, utcDay(), Math.max(1, Math.ceil(seconds)))
+    .run();
 }

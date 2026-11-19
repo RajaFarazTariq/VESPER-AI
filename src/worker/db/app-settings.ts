@@ -47,6 +47,10 @@ export const appSettingsSchema = z.object({
   webSearchDailyLimit: z.number().int().min(0).max(1_000),
   trustedSites: siteList,
   blockedSites: siteList,
+  imagesEnabled: z.boolean(),
+  imagesPerDay: z.number().int().min(0).max(1_000),
+  voiceEnabled: z.boolean(),
+  speechMinutesPerDay: z.number().int().min(0).max(1_440),
 });
 
 type Key = keyof AppSettingsDto;
@@ -64,6 +68,11 @@ export function defaultAppSettings(config: AppConfig): AppSettingsDto {
     webSearchDailyLimit: 30,
     trustedSites: [],
     blockedSites: [],
+    imagesEnabled: true,
+    imagesPerDay: 10,
+    voiceEnabled: true,
+    // Groq's free speech-to-text allows 8 hours a day for the whole app; 15 minutes each leaves room for many users.
+    speechMinutesPerDay: 15,
   };
 }
 

@@ -96,8 +96,13 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 | Instructions for the assistant | Added to every user's conversations | Empty |
 | Trusted websites (v0.9.3) | One per line (e.g. `who.int`; subdomains included). Web search ranks them first and labels them "trusted". Government sites (.gov, gov.pk, .int…) and the organisation's own site are already ranked first without being listed | Empty |
 | Blocked websites (v0.9.3) | One per line. Never used: Tavily is asked to skip them and any that still come back are removed | Empty |
+| Image attachments (v0.9.6) | 📎 button, paste and drag-and-drop in the message box (up to 3 per message). Images go only to models that can see them (Gemini, then a free OpenRouter vision model); only a ~20 KB preview is kept with the chat. The button shows only when this is on **and** Gemini or OpenRouter is configured | On |
+| Images per user per day (v0.9.6) | Daily image limit for every user (admins unlimited but counted; shown in Users). 0 = images paused for users. Resets 00:00 UTC | 10 |
+| Voice (v0.9.6) | 🎤 microphone button (speech → text in the box, checked before sending; Groq Whisper, Workers AI Whisper as backup) and 🔊 "Read aloud" on answers (the device's own voices, no server cost). The mic shows only when Groq or Workers AI is available | On |
+| Minutes of speech per user per day (v0.9.6) | Daily voice-input limit for every user (admins unlimited but counted). 0 = voice input paused for users. Resets 00:00 UTC | 15 |
 | Tools available to everyone | Tools switched off here are removed for all users | All on |
-| Per-user (Users tab) | Personal daily limit, Block/Unblock, Delete (deletes their chats and memories too) | n/a |
+| Per-user (Users tab) | Personal daily limit, Block/Unblock, Delete (deletes their chats and memories too). Shows today's messages, images and minutes of voice | n/a |
+| Per-user (each user's Settings → **Voice** tab, v0.9.6) | "Language you speak" (Detect automatically / English / Urdu) and "Read answers aloud automatically" (default off). Shown only when Voice is on | n/a |
 
 ---
 
@@ -129,6 +134,15 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 ### AI providers
 - Groq (<https://console.groq.com>): free plan, no payment method.
 - Google AI Studio (<https://aistudio.google.com>): Gemini key in a project without billing.
+
+### Images and voice (v0.9.6; free terms checked 2026-11-19)
+| Service | Used for | Key | Free terms / notes |
+|---|---|---|---|
+| Google Gemini (existing key) | Image questions (first choice) | `GEMINI_API_KEY` | Same free tier as chat. On the free tier Google may use uploaded images to improve its products |
+| OpenRouter (existing key) | Image questions (backup): a `:free` model whose model list says it accepts images | `OPENROUTER_API_KEY` | Same free limits as chat (50 requests/day). Picked from the live list (Gemma, Qwen-VL, Llama 4, Mistral Small preferred) |
+| Groq Whisper `whisper-large-v3-turbo` (existing key) | Microphone: speech → text | `GROQ_API_KEY` | Free plan: 20 requests/min, 2,000/day, 28,800 audio seconds/day (8 hours) for the whole app; each request counts as at least 10 s; 25 MB per file. Recordings are processed by Groq and not stored by VESPER |
+| Cloudflare Workers AI `@cf/openai/whisper-large-v3-turbo` | Microphone backup when Groq fails | none (`AI` binding) | Shares the 10,000 free neurons/day (~46 per audio minute). Not used when `WORKERS_AI_ENABLED=false` |
+| The device's own voices (Web Speech API) | 🔊 Read aloud | none | Runs in the browser; nothing is sent anywhere. Urdu needs an Urdu voice installed on the device |
 
 ### Live-information services (v0.7.0; free terms checked 2026-11-11)
 | Service | Used for | Key | Free terms / notes |
@@ -169,6 +183,7 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 | 2026-11-19 | **Trusted sources (v0.9.3)** | No new Cloudflare settings, secrets or migrations. Two new admin-panel settings (stored in `app_settings`): **Trusted websites** and **Blocked websites**. Web search asks for 8 results (still 1 search) and gives the best 6, labelled by source type with dates; no hard date filter. Source rules R1–R7 in the system prompt; admin-only number check under answers. New `npm run accuracy` script + `tests/accuracy/questions.json` (needs real keys in `.dev.vars`, runs locally only). Tests now ignore keys in `.dev.vars` (`vitest.config.ts`) |
 | 2026-11-19 | **Source fixes (v0.9.4)** | No new settings, secrets or migrations. After the live re-test (the Copilot answer called the PDF's 62% "GitHub's report"): the server reads an organisation's own page when its search snippet has no figure (2–3 short passages, no extra search); document passages that quote an organisation are labelled "your document (quoting X)" + rule R3b; document citations are never links; "Note:" lines only for real disagreements; Groq waits once when its rate-limit wait is 10 s or less, otherwise falls back at once. OpenRouter key added as a Cloudflare secret the same day |
 | 2026-11-19 | **Fewer tokens (v0.9.5)** | No new settings or secrets. **Migration `0005_search_cache.sql`** (add-only: new table `search_cache`, public search results only, expires after 1 h for "latest" questions / 6 h otherwise; the daily cron deletes expired rows). Questions that clearly need a look-up are searched first so the model answers in one request (fits Groq's 8,000 tokens/min); shorter snippets (450) and passages (800); the paired document search keeps only passages about the question; dates read from snippet text; at most 2 "other website" results when an official one has the figure; quoting passages carry a warning in their text; one extra search limited to the organisation's own sites when an "According to X" question gets none of X's pages |
+| 2026-11-19 | **Images + voice (v0.9.6)** | No new Cloudflare settings, secrets or bindings (uses the existing Gemini/OpenRouter/Groq keys and the `AI` binding). **Migration `0006_images_voice.sql`** (add-only: `messages.images` for ~20 KB previews; `user_usage_daily.images` and `.speech_seconds` counters). Four new admin-panel settings: Image attachments (on), Images per user per day (10), Voice (on), Minutes of speech per user per day (15). Two new per-user settings (Settings → Voice): speech language, read answers aloud automatically. `public/_headers`: `Permissions-Policy` now allows the microphone for VESPER's own pages (`microphone=(self)`). `/api/chat` accepts bodies up to 4 MB (other routes keep 256 KB); new endpoints `GET /api/media/features`, `POST /api/media/transcribe`. The offline mock (`npm run mock:llm`) answers speech-to-text too |
 | 2026-11-17 | **Sign-in page redesign (v0.8.1)** | No new settings, secrets or migrations. Professional split layout: sign-in form on the left (follows the app theme), dark brand panel on wide screens (logo in orbit lines, headline). The third-party-AI notice was removed from the sign-in page at the owner's request. Local-dev fix: `vite.config.ts` no longer proxies the app's own `/api/*.ts` source files to the Worker (that left `npm run dev` on a blank page) |
 
 ---

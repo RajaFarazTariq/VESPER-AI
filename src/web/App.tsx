@@ -1,6 +1,6 @@
-import { ArrowDown, Menu, Sparkles, SquarePen } from "lucide-react";
+import { ArrowDown, Menu, Mic, Paperclip, Sparkles, SquarePen } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ConversationDto, ModelsResponse, PublicConfigDto, ToolInfoDto, UserDto, UserSettings } from "../shared/types";
+import type { ConversationDto, FeaturesDto, ModelsResponse, PublicConfigDto, ToolInfoDto, UserDto, UserSettings } from "../shared/types";
 import { api, ApiError } from "./api/client";
 import { AdminDialog } from "./components/AdminDialog";
 import { Composer, ToolsButton } from "./components/Composer";
@@ -12,7 +12,9 @@ import { Sidebar } from "./components/Sidebar";
 import { Toasts, type Toast } from "./components/Toasts";
 import { TOOL_ICONS } from "./components/ToolActivity";
 import { useChat } from "./hooks/useChat";
+import { ImageError, prepareImage, type PendingImage } from "./lib/images";
 import { explainOllamaError, listOllamaModels } from "./lib/ollama";
+import { canSpeak, speak, stopSpeaking } from "./lib/voice";
 
 type Session = { user: UserDto; settings: UserSettings };
 
@@ -128,6 +130,9 @@ function ChatApp({
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [selection, setSelection] = useState(settings.defaultModel);
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<PendingImage[]>([]);
+  const [preparing, setPreparing] = useState(0);
+  const [features, setFeatures] = useState<FeaturesDto | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const toast = useCallback((message: string, kind: Toast["kind"] = "error") => {
@@ -150,9 +155,13 @@ function ChatApp({
     [toast],
   );
 
+  const voiceOn = Boolean(features?.voice.enabled);
   const chat = useChat({
     ollamaUrl: settings.ollamaUrl,
     onError: toast,
+    onReplyDone: (message) => {
+      if (settings.readAloud && voiceOn && canSpeak() && message.content.trim()) speak(message.id, message.content);
+    },
     onConversationCreated: (conversation) => {
       setConversations((list) => [conversation, ...list.filter((c) => c.id !== conversation.id)]);
       window.history.replaceState(null, "", `/c/${conversation.id}`);
@@ -186,7 +195,33 @@ function ChatApp({
       (r) => setToolList(r.tools),
       () => setToolList([]),
     );
+    // Image and voice switches (admin panel → App settings).
+    api.features().then(setFeatures, () => setFeatures(null));
   }, [settings, adminOpen]);
+
+  // Stop reading aloud when leaving the page.
+  useEffect(() => () => stopSpeaking(), []);
+
+  const imagesOn = Boolean(features?.images.enabled);
+  const maxImages = features?.images.maxPerMessage ?? 3;
+  const addImages = useCallback(
+    (files: File[]) => {
+      if (selection.startsWith("ollama:")) {
+        toast("Images work with the cloud models only. Choose Auto or another cloud model to attach images.");
+        return;
+      }
+      const room = maxImages - attachments.length - preparing;
+      if (files.length > room) toast(`Up to ${maxImages} images per message.`);
+      for (const file of files.slice(0, Math.max(0, room))) {
+        setPreparing((n) => n + 1);
+        prepareImage(file)
+          .then((image) => setAttachments((list) => [...list, { ...image, id: `${Date.now()}-${Math.random()}` }].slice(0, maxImages)))
+          .catch((e: unknown) => toast(e instanceof ImageError ? e.message : "That image couldn't be prepared."))
+          .finally(() => setPreparing((n) => n - 1));
+      }
+    },
+    [selection, maxImages, attachments.length, preparing, toast],
+  );
   const activeTools = useMemo(() => {
     if (toolList === null) return null;
     if (!settings.toolsEnabled) return [];
@@ -229,6 +264,7 @@ function ChatApp({
     async (id: string, push = true) => {
       if (push) window.history.pushState(null, "", `/c/${id}`);
       setSidebarOpen(false);
+      stopSpeaking();
       const conversation = await chat.load(id);
       if (!conversation) {
         window.history.replaceState(null, "", "/");
@@ -242,8 +278,10 @@ function ChatApp({
   const newChat = useCallback(
     (push = true) => {
       chat.reset();
+      stopSpeaking();
       setSelection(settings.defaultModel);
       setInput("");
+      setAttachments([]);
       setSidebarOpen(false);
       if (push && window.location.pathname !== "/") window.history.pushState(null, "", "/");
     },
@@ -267,10 +305,24 @@ function ChatApp({
 
   const send = async (text = input) => {
     const message = text.trim();
-    if (!message || chat.streaming) return;
+    const images = imagesOn ? attachments : [];
+    if ((!message && images.length === 0) || chat.streaming || preparing > 0) return;
+    if (images.length > 0 && selection.startsWith("ollama:")) {
+      toast("Images work with the cloud models only. Remove the images or choose a cloud model.");
+      return;
+    }
     setInput("");
-    const accepted = await chat.send(message, selection);
-    if (!accepted) setInput(message);
+    setAttachments([]);
+    stopSpeaking();
+    const accepted = await chat.send(
+      message,
+      selection,
+      images.map(({ data, thumb }) => ({ data, thumb })),
+    );
+    if (!accepted) {
+      setInput(message);
+      setAttachments(images);
+    }
   };
 
   // Auto-scroll while the reply streams, unless the user scrolled up.
@@ -290,6 +342,10 @@ function ChatApp({
   const activeTitle = conversations.find((c) => c.id === chat.conversationId)?.title ?? null;
   const firstName = (user.name ?? "").trim().split(/\s+/)[0] || null;
   const capabilities = Object.keys(CAPABILITY_LABELS).filter((name) => activeNames.has(name));
+  const mediaChips = [
+    ...(imagesOn ? [{ key: "images", label: "Understands images", Icon: Paperclip }] : []),
+    ...(features?.voice.speechToText ? [{ key: "voice", label: "Voice input", Icon: Mic }] : []),
+  ];
 
   const composerControls = (
     <>
@@ -306,6 +362,23 @@ function ChatApp({
       <ToolsButton tools={activeTools} onManage={() => setSettingsTab("tools")} />
     </>
   );
+  // 📎 and 🎤 appear only when the admin has them switched on and a service that can do them is set up.
+  const composerMedia = {
+    ...(imagesOn
+      ? {
+          attachments: {
+            items: attachments,
+            preparing,
+            max: maxImages,
+            onAdd: addImages,
+            onRemove: (id: string) => setAttachments((list) => list.filter((a) => a.id !== id)),
+          },
+        }
+      : {}),
+    ...(features?.voice.speechToText
+      ? { voice: { maxSeconds: features.voice.maxRecordingSeconds, language: settings.speechLanguage, onError: (m: string) => toast(m) } }
+      : {}),
+  };
 
   return (
     <div className="flex h-full overflow-hidden bg-[var(--bg)]">
@@ -416,23 +489,24 @@ function ChatApp({
                   disabled={chat.loading}
                   placeholder={`Ask ${appName} anything…`}
                   controls={composerControls}
+                  {...composerMedia}
                 />
               </div>
 
-              {activeTools !== null && capabilities.length > 0 ? (
+              {activeTools !== null && capabilities.length + mediaChips.length > 0 ? (
                 <div className="mt-4 flex flex-wrap items-center justify-center gap-1.5" aria-label="What Vesper can do">
-                  {capabilities.map((name) => {
-                    const Icon = TOOL_ICONS[name] ?? Sparkles;
-                    return (
-                      <span
-                        key={name}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1 text-xs text-[var(--text-soft)]"
-                      >
-                        <Icon size={12} className="text-[var(--accent)]" />
-                        {CAPABILITY_LABELS[name]}
-                      </span>
-                    );
-                  })}
+                  {[
+                    ...capabilities.map((name) => ({ key: name, label: CAPABILITY_LABELS[name]!, Icon: TOOL_ICONS[name] ?? Sparkles })),
+                    ...mediaChips,
+                  ].map(({ key, label, Icon }) => (
+                    <span
+                      key={key}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1 text-xs text-[var(--text-soft)]"
+                    >
+                      <Icon size={12} className="text-[var(--accent)]" />
+                      {label}
+                    </span>
+                  ))}
                 </div>
               ) : null}
 
@@ -458,6 +532,7 @@ function ChatApp({
                       isAdmin={user.role === "admin"}
                       canEdit={i === lastUserIndex && !chat.streaming && Boolean(chat.conversationId)}
                       onEdit={(text) => chat.edit(text, selection)}
+                      readAloud={voiceOn}
                     />
                   ))}
                 </div>
@@ -484,6 +559,7 @@ function ChatApp({
                 disabled={chat.loading}
                 placeholder={`Message ${appName}…`}
                 controls={composerControls}
+                {...composerMedia}
               />
             </div>
           </>
@@ -496,6 +572,7 @@ function ChatApp({
           settings={settings}
           models={models}
           ollamaModels={ollamaModels}
+          features={features}
           onClose={() => setSettingsOpen(false)}
           onSaved={(saved) => {
             onSettings(saved);

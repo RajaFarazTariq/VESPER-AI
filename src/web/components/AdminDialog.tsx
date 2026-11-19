@@ -213,7 +213,9 @@ function UserRow({
           <p className="truncate text-xs text-[var(--text-soft)]">{user.email ?? user.login}</p>
           <p className="mt-1 text-xs text-[var(--text-soft)]">
             Today: {user.todayMessages}
-            {isAdmin ? " messages (unlimited)" : effectiveLimit !== null ? ` / ${effectiveLimit} messages` : " messages"} · {user.conversations} chat
+            {isAdmin ? " messages (unlimited)" : effectiveLimit !== null ? ` / ${effectiveLimit} messages` : " messages"}
+            {user.todayImages > 0 ? ` · ${user.todayImages} image${user.todayImages === 1 ? "" : "s"}` : ""}
+            {user.todaySpeechSeconds > 0 ? ` · ${Math.ceil(user.todaySpeechSeconds / 60)} min voice` : ""} · {user.conversations} chat
             {user.conversations === 1 ? "" : "s"} · last sign-in {formatDate(user.lastLoginAt)} · joined {formatDate(user.createdAt)}
           </p>
         </div>
@@ -298,6 +300,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const [searchText, setSearchText] = useState("");
   const [trustedText, setTrustedText] = useState("");
   const [blockedText, setBlockedText] = useState("");
+  const [imagesText, setImagesText] = useState("");
+  const [speechText, setSpeechText] = useState("");
   const [webSearch, setWebSearch] = useState<{ keyConfigured: boolean; usedToday: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -311,6 +315,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         setSearchText(String(r.settings.webSearchDailyLimit));
         setTrustedText(r.settings.trustedSites.join("\n"));
         setBlockedText(r.settings.blockedSites.join("\n"));
+        setImagesText(String(r.settings.imagesPerDay));
+        setSpeechText(String(r.settings.speechMinutesPerDay));
         setTools(r.tools);
         setWebSearch(r.webSearch);
       },
@@ -324,12 +330,18 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const limitValid = limitText.trim() !== "" && Number.isInteger(limit) && limit >= 0 && limit <= 100_000;
   const searches = Number(searchText);
   const searchValid = searchText.trim() !== "" && Number.isInteger(searches) && searches >= 0 && searches <= 1_000;
+  const imagesPerDay = Number(imagesText);
+  const imagesValid = imagesText.trim() !== "" && Number.isInteger(imagesPerDay) && imagesPerDay >= 0 && imagesPerDay <= 1_000;
+  const speechMinutes = Number(speechText);
+  const speechValid = speechText.trim() !== "" && Number.isInteger(speechMinutes) && speechMinutes >= 0 && speechMinutes <= 1_440;
   const next: AppSettingsDto = {
     ...draft,
     defaultDailyLimit: limitValid ? limit : draft.defaultDailyLimit,
     webSearchDailyLimit: searchValid ? searches : draft.webSearchDailyLimit,
     trustedSites: siteLines(trustedText),
     blockedSites: siteLines(blockedText),
+    imagesPerDay: imagesValid ? imagesPerDay : draft.imagesPerDay,
+    speechMinutesPerDay: speechValid ? speechMinutes : draft.speechMinutesPerDay,
   };
   const dirty = JSON.stringify(next) !== JSON.stringify(saved);
 
@@ -346,6 +358,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       setSearchText(String(settings.webSearchDailyLimit));
       setTrustedText(settings.trustedSites.join("\n")); // the server tidies entries ("https://www.who.int/x" → "who.int")
       setBlockedText(settings.blockedSites.join("\n"));
+      setImagesText(String(settings.imagesPerDay));
+      setSpeechText(String(settings.speechMinutesPerDay));
       onNotice("App settings saved.", "info");
     } catch (e) {
       setError(errorText(e, "Could not save settings."));
@@ -438,6 +452,44 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
           className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
         />
       </Field>
+      <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
+        <Toggle
+          checked={draft.imagesEnabled}
+          onChange={(imagesEnabled) => setDraft({ ...draft, imagesEnabled })}
+          label="Image attachments"
+          hint="Paperclip, paste and drag-and-drop in the message box (up to 3 per message). Images go only to models that can see them: Gemini first, then a free OpenRouter vision model. Only a small preview is kept with the chat."
+        />
+        <label className="ml-12 flex flex-wrap items-center gap-2 text-xs text-[var(--text-soft)]">
+          Images per user per day
+          <input
+            value={imagesText}
+            onChange={(e) => setImagesText(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            aria-label="Images per user per day"
+            className={`w-20 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)] ${imagesValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+          />
+          <span>(admins unlimited; resets 00:00 UTC)</span>
+        </label>
+      </div>
+      <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
+        <Toggle
+          checked={draft.voiceEnabled}
+          onChange={(voiceEnabled) => setDraft({ ...draft, voiceEnabled })}
+          label="Voice"
+          hint="Microphone button: speech becomes text in the message box (Groq's free Whisper, Cloudflare as backup; English and Urdu). Also “Read aloud” on answers, using the device's own voices. Recordings are not stored."
+        />
+        <label className="ml-12 flex flex-wrap items-center gap-2 text-xs text-[var(--text-soft)]">
+          Minutes of speech per user per day
+          <input
+            value={speechText}
+            onChange={(e) => setSpeechText(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            aria-label="Minutes of speech per user per day"
+            className={`w-20 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)] ${speechValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+          />
+          <span>(admins unlimited; Groq's free plan allows 8 hours a day for the whole app)</span>
+        </label>
+      </div>
       <Field label="Tools available to everyone" hint="A tool switched off here is removed for all users, including you.">
         <div className="space-y-2">
           {tools.map((t) => (
@@ -467,7 +519,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         <button
           type="button"
           onClick={() => void save()}
-          disabled={!dirty || !limitValid || !searchValid || saving}
+          disabled={!dirty || !limitValid || !searchValid || !imagesValid || !speechValid || saving}
           className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-text)] disabled:opacity-40"
         >
           {saving ? "Saving…" : "Save"}

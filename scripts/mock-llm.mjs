@@ -50,6 +50,14 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Speech to text (Groq-style Whisper endpoint): answers with a fixed sentence and the upload's size.
+  if (req.method === "POST" && path === "/audio/transcriptions") {
+    const body = await readBody(req);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ text: `Mock transcription (${body.length} bytes received).`, duration: 3 }));
+    return;
+  }
+
   if (req.method === "POST" && path === "/chat/completions") {
     const body = JSON.parse((await readBody(req)) || "{}");
     if (failing.has(provider)) {
@@ -58,7 +66,11 @@ const server = createServer(async (req, res) => {
       return;
     }
     const lastMessage = (body.messages ?? []).at(-1);
-    const last = [...(body.messages ?? [])].reverse().find((m) => m.role === "user")?.content ?? "";
+    const lastContent = [...(body.messages ?? [])].reverse().find((m) => m.role === "user")?.content ?? "";
+    // Messages with images arrive as parts: [{ type: "text" }, { type: "image_url" }, …].
+    const last = Array.isArray(lastContent)
+      ? `${lastContent.filter((p) => p.type === "text").map((p) => p.text).join(" ")} [+${lastContent.filter((p) => p.type === "image_url").length} image(s)]`.trim()
+      : lastContent;
 
     // Tool calling: decide on a tool for recognisable requests, then answer from the tool result.
     if (Array.isArray(body.tools) && body.tools.length > 0) {

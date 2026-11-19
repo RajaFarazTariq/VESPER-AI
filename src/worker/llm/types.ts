@@ -16,7 +16,8 @@ export function hasForeignToolCalls(messages: ChatMessage[], provider: string): 
 }
 
 export type ChatMessage =
-  | { role: "system" | "user"; content: string }
+  /** `images`: data URLs sent with a user message (only to models that can see images). */
+  | { role: "system" | "user"; content: string; images?: string[] }
   | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
   | { role: "tool"; tool_call_id: string; name: string; content: string };
 
@@ -82,6 +83,7 @@ export function flattenToolMessages(messages: ChatMessage[]): ChatMessage[] {
     const last = merged[merged.length - 1];
     if (last && last.role === m.role && last.role !== "system" && typeof last.content === "string" && typeof m.content === "string") {
       last.content = `${last.content}\n\n${m.content}`;
+      if (last.role === "user" && m.role === "user" && m.images?.length) last.images = [...(last.images ?? []), ...m.images];
     } else merged.push({ ...m } as ChatMessage);
   }
   return merged;
@@ -102,6 +104,10 @@ export interface Provider {
   fetchModels(): Promise<ModelInfo[]>;
   /** Validate a model id the user picked manually. */
   isAllowedModel(model: string): boolean;
+  /** Can this model see images? (Providers without image support leave this out.) */
+  canSeeImages?(model: string): boolean;
+  /** The model used for image questions in Auto, or null when this provider has none right now. */
+  imageModel?(): Promise<string | null>;
   /**
    * Start a streaming completion. Must throw a ProviderError if the request fails
    * before any output is produced; may throw later if the stream breaks.

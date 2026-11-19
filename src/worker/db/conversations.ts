@@ -19,7 +19,18 @@ interface MessageRow {
   status: MessageStatus;
   error: string | null;
   tools: string | null;
+  images: string | null;
   created_at: number;
+}
+
+function parseImages(raw: string | null): string[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed.filter((x): x is string => typeof x === "string") : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseTools(raw: string | null): ToolEventDto[] | null {
@@ -50,6 +61,7 @@ const toMessage = (r: MessageRow): MessageDto => ({
   status: r.status,
   error: r.error,
   tools: parseTools(r.tools),
+  images: parseImages(r.images),
   createdAt: r.created_at,
 });
 
@@ -149,7 +161,7 @@ export async function listMessages(db: D1Database, conversationId: string, limit
   const { results } = await db
     .prepare(
       `SELECT * FROM (
-         SELECT id, role, content, reasoning, provider, model, status, error, tools, created_at, rowid AS rid
+         SELECT id, role, content, reasoning, provider, model, status, error, tools, images, created_at, rowid AS rid
          FROM messages WHERE conversation_id = ?1
          ORDER BY created_at DESC, rid DESC LIMIT ?2
        ) ORDER BY created_at ASC, rid ASC`,
@@ -170,6 +182,8 @@ export interface NewMessage {
   tokensIn?: number | null;
   tokensOut?: number | null;
   tools?: ToolEventDto[] | null;
+  /** Small previews of attached images (user messages). */
+  images?: string[] | null;
   /** Ensures the message sorts after an earlier one created in the same millisecond. */
   notBefore?: number;
 }
@@ -186,14 +200,15 @@ export async function insertMessage(db: D1Database, conversationId: string, m: N
     status: m.status ?? "complete",
     error: m.error ?? null,
     tools: m.tools && m.tools.length > 0 ? m.tools : null,
+    images: m.images && m.images.length > 0 ? m.images : null,
     createdAt,
   };
   await db.batch([
     db
       .prepare(
         `INSERT INTO messages (id, conversation_id, role, content, reasoning, provider, model, status, error,
-                               tokens_in, tokens_out, created_at, tools)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
+                               tokens_in, tokens_out, created_at, tools, images)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`,
       )
       .bind(
         message.id,
@@ -209,6 +224,7 @@ export async function insertMessage(db: D1Database, conversationId: string, m: N
         m.tokensOut ?? null,
         createdAt,
         message.tools ? JSON.stringify(message.tools) : null,
+        message.images ? JSON.stringify(message.images) : null,
       ),
     db.prepare("UPDATE conversations SET updated_at = ?1 WHERE id = ?2").bind(createdAt, conversationId),
   ]);
@@ -225,6 +241,15 @@ export async function updateLastUserMessage(db: D1Database, conversationId: stri
   if (!last || last.role !== "user") return null;
   await db.prepare("UPDATE messages SET content = ?1 WHERE id = ?2 AND conversation_id = ?3").bind(content, last.id, conversationId).run();
   return { ...last, content };
+}
+
+/** Image previews on the conversation's last user message (what Regenerate and Edit answer again). */
+export async function lastUserMessageImages(db: D1Database, conversationId: string): Promise<string[]> {
+  const row = await db
+    .prepare("SELECT images FROM messages WHERE conversation_id = ?1 AND role = 'user' ORDER BY created_at DESC, rowid DESC LIMIT 1")
+    .bind(conversationId)
+    .first<{ images: string | null }>();
+  return parseImages(row?.images ?? null) ?? [];
 }
 
 export async function deleteTrailingAssistantMessages(db: D1Database, conversationId: string): Promise<void> {

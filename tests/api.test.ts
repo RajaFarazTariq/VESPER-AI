@@ -571,3 +571,147 @@ describe("phase 5: tools and memory over HTTP", () => {
     expect(ok.json.settings.disabledTools).toEqual(["calculator"]);
   });
 });
+
+// ------------------------------------------------------------------ v0.9.6: images and voice
+
+/** A tiny stand-in for a JPEG: the real file signature, then filler (the server checks the signature, not the pixels). */
+const fakeJpeg = (fill: number) =>
+  "data:image/jpeg;base64," + btoa(String.fromCharCode(0xff, 0xd8, 0xff, 0xe0, ...Array.from({ length: 20 }, (_, i) => (i + fill) % 256)));
+const IMAGE = { data: fakeJpeg(1), thumb: fakeJpeg(2) };
+const VOICE_ENV: ExtraEnv = { GROQ_API_KEY: "test-groq", GROQ_BASE_URL: "https://groq.test/v1" };
+
+describe("v0.9.6: images and voice", () => {
+  it("sends images only to a model that can see them, keeps just the preview, and re-sends it on regenerate", async () => {
+    const cookie = await login();
+    const bodies: { url: string; body: any }[] = [];
+    const fetchSpy = mockFetch((url, init) => {
+      if (url.endsWith("/chat/completions")) {
+        bodies.push({ url, body: JSON.parse(String(init?.body)) });
+        return sseResponse(["A small test image."]);
+      }
+      return new Response("unexpected " + url, { status: 500 });
+    });
+
+    const first = await call("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: "What is this?", model: "auto", images: [IMAGE] }),
+      cookie,
+      env: PROVIDERS,
+    });
+    expect(parseEvents(first.text).at(-1)?.type).toBe("done");
+    // Auto skips Groq (no image support here) and goes to Gemini.
+    expect(fetchSpy.mock.calls.map(([u]) => String(u))).toEqual(["https://gemini.test/v1/chat/completions"]);
+    const sent = bodies[0]!.body;
+    expect(sent.messages.at(-1)).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "What is this?" },
+        { type: "image_url", image_url: { url: IMAGE.data } },
+      ],
+    });
+    expect(sent.messages[0].content).toContain("image(s) attached");
+    const conversationId = (parseEvents(first.text)[0] as Extract<ChatStreamEvent, { type: "conversation" }>).conversation.id;
+    const detail = await call(`/api/conversations/${conversationId}`, { cookie });
+    expect(detail.json.messages[0]).toMatchObject({ role: "user", content: "What is this?", images: [IMAGE.thumb] });
+    expect(detail.json.messages[1].images).toBeNull();
+
+    // Regenerate: the full image isn't stored, so the kept preview is sent again (still to Gemini).
+    bodies.length = 0;
+    const again = await call("/api/chat", { method: "POST", body: JSON.stringify({ conversationId, regenerate: true, model: "auto" }), cookie, env: PROVIDERS });
+    expect(parseEvents(again.text).at(-1)?.type).toBe("done");
+    expect(bodies[0]!.url).toBe("https://gemini.test/v1/chat/completions");
+    expect(bodies[0]!.body.messages.at(-1).content.at(-1)).toEqual({ type: "image_url", image_url: { url: IMAGE.thumb } });
+
+    // A text follow-up goes to Groq as usual; the earlier image is described in a note, not sent again.
+    bodies.length = 0;
+    const next = await call("/api/chat", { method: "POST", body: JSON.stringify({ conversationId, message: "Thanks", model: "auto" }), cookie, env: PROVIDERS });
+    expect(parseEvents(next.text).at(-1)?.type).toBe("done");
+    expect(bodies[0]!.url).toBe("https://groq.test/v1/chat/completions");
+    expect(JSON.stringify(bodies[0]!.body)).not.toContain("image_url");
+    expect(bodies[0]!.body.messages[1].content).toContain("attached an image");
+
+    // An image-only message is fine; a picked model that can't see images is replaced by one that can.
+    bodies.length = 0;
+    const imageOnly = await call("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ model: "groq:openai/gpt-oss-120b", images: [IMAGE] }),
+      cookie,
+      env: PROVIDERS,
+    });
+    expect(parseEvents(imageOnly.text).at(-1)?.type).toBe("done");
+    expect(bodies.map((b) => b.url)).toEqual(["https://gemini.test/v1/chat/completions"]);
+    expect((parseEvents(imageOnly.text)[0] as Extract<ChatStreamEvent, { type: "conversation" }>).conversation.title).toBe("Image");
+  });
+
+  it("enforces the image switch, the daily image limit and real image data", async () => {
+    const admin = await login();
+    const tester = await login("tester");
+    mockFetch((url) => (url.endsWith("/chat/completions") ? sseResponse(["ok"]) : new Response("unexpected " + url, { status: 500 })));
+    const send = (images: unknown[]) =>
+      call("/api/chat", { method: "POST", body: JSON.stringify({ message: "Look", model: "auto", images }), cookie: tester, env: PROVIDERS });
+    const testerUsage = async () =>
+      (await call("/api/admin/users", { cookie: admin })).json.users.find((u: { login: string }) => u.login === "tester");
+
+    expect((await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ imagesPerDay: 1 }), cookie: admin })).response.status).toBe(200);
+    const tooMany = await send([IMAGE, IMAGE]);
+    expect(tooMany.response.status).toBe(429);
+    expect(tooMany.json.error.code).toBe("image_limit");
+    // Refused before anything was written: no chat, and the message wasn't counted either.
+    expect((await call("/api/conversations", { cookie: tester })).json.conversations).toHaveLength(0);
+    expect(await testerUsage()).toMatchObject({ todayMessages: 0, todayImages: 0 });
+
+    expect(parseEvents((await send([IMAGE])).text).at(-1)?.type).toBe("done");
+    expect(await testerUsage()).toMatchObject({ todayMessages: 1, todayImages: 1 });
+    expect((await send([IMAGE])).json.error.code).toBe("image_limit");
+
+    // Not really a PNG (JPEG bytes), and more than 3 images: both refused.
+    const fakePng = { data: IMAGE.data.replace("image/jpeg", "image/png"), thumb: IMAGE.thumb };
+    expect((await send([fakePng])).response.status).toBe(400);
+    expect((await send([IMAGE, IMAGE, IMAGE, IMAGE])).response.status).toBe(400);
+
+    // Switched off by the admin: refused, and the chat screen hides the button.
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ imagesEnabled: false, imagesPerDay: 10 }), cookie: admin });
+    expect((await send([IMAGE])).json.error.code).toBe("images_off");
+    expect((await call("/api/media/features", { cookie: tester, env: PROVIDERS })).json.images.enabled).toBe(false);
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ imagesEnabled: true }), cookie: admin });
+    expect((await call("/api/media/features", { cookie: tester, env: PROVIDERS })).json.images).toEqual({ enabled: true, perDay: 10, maxPerMessage: 3 });
+    // Only Groq set up: nothing can see images, so the button stays hidden.
+    expect((await call("/api/media/features", { cookie: tester, env: VOICE_ENV })).json.images.enabled).toBe(false);
+  });
+
+  it("turns speech into text with Groq and counts it against the daily voice limit", async () => {
+    const admin = await login();
+    const tester = await login("tester");
+    let form: FormData | null = null;
+    mockFetch((url, init) => {
+      if (url === "https://groq.test/v1/audio/transcriptions") {
+        form = init?.body as FormData;
+        return jsonResponse({ text: " Assalam o alaikum ", duration: 4.2 });
+      }
+      return new Response("unexpected " + url, { status: 500 });
+    });
+    const audio = { audio: btoa("fake-audio-bytes-0123456789"), mimeType: "audio/webm;codecs=opus", seconds: 4 };
+    const transcribe = (extra: object = {}, env: ExtraEnv = VOICE_ENV) =>
+      call("/api/media/transcribe", { method: "POST", body: JSON.stringify({ ...audio, ...extra }), cookie: tester, env });
+
+    const ok = await transcribe({ language: "ur" });
+    expect(ok.response.status).toBe(200);
+    expect(ok.json).toEqual({ text: "Assalam o alaikum", seconds: 5 });
+    expect(form!.get("model")).toBe("whisper-large-v3-turbo");
+    expect(form!.get("language")).toBe("ur");
+    expect((form!.get("file") as File).name).toBe("speech.webm");
+    const usage = (await call("/api/admin/users", { cookie: admin })).json.users.find((u: { login: string }) => u.login === "tester");
+    expect(usage.todaySpeechSeconds).toBe(5);
+
+    expect((await transcribe({ mimeType: "video/mp4" })).response.status).toBe(400);
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ speechMinutesPerDay: 0 }), cookie: admin });
+    expect((await transcribe()).json.error.code).toBe("speech_limit");
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ voiceEnabled: false, speechMinutesPerDay: 15 }), cookie: admin });
+    expect((await transcribe()).json.error.code).toBe("voice_off");
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ voiceEnabled: true }), cookie: admin });
+    // No Groq key and Workers AI off (as in these tests): no speech service, so no microphone button.
+    expect((await transcribe({}, {})).json.error.code).toBe("voice_unavailable");
+    expect((await call("/api/media/features", { cookie: tester })).json.voice).toMatchObject({ enabled: true, speechToText: false });
+    expect((await call("/api/media/features", { cookie: tester, env: VOICE_ENV })).json.voice).toMatchObject({ enabled: true, speechToText: true });
+  });
+});

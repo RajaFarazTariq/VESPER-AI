@@ -1,6 +1,6 @@
 import type { MemoryDto, MessageDto } from "../../shared/types";
-/** Plain text messages (no tool calls): what conversation history is made of. */
-export type PlainMessage = { role: "system" | "user" | "assistant"; content: string };
+/** Plain text messages (no tool calls): what conversation history is made of. `images` only on the current question. */
+export type PlainMessage = { role: "system" | "user" | "assistant"; content: string; images?: string[] };
 
 export interface SystemPromptInput {
   appName: string;
@@ -16,6 +16,8 @@ export interface SystemPromptInput {
   timeZone?: string;
   /** Knowledge-base folders with searchable documents (only when search_knowledge is offered). */
   knowledge?: { name: string; description: string }[];
+  /** The current question has images attached. */
+  images?: boolean;
 }
 
 /** Returns the time zone if the runtime knows it (e.g. "Asia/Karachi"), otherwise undefined. */
@@ -51,6 +53,11 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "- Use Markdown when it helps: headings, lists, tables, and fenced code blocks with a language tag.",
     "- If you are unsure or lack information, say so instead of guessing.",
   ];
+  if (input.images) {
+    lines.push(
+      "- The user's latest message has image(s) attached. Look at them carefully and answer about what they actually show; if part of an image is unclear or unreadable, say so instead of guessing.",
+    );
+  }
   const tools = input.tools ?? [];
   const has = (name: string) => tools.includes(name);
   lines.push(
@@ -141,30 +148,39 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
 
 const TRUNCATION_NOTE = "\n\n[…message truncated to fit the model's context window…]";
 
+/** Earlier images aren't sent again (only small previews are kept); the model gets a note that they were there. */
+const earlierImagesNote = (count: number) =>
+  `[The user attached ${count === 1 ? "an image" : `${count} images`} to this message. ${count === 1 ? "It is" : "They are"} no longer available; rely on the earlier reply about ${count === 1 ? "it" : "them"}.]`;
+
 /**
  * Build the prompt: system message + as many recent messages as fit in `budgetChars`.
- * - Error messages and empty replies are skipped.
+ * - Error messages and empty replies are skipped (a message with images counts even without text).
  * - The newest message is always included (truncated if it alone exceeds the budget).
+ * - `images` go with the newest message when it is the user's (the current question); earlier images become a note.
  * - Consecutive same-role messages are merged, and the window never starts with an
  *   assistant turn, because some providers require strict user/assistant alternation.
  */
-export function buildContext(system: string, history: MessageDto[], budgetChars: number): PlainMessage[] {
-  const usable = history.filter((m) => m.status !== "error" && m.content.trim().length > 0);
+export function buildContext(system: string, history: MessageDto[], budgetChars: number, images: string[] = []): PlainMessage[] {
+  const usable = history.filter((m) => m.status !== "error" && (m.content.trim().length > 0 || (m.images?.length ?? 0) > 0));
   const selected: PlainMessage[] = [];
   let used = system.length;
 
   for (let i = usable.length - 1; i >= 0; i--) {
     const m = usable[i]!;
+    const newest = i === usable.length - 1;
+    const current = newest && m.role === "user" && images.length > 0;
+    const earlier = !current && m.images?.length ? earlierImagesNote(m.images.length) : "";
+    const content = earlier ? (m.content.trim() ? `${m.content}\n\n${earlier}` : earlier) : m.content;
     const remaining = budgetChars - used;
-    if (m.content.length <= remaining) {
-      selected.push({ role: m.role, content: m.content });
-      used += m.content.length;
+    if (content.length <= remaining) {
+      selected.push({ role: m.role, content, ...(current ? { images } : {}) });
+      used += content.length;
       continue;
     }
     if (selected.length === 0) {
       // The newest message alone is too long: keep its beginning.
       const keep = Math.max(500, remaining - TRUNCATION_NOTE.length);
-      selected.push({ role: m.role, content: m.content.slice(0, keep) + TRUNCATION_NOTE });
+      selected.push({ role: m.role, content: content.slice(0, keep) + TRUNCATION_NOTE, ...(current ? { images } : {}) });
     }
     break;
   }
@@ -175,8 +191,10 @@ export function buildContext(system: string, history: MessageDto[], budgetChars:
   const merged: PlainMessage[] = [];
   for (const m of selected) {
     const last = merged[merged.length - 1];
-    if (last && last.role === m.role) last.content = `${last.content}\n\n${m.content}`;
-    else merged.push({ ...m });
+    if (last && last.role === m.role) {
+      last.content = `${last.content}\n\n${m.content}`;
+      if (m.images) last.images = [...(last.images ?? []), ...m.images];
+    } else merged.push({ ...m });
   }
   return [{ role: "system", content: system }, ...merged];
 }

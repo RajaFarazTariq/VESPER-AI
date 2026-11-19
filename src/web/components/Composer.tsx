@@ -1,6 +1,9 @@
-import { ArrowUp, Settings2, Square, Wrench } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import type { ToolInfoDto } from "../../shared/types";
+import { ArrowUp, Check, LoaderCircle, Mic, Paperclip, Settings2, Square, Wrench, X } from "lucide-react";
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
+import type { SpeechLanguage, ToolInfoDto } from "../../shared/types";
+import { api, ApiError } from "../api/client";
+import { imageFiles, type PendingImage } from "../lib/images";
+import { canRecord, RecordingError, VoiceRecorder } from "../lib/voice";
 import { TOOL_ICONS } from "./ToolActivity";
 
 const MAX_CHARS = 32_000;
@@ -18,11 +21,43 @@ interface Props {
   /** Controls shown at the bottom-left inside the box (model picker, tools). */
   controls?: ReactNode;
   autoFocus?: boolean;
+  /** Images waiting to be sent. Omit to hide the attach button (images switched off). */
+  attachments?: {
+    items: PendingImage[];
+    /** Images still being resized. */
+    preparing: number;
+    max: number;
+    onAdd: (files: File[]) => void;
+    onRemove: (id: string) => void;
+  };
+  /** Microphone button: the recognised text is added to the message box. Omit to hide it. */
+  voice?: { maxSeconds: number; language: SpeechLanguage; onError: (message: string) => void };
 }
 
-export function Composer({ value, onChange, onSend, onStop, streaming, disabled, placeholder, variant = "docked", controls, autoFocus }: Props) {
+const iconButton =
+  "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--text-soft)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)] disabled:pointer-events-none disabled:opacity-40";
+
+export function Composer({
+  value,
+  onChange,
+  onSend,
+  onStop,
+  streaming,
+  disabled,
+  placeholder,
+  variant = "docked",
+  controls,
+  autoFocus,
+  attachments,
+  voice,
+}: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [micBusy, setMicBusy] = useState(false);
   const hero = variant === "hero";
+  const valueRef = useRef(value);
+  valueRef.current = value;
 
   // Auto-grow up to ~10 lines.
   useEffect(() => {
@@ -36,8 +71,12 @@ export function Composer({ value, onChange, onSend, onStop, streaming, disabled,
     if (!streaming && (autoFocus ?? true)) ref.current?.focus();
   }, [streaming, autoFocus]);
 
+  const images = attachments?.items ?? [];
+  const preparing = attachments?.preparing ?? 0;
   const tooLong = value.length > MAX_CHARS;
-  const canSend = !streaming && !disabled && value.trim().length > 0 && !tooLong;
+  const hasContent = value.trim().length > 0 || images.length > 0;
+  const canSend = !streaming && !disabled && hasContent && !tooLong && preparing === 0 && !micBusy;
+  const full = images.length + preparing >= (attachments?.max ?? 0);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -46,20 +85,82 @@ export function Composer({ value, onChange, onSend, onStop, streaming, disabled,
     }
   };
 
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!attachments) return;
+    const files = imageFiles(e.clipboardData.files);
+    if (files.length === 0) return;
+    attachments.onAdd(files);
+    if (!e.clipboardData.getData("text/plain")) e.preventDefault();
+  };
+
+  const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
+  const dropHandlers = attachments
+    ? {
+        onDragOver: (e: DragEvent<HTMLDivElement>) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          setDragging(true);
+        },
+        onDragLeave: (e: DragEvent<HTMLDivElement>) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+        },
+        onDrop: (e: DragEvent<HTMLDivElement>) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          setDragging(false);
+          const files = imageFiles(e.dataTransfer.files);
+          if (files.length > 0) attachments.onAdd(files);
+        },
+      }
+    : {};
+
+  const addText = (text: string) => {
+    const current = valueRef.current;
+    onChange(current.trim() ? `${current.trimEnd()} ${text}` : text);
+    ref.current?.focus();
+  };
+
   return (
     <div className={hero ? "w-full" : "mx-auto w-full max-w-3xl px-3 pb-3 sm:px-4 sm:pb-4"}>
       <div
-        className={`rounded-[26px] border border-[var(--border)] bg-[var(--bg-elevated)] transition-[border-color,box-shadow] focus-within:border-[color-mix(in_srgb,var(--accent)_45%,var(--border))] ${
-          hero ? "shadow-[var(--shadow-lg)]" : "shadow-[var(--shadow-md)]"
-        }`}
+        {...dropHandlers}
+        className={`rounded-[26px] border bg-[var(--bg-elevated)] transition-[border-color,box-shadow] focus-within:border-[color-mix(in_srgb,var(--accent)_45%,var(--border))] ${
+          dragging ? "border-[var(--accent)]" : "border-[var(--border)]"
+        } ${hero ? "shadow-[var(--shadow-lg)]" : "shadow-[var(--shadow-md)]"}`}
       >
+        {images.length > 0 || preparing > 0 ? (
+          <ul className="flex flex-wrap gap-2 px-4 pt-3" aria-label="Attached images">
+            {images.map((img, i) => (
+              <li key={img.id} className="relative">
+                <img src={img.thumb} alt={`Attached image ${i + 1}`} className="h-16 w-16 rounded-lg border border-[var(--border)] object-cover" />
+                <button
+                  type="button"
+                  onClick={() => attachments?.onRemove(img.id)}
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-soft)] shadow-[var(--shadow-sm)] hover:text-[var(--text)]"
+                  aria-label={`Remove image ${i + 1}`}
+                  title="Remove"
+                >
+                  <X size={12} />
+                </button>
+              </li>
+            ))}
+            {Array.from({ length: preparing }, (_, i) => (
+              <li key={`preparing-${i}`} className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-[var(--border)]" role="status">
+                <LoaderCircle size={16} className="animate-spin text-[var(--text-faint)]" />
+                <span className="sr-only">Preparing image…</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <textarea
           ref={ref}
           rows={hero ? 2 : 1}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={placeholder ?? "Send a message…"}
+          onPaste={onPaste}
+          placeholder={dragging ? "Drop images to attach" : (placeholder ?? "Send a message…")}
           aria-label="Message"
           className={`block w-full resize-none bg-transparent px-5 leading-relaxed outline-none placeholder:text-[var(--text-faint)] thin-scroll ${
             hero ? "max-h-60 min-h-[56px] pt-4 text-[16px]" : "max-h-60 min-h-[28px] pt-3.5 text-[15px]"
@@ -67,7 +168,36 @@ export function Composer({ value, onChange, onSend, onStop, streaming, disabled,
           disabled={disabled}
         />
         <div className="flex items-center gap-1 px-2.5 pb-2.5 pt-1">
+          {attachments ? (
+            <>
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                disabled={disabled || full}
+                className={iconButton}
+                aria-label="Attach images"
+                title={full ? `Up to ${attachments.max} images per message` : `Attach images (up to ${attachments.max})`}
+              >
+                <Paperclip size={17} />
+              </button>
+              <input
+                ref={fileInput}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(e) => {
+                  const files = imageFiles(e.target.files);
+                  e.target.value = "";
+                  if (files.length > 0) attachments.onAdd(files);
+                }}
+              />
+            </>
+          ) : null}
           <div className="flex min-w-0 flex-1 items-center gap-1">{controls}</div>
+          {voice && canRecord() ? (
+            <MicButton {...voice} disabled={Boolean(disabled) || streaming} onBusy={setMicBusy} onText={addText} />
+          ) : null}
           {streaming ? (
             <button
               type="button"
@@ -107,6 +237,107 @@ export function Composer({ value, onChange, onSend, onStop, streaming, disabled,
         </p>
       ) : null}
     </div>
+  );
+}
+
+const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+
+/** Record → speech to text on the server → the text appears in the message box to check before sending. */
+function MicButton({
+  maxSeconds,
+  language,
+  disabled,
+  onError,
+  onBusy,
+  onText,
+}: {
+  maxSeconds: number;
+  language: SpeechLanguage;
+  disabled: boolean;
+  onError: (message: string) => void;
+  onBusy: (busy: boolean) => void;
+  onText: (text: string) => void;
+}) {
+  const [state, setState] = useState<"idle" | "starting" | "recording" | "transcribing">("idle");
+  const [elapsed, setElapsed] = useState(0);
+  const recorder = useRef<VoiceRecorder | null>(null);
+
+  useEffect(() => onBusy(state !== "idle"), [state, onBusy]);
+  useEffect(() => () => recorder.current?.cancel(), []);
+  useEffect(() => {
+    if (state !== "recording") return;
+    const id = setInterval(() => setElapsed(recorder.current?.elapsedSeconds ?? 0), 250);
+    return () => clearInterval(id);
+  }, [state]);
+
+  const finish = async () => {
+    const active = recorder.current;
+    if (!active) return;
+    recorder.current = null;
+    setState("transcribing");
+    try {
+      const recording = await active.stop();
+      if (recording.seconds < 0.5) throw new RecordingError("That was too short. Hold on a moment longer and speak.");
+      const { text } = await api.transcribe({ audio: recording.base64, mimeType: recording.mimeType, seconds: recording.seconds, language });
+      if (text.trim()) onText(text.trim());
+      else onError("I didn't catch any speech. Please try again.");
+    } catch (e) {
+      onError(e instanceof RecordingError || e instanceof ApiError ? e.message : "Voice input didn't work. Please try again.");
+    } finally {
+      setState("idle");
+    }
+  };
+
+  const start = async () => {
+    setState("starting");
+    setElapsed(0);
+    try {
+      recorder.current = await VoiceRecorder.start(maxSeconds, () => void finish());
+      setState("recording");
+    } catch (e) {
+      recorder.current = null;
+      setState("idle");
+      onError(e instanceof RecordingError ? e.message : "Couldn't start the microphone.");
+    }
+  };
+
+  const cancel = () => {
+    recorder.current?.cancel();
+    recorder.current = null;
+    setState("idle");
+  };
+
+  if (state === "recording") {
+    return (
+      <div className="flex shrink-0 items-center gap-1 rounded-full bg-[var(--danger)]/10 py-0.5 pl-3 pr-0.5" role="status" aria-live="polite">
+        <span className="relative mr-1 flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--danger)] opacity-60 motion-reduce:animate-none" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--danger)]" />
+        </span>
+        <span className="w-10 text-xs tabular-nums text-[var(--danger)]" aria-label={`Recording, ${Math.floor(elapsed)} seconds`}>
+          {clock(elapsed)}
+        </span>
+        <button type="button" onClick={cancel} className={iconButton} aria-label="Cancel recording" title="Cancel">
+          <X size={16} />
+        </button>
+        <button type="button" onClick={() => void finish()} className={iconButton} aria-label="Stop and turn speech into text" title="Done">
+          <Check size={17} />
+        </button>
+      </div>
+    );
+  }
+  const busy = state !== "idle";
+  return (
+    <button
+      type="button"
+      onClick={() => void start()}
+      disabled={disabled || busy}
+      className={iconButton}
+      aria-label={state === "transcribing" ? "Turning speech into text" : "Speak your message"}
+      title={state === "transcribing" ? "Turning speech into text…" : `Speak (up to ${Math.round(maxSeconds / 60)} min)`}
+    >
+      {busy ? <LoaderCircle size={17} className="animate-spin" /> : <Mic size={17} />}
+    </button>
   );
 }
 

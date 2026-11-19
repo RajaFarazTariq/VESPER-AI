@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { formatSse } from "../../shared/sse";
-import type { ChatStreamEvent, ConversationDto, LocalPrepareResponse, MessageDto } from "../../shared/types";
+import type { ChatImageInput, ChatStreamEvent, ConversationDto, LocalPrepareResponse, MessageDto } from "../../shared/types";
 import type { AppEnv } from "../app-env";
 import {
   createConversation,
@@ -9,6 +9,7 @@ import {
   deriveTitle,
   getConversation,
   insertMessage,
+  lastUserMessageImages,
   listMessages,
   updateConversation,
   updateLastUserMessage,
@@ -17,9 +18,10 @@ import { searchableCollections } from "../db/knowledge";
 import { listMemories } from "../db/memories";
 import { D1ProviderStateStore } from "../db/provider-state";
 import { getAppSettings, userMayUseModel } from "../db/app-settings";
-import { consumeDailyMessage, type SessionUser } from "../db/users";
+import { consumeDailyImages, consumeDailyMessage, refundDailyMessage, type SessionUser } from "../db/users";
 import { getConfig } from "../env";
 import { AppError, badRequest, notFound } from "../lib/errors";
+import { CHAT_BODY_LIMIT, chatImageSchema, MAX_IMAGES_PER_MESSAGE } from "../lib/images";
 import { parseJson } from "../lib/validation";
 import { getProviderModels } from "../llm/catalog";
 import { buildContext, buildSystemPrompt, normalizeTimeZone } from "../llm/context";
@@ -46,12 +48,17 @@ const chatSchema = z
     edit: z.boolean().optional(),
     /** The browser's IANA time zone, e.g. "Asia/Karachi". Unknown values are ignored (UTC is used). */
     timeZone: z.string().max(64).optional(),
+    /** Up to 3 images, resized in the browser (only with a new message). */
+    images: z.array(chatImageSchema).max(MAX_IMAGES_PER_MESSAGE, `Up to ${MAX_IMAGES_PER_MESSAGE} images per message.`).optional(),
   })
-  .refine((d) => (d.regenerate ? Boolean(d.conversationId) : Boolean(d.message?.trim())), {
+  .refine((d) => (d.regenerate ? Boolean(d.conversationId) : Boolean(d.message?.trim()) || Boolean(d.images?.length)), {
     message: "A non-empty message is required (or conversationId with regenerate).",
   })
-  .refine((d) => !d.edit || (Boolean(d.conversationId) && !d.regenerate), {
-    message: "Editing needs a conversationId (and can't be combined with regenerate).",
+  .refine((d) => !d.edit || (Boolean(d.conversationId) && !d.regenerate && Boolean(d.message?.trim())), {
+    message: "Editing needs a conversationId and the new text (and can't be combined with regenerate).",
+  })
+  .refine((d) => !d.images?.length || (!d.regenerate && !d.edit), {
+    message: "Images can only be attached to a new message.",
   });
 
 const localCompleteSchema = z.object({
@@ -93,6 +100,11 @@ async function enforceDailyLimit(db: D1Database, user: SessionUser, defaultLimit
   );
 }
 
+/** Same idea for attached images (admins counted, never limited). Returns false when they don't fit today. */
+async function consumeImages(db: D1Database, user: SessionUser, count: number, perDay: number): Promise<boolean> {
+  return consumeDailyImages(db, user.id, count, user.role === "admin" ? Number.MAX_SAFE_INTEGER : perDay);
+}
+
 /**
  * Shared first half of a chat turn: find/create the conversation and store the user message
  * (or, for regenerate, drop the previous answer). Returns the prompt context.
@@ -100,24 +112,27 @@ async function enforceDailyLimit(db: D1Database, user: SessionUser, defaultLimit
 async function prepareTurn(
   c: Context<AppEnv>,
   user: SessionUser,
-  input: { conversationId?: string; message?: string; regenerate?: boolean; edit?: boolean },
+  input: { conversationId?: string; message?: string; regenerate?: boolean; edit?: boolean; images?: ChatImageInput[] },
   selection: string,
   extras: {
     tools: AgentTool[];
     adminInstructions: string;
     timeZone: string | undefined;
     knowledge?: { name: string; description: string }[];
+    /** Images the model gets with the question (new images, or the stored previews for Regenerate/Edit). */
+    sendImages?: string[];
   },
 ): Promise<{ conversation: ConversationDto; isNew: boolean; userMessage: MessageDto; context: ReturnType<typeof buildContext> }> {
   const db = c.env.DB;
   const config = getConfig(c.env);
+  const text = input.message?.trim() ?? "";
   let conversation: ConversationDto | null = null;
   let isNew = false;
   if (input.conversationId) {
     conversation = await getConversation(db, user.id, input.conversationId);
     if (!conversation) throw notFound("Conversation");
   } else {
-    conversation = await createConversation(db, user.id, deriveTitle(input.message ?? ""), selection);
+    conversation = await createConversation(db, user.id, deriveTitle(text || (input.images?.length ? "Image" : "")), selection);
     isNew = true;
   }
 
@@ -131,11 +146,16 @@ async function prepareTurn(
   } else if (input.edit) {
     // Edit: the last user message gets the new text and the old reply is replaced.
     await deleteTrailingAssistantMessages(db, conversation.id);
-    const edited = await updateLastUserMessage(db, conversation.id, input.message!.trim());
+    const edited = await updateLastUserMessage(db, conversation.id, text);
     if (!edited) throw badRequest("There is no message to edit in this conversation.");
     userMessage = edited;
   } else {
-    userMessage = await insertMessage(db, conversation.id, { role: "user", content: input.message!.trim() });
+    // Only the small previews are kept; the full images go to the model once.
+    userMessage = await insertMessage(db, conversation.id, {
+      role: "user",
+      content: text,
+      images: input.images?.map((i) => i.thumb) ?? null,
+    });
   }
   if (conversation.model !== selection) {
     await updateConversation(db, user.id, conversation.id, { model: selection });
@@ -154,8 +174,9 @@ async function prepareTurn(
     tools: extras.tools.map((t) => t.name),
     ...(extras.timeZone ? { timeZone: extras.timeZone } : {}),
     ...(extras.knowledge ? { knowledge: extras.knowledge } : {}),
+    ...(extras.sendImages?.length ? { images: true } : {}),
   });
-  return { conversation, isNew, userMessage, context: buildContext(system, history, config.maxContextChars) };
+  return { conversation, isNew, userMessage, context: buildContext(system, history, config.maxContextChars, extras.sendImages) };
 }
 
 export const chatRoutes = new Hono<AppEnv>()
@@ -164,7 +185,7 @@ export const chatRoutes = new Hono<AppEnv>()
   /** Stream a reply from the free provider chain as Server-Sent Events. */
   .post("/", chatLimiter, async (c) => {
     const user = c.get("user");
-    const body = await parseJson(c, chatSchema);
+    const body = await parseJson(c, chatSchema, CHAT_BODY_LIMIT);
     const config = getConfig(c.env);
     const appSettings = await getAppSettings(c.env.DB, config);
     let selection = body.model ?? user.settings.defaultModel;
@@ -175,13 +196,24 @@ export const chatRoutes = new Hono<AppEnv>()
       }
       selection = "auto"; // their saved default is no longer on the list
     }
+    // Images the model sees with this question: new ones, or (Regenerate/Edit) the previews kept with the message.
+    const newImages = body.images ?? [];
+    if (newImages.length > 0 && !appSettings.imagesEnabled) {
+      throw new AppError(403, "images_off", "Image attachments are switched off. Send the question as text.");
+    }
+    let sendImages = newImages.map((i) => i.data);
+    if (newImages.length === 0 && (body.regenerate || body.edit) && body.conversationId && appSettings.imagesEnabled) {
+      if (!(await getConversation(c.env.DB, user.id, body.conversationId))) throw notFound("Conversation");
+      sendImages = await lastUserMessageImages(c.env.DB, body.conversationId);
+    }
+
     const providers = getProviders(c.env);
     const store = new D1ProviderStateStore(c.env.DB);
     const health = await store.getHealth();
 
-    // Warm OpenRouter's model list so it can pick a default free model.
+    // Warm OpenRouter's model list so it can pick a default free model (and, for image questions, one that sees images).
     const openrouter = providers.get("openrouter");
-    if (openrouter?.isConfigured() && !c.env.OPENROUTER_MODEL) await getProviderModels(c.env.DB, openrouter);
+    if (openrouter?.isConfigured() && (!c.env.OPENROUTER_MODEL || sendImages.length > 0)) await getProviderModels(c.env.DB, openrouter);
 
     // Plan before writing anything, so configuration errors don't leave half-created chats.
     const planned = await planRoute({
@@ -190,15 +222,27 @@ export const chatRoutes = new Hono<AppEnv>()
       order: config.providerOrder,
       health,
       fallback: user.settings.fallback,
+      images: sendImages.length > 0,
     });
     if (!planned.ok) {
-      const status = planned.error.code === "no_providers" || planned.error.code === "provider_not_configured" ? 503 : 400;
+      const status = ["no_providers", "provider_not_configured", "no_image_model"].includes(planned.error.code) ? 503 : 400;
       throw new AppError(status, planned.error.code, planned.error.message);
     }
 
     // Count the message against the daily limit only once the request is known to be valid,
     // and before anything is written, so a refused message leaves no half-created chat.
     await enforceDailyLimit(c.env.DB, user, appSettings.defaultDailyLimit);
+    if (!(await consumeImages(c.env.DB, user, newImages.length, appSettings.imagesPerDay))) {
+      await refundDailyMessage(c.env.DB, user.id);
+      const perDay = appSettings.imagesPerDay;
+      throw new AppError(
+        429,
+        "image_limit",
+        perDay <= 0
+          ? "Image attachments are paused for your account. Send the question as text."
+          : `That would go over your ${perDay} images for today. The limit resets at 00:00 UTC; you can still send text.`,
+      );
+    }
 
     const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, appSettings);
     const knowledge = await searchableCollections(c.env.DB);
@@ -209,6 +253,7 @@ export const chatRoutes = new Hono<AppEnv>()
       adminInstructions: appSettings.botInstructions,
       timeZone,
       ...(tools.some((t) => t.name === "search_knowledge") ? { knowledge } : {}),
+      sendImages,
     });
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
@@ -325,6 +370,7 @@ export const chatRoutes = new Hono<AppEnv>()
     if (!selection.startsWith("ollama:") || !/^ollama:[\w.:\-/]{1,150}$/.test(selection)) {
       throw badRequest("Local chat requires an ollama:<model> selection.");
     }
+    if (body.images?.length) throw badRequest("Images work with the cloud models only. Choose Auto or another cloud model.");
     // Local models run on the user's own computer, so they don't count against the daily limit.
     const { botInstructions } = await getAppSettings(c.env.DB, getConfig(c.env));
     const turn = await prepareTurn(c, user, body, selection, {

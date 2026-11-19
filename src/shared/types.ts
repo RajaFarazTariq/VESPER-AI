@@ -29,6 +29,9 @@ export interface AdminUserDto extends UserDto {
   /** Personal daily message limit; null = the app-wide default. */
   dailyLimit: number | null;
   todayMessages: number;
+  /** Images attached and seconds of speech turned into text today (UTC). */
+  todayImages: number;
+  todaySpeechSeconds: number;
   conversations: number;
   github: boolean;
   google: boolean;
@@ -56,7 +59,34 @@ export interface AppSettingsDto {
   trustedSites: string[];
   /** Websites never used in web search results (e.g. spammy statistics sites). */
   blockedSites: string[];
+  /** Image attachments in chat (sent only to models that can see images). */
+  imagesEnabled: boolean;
+  /** Images each user may attach per UTC day (admins unlimited). */
+  imagesPerDay: number;
+  /** Voice: the microphone button (speech to text) and "Read aloud" on answers. */
+  voiceEnabled: boolean;
+  /** Minutes of speech each user may turn into text per UTC day (admins unlimited). */
+  speechMinutesPerDay: number;
 }
+
+/** What the chat screen may offer right now (admin switches + whether a capable service is set up). */
+export interface FeaturesDto {
+  images: { enabled: boolean; perDay: number; maxPerMessage: number };
+  /**
+   * enabled: the admin's Voice switch (covers "Read aloud", which runs on the device).
+   * speechToText: the microphone button can be offered (Voice on + Groq or Workers AI available).
+   */
+  voice: { enabled: boolean; speechToText: boolean; minutesPerDay: number; maxRecordingSeconds: number };
+}
+
+export interface TranscriptionDto {
+  text: string;
+  /** Seconds of speech counted against today's limit. */
+  seconds: number;
+}
+
+/** Speech language for the microphone: auto-detect, English or Urdu. */
+export type SpeechLanguage = "auto" | "en" | "ur";
 
 /** A model the admin made available to users, e.g. { value: "groq:openai/gpt-oss-120b", label: "Smart" }. */
 export interface UserModelOption {
@@ -79,6 +109,10 @@ export interface UserSettings {
   disabledTools: string[];
   /** Include saved memories in every conversation and allow the assistant to save new ones. */
   memoryEnabled: boolean;
+  /** Language spoken into the microphone ("auto" lets the speech service detect it). */
+  speechLanguage: SpeechLanguage;
+  /** Read each new answer aloud with the device's built-in voice. */
+  readAloud: boolean;
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -90,6 +124,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   toolsEnabled: true,
   disabledTools: [],
   memoryEnabled: true,
+  speechLanguage: "auto",
+  readAloud: false,
 };
 
 /** One tool call made while producing a reply. */
@@ -195,13 +231,25 @@ export interface MessageDto {
   status: MessageStatus;
   error: string | null;
   tools: ToolEventDto[] | null;
+  /** Small previews (JPEG data URLs) of images attached to a user message. The full images are not kept. */
+  images?: string[] | null;
   createdAt: number;
+}
+
+/** An image attached to a chat message: the resized image for the model and a small preview to keep. */
+export interface ChatImageInput {
+  /** data:image/jpeg;base64,… (resized in the browser, ~1280 px). */
+  data: string;
+  /** data:image/jpeg;base64,… (~384 px preview, stored with the message). */
+  thumb: string;
 }
 
 export interface ModelInfo {
   id: string;
   label: string;
   contextLength?: number;
+  /** The model accepts images (from the provider's model list, where it says so). */
+  vision?: boolean;
 }
 
 export interface ProviderStatusDto {

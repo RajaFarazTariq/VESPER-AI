@@ -106,16 +106,22 @@ export function parseSelection(selection: string): { provider: string; model: st
   return { provider: selection.slice(0, index), model: selection.slice(index + 1) };
 }
 
+/** Which model of a provider Auto uses: its default, or (for image questions) one that can see images. */
+type ModelPicker = (provider: Provider) => Promise<string | null>;
+const defaultModelOf: ModelPicker = (p) => p.defaultModel();
+const imageModelOf: ModelPicker = async (p) => (p.imageModel ? p.imageModel() : null);
+
 async function autoPlan(
   providers: Map<ProviderId, Provider>,
   order: ProviderId[],
   health: Map<ProviderId, ProviderHealth>,
   now: number,
   exclude?: ProviderId,
+  pick: ModelPicker = defaultModelOf,
 ): Promise<RouteTarget[]> {
   const configured = order
     .map((id) => providers.get(id))
-    .filter((p): p is Provider => Boolean(p && p.isConfigured() && p.id !== exclude));
+    .filter((p): p is Provider => Boolean(p && p.isConfigured() && p.id !== exclude && (pick === defaultModelOf || p.imageModel)));
   const ready = configured.filter((p) => (health.get(p.id)?.cooldownUntil ?? 0) <= now);
   // If everything is cooling down, still try them (soonest first) rather than failing outright.
   const candidates =
@@ -125,7 +131,8 @@ async function autoPlan(
   const plan: RouteTarget[] = [];
   for (const provider of candidates) {
     try {
-      plan.push({ provider: provider.id, model: await provider.defaultModel() });
+      const model = await pick(provider);
+      if (model) plan.push({ provider: provider.id, model });
     } catch {
       // provider has no usable default model right now; skip it
     }
@@ -133,17 +140,29 @@ async function autoPlan(
   return plan;
 }
 
+const NO_IMAGE_MODEL: RouteError = {
+  code: "no_image_model",
+  message:
+    "No AI model that can see images is available right now (Gemini or a free OpenRouter vision model). " +
+    "Try again later, or ask without the image.",
+  retryable: true,
+};
+
 export async function planRoute(input: {
   selection: string;
   providers: Map<ProviderId, Provider>;
   order: ProviderId[];
   health: Map<ProviderId, ProviderHealth>;
   fallback: boolean;
+  /** The question has images: only models that can see images are used. */
+  images?: boolean;
   now?: number;
 }): Promise<PlanResult> {
   const now = input.now ?? Date.now();
+  const pick = input.images ? imageModelOf : defaultModelOf;
   if (input.selection === AUTO_MODEL) {
-    const plan = await autoPlan(input.providers, input.order, input.health, now);
+    const plan = await autoPlan(input.providers, input.order, input.health, now, undefined, pick);
+    if (plan.length === 0 && input.images) return { ok: false, error: NO_IMAGE_MODEL };
     if (plan.length === 0) {
       return {
         ok: false,
@@ -187,8 +206,13 @@ export async function planRoute(input: {
       error: { code: "invalid_model", message: `Model "${parsed.model}" is not allowed for ${provider.label}.`, retryable: false },
     };
   }
+  if (input.images && !provider.canSeeImages?.(parsed.model)) {
+    // The chosen model can't see images, so a model that can answers this question instead.
+    const plan = await autoPlan(input.providers, input.order, input.health, now, undefined, imageModelOf);
+    return plan.length > 0 ? { ok: true, plan } : { ok: false, error: NO_IMAGE_MODEL };
+  }
   const plan: RouteTarget[] = [{ provider: provider.id, model: parsed.model }];
-  if (input.fallback) plan.push(...(await autoPlan(input.providers, input.order, input.health, now, provider.id)));
+  if (input.fallback) plan.push(...(await autoPlan(input.providers, input.order, input.health, now, provider.id, pick)));
   return { ok: true, plan };
 }
 

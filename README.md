@@ -17,6 +17,10 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
   folders; everyone's assistant answers from them and cites "document, page X". Files are read in the admin's
   browser and only their text is stored (about 15,000 pages fit in the free database). Search = full-text (FTS5)
   plus Workers AI's free re-ranker
+- 🖼️ **Images**: attach, paste or drag in up to 3 images per message; they are shrunk in the browser and sent only to
+  models that can see them (Gemini, then a free OpenRouter vision model); only a small preview is kept
+- 🎤 **Voice**: speak your message (Groq's free Whisper, Cloudflare's as backup; English and Urdu) and check the text
+  before sending; 🔊 "Read aloud" on answers with the device's own voices. Both have admin switches and daily limits
 - 🧠 Long-term memory you control: view, add and delete in Settings → Memory
 - 🔁 Automatic free-provider fallback with cooldowns, retries and clear error messages
 - 🎛️ Model picker: users choose Auto or models the admin picked (with friendly names); the admin sees every live model
@@ -31,11 +35,12 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
   message, source links under answers, and a responsive mobile layout
 - 💸 **No paid services, no credit card, no automatic billing**
 
-> Status: **Trusted sources (v0.9.5)**: accurate, current answers with the live web as the main source (source
-> labels and ranking, official pages read automatically, trusted/blocked sites, answer rules, admin-only number check,
-> search-first answers in one request, a search cache, an accuracy test set), on top of the knowledge base, live
-> information, multi-user accounts and the admin panel.
-> Next: image attachments (v0.9.6), voice (v0.9.7), then integrations (GitHub, Gmail, Calendar, Telegram). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> Status: **Images + voice (v0.9.6)**: image attachments and voice input/read-aloud, on top of accurate, current
+> answers with the live web as the main source (source labels and ranking, official pages read automatically,
+> trusted/blocked sites, answer rules, admin-only number check, search-first answers, a search cache, an accuracy test
+> set), the knowledge base, live information, multi-user accounts and the admin panel.
+> Next (per the roadmap): deep-research mode, answer feedback, smarter memory, then integrations (GitHub, Gmail,
+> Calendar, Telegram). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 

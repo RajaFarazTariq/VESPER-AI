@@ -3,8 +3,10 @@ import type {
   AdminUserDto,
   ApiErrorBody,
   AppSettingsDto,
+  ChatImageInput,
   ChatStreamEvent,
   ConversationDto,
+  FeaturesDto,
   KnowledgeChunkInput,
   KnowledgeCollectionDto,
   KnowledgeDocKind,
@@ -15,10 +17,21 @@ import type {
   MessageDto,
   ModelsResponse,
   PublicConfigDto,
+  SpeechLanguage,
   ToolInfoDto,
+  TranscriptionDto,
   UserDto,
   UserSettings,
 } from "../../shared/types";
+
+export type ChatRequestBody = {
+  conversationId?: string;
+  message?: string;
+  model: string;
+  regenerate?: boolean;
+  edit?: boolean;
+  images?: ChatImageInput[];
+};
 
 export class ApiError extends Error {
   constructor(
@@ -94,6 +107,9 @@ export const api = {
     request<{ settings: UserSettings }>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
 
   tools: () => request<{ tools: ToolInfoDto[] }>("/api/tools"),
+  features: () => request<FeaturesDto>("/api/media/features"),
+  transcribe: (body: { audio: string; mimeType: string; seconds: number; language?: SpeechLanguage }) =>
+    request<TranscriptionDto>("/api/media/transcribe", { method: "POST", body: JSON.stringify(body) }),
   listMemories: () => request<{ memories: MemoryDto[] }>("/api/memories"),
   addMemory: (content: string) => request<{ memory: MemoryDto }>("/api/memories", { method: "POST", body: JSON.stringify({ content }) }),
   deleteMemory: (id: string) => request<{ ok: true }>(`/api/memories/${encodeURIComponent(id)}`, { method: "DELETE" }),
@@ -164,7 +180,7 @@ export const api = {
  * Throws ApiError if the request is rejected before streaming starts.
  */
 export async function streamChat(
-  body: { conversationId?: string; message?: string; model: string; regenerate?: boolean; edit?: boolean },
+  body: ChatRequestBody,
   onEvent: (event: ChatStreamEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {

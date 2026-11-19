@@ -1,13 +1,14 @@
 import { Monitor, Moon, Plus, Sun, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { MemoryDto, ModelsResponse, ToolInfoDto, UserSettings } from "../../shared/types";
+import type { FeaturesDto, MemoryDto, ModelsResponse, SpeechLanguage, ToolInfoDto, UserSettings } from "../../shared/types";
 import { api, ApiError } from "../api/client";
 import { selectionLabel } from "../lib/format";
 import { explainOllamaError, listOllamaModels } from "../lib/ollama";
 import { getThemePreference, setThemePreference, type ThemePreference } from "../lib/theme";
+import { canRecord, canSpeak } from "../lib/voice";
 
 // Provider status moved to the admin panel (AdminDialog), since only the administrator manages keys.
-export type SettingsTab = "general" | "tools" | "memory" | "local" | "appearance";
+export type SettingsTab = "general" | "tools" | "memory" | "voice" | "local" | "appearance";
 type Tab = SettingsTab;
 
 interface Props {
@@ -16,13 +17,21 @@ interface Props {
   settings: UserSettings;
   models: ModelsResponse | null;
   ollamaModels: string[] | null;
+  /** Image/voice switches; the Voice tab shows only when voice is on. */
+  features?: FeaturesDto | null;
   onClose: () => void;
   onSaved: (settings: UserSettings) => void;
 }
 
 const MAX_INSTRUCTIONS = 4000;
 
-export function SettingsDialog({ initialTab = "general", settings, models, ollamaModels, onClose, onSaved }: Props) {
+const SPEECH_LANGUAGES: [SpeechLanguage, string][] = [
+  ["auto", "Detect automatically"],
+  ["en", "English"],
+  ["ur", "Urdu (اردو)"],
+];
+
+export function SettingsDialog({ initialTab = "general", settings, models, ollamaModels, features, onClose, onSaved }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [draft, setDraft] = useState<UserSettings>(settings);
   const [saving, setSaving] = useState(false);
@@ -87,10 +96,13 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
     modelOptions.push({ value: draft.defaultModel, label: selectionLabel(draft.defaultModel, models) });
   }
 
+  const micAvailable = Boolean(features?.voice.speechToText) && canRecord();
+  const readAloudAvailable = Boolean(features?.voice.enabled) && canSpeak();
   const tabs: [Tab, string][] = [
     ["general", "General"],
     ["tools", "Tools"],
     ["memory", "Memory"],
+    ...(micAvailable || readAloudAvailable ? ([["voice", "Voice"]] as [Tab, string][]) : []),
     ["local", "Local models"],
     ["appearance", "Appearance"],
   ];
@@ -300,6 +312,38 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
             </div>
           ) : null}
 
+          {tab === "voice" ? (
+            <div className="space-y-5">
+              {micAvailable ? (
+                <Field
+                  label="Language you speak"
+                  hint="Used by the microphone button in the message box. Choose Urdu if Urdu speech comes out in the wrong script. The text appears in the box so you can check it before sending."
+                >
+                  <select
+                    value={draft.speechLanguage}
+                    onChange={(e) => setDraft({ ...draft, speechLanguage: e.target.value as SpeechLanguage })}
+                    aria-label="Speech language"
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm sm:w-64"
+                  >
+                    {SPEECH_LANGUAGES.map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              ) : null}
+              {readAloudAvailable ? (
+                <Toggle
+                  checked={draft.readAloud}
+                  onChange={(readAloud) => setDraft({ ...draft, readAloud })}
+                  label="Read answers aloud automatically"
+                  hint="Each new answer is read with your device's built-in voice. You can also press “Read aloud” under any answer."
+                />
+              ) : null}
+            </div>
+          ) : null}
+
           {tab === "local" ? (
             <div className="space-y-5">
               <p className="text-sm text-[var(--text-soft)]">
@@ -379,7 +423,7 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
           ) : null}
         </div>
 
-        {tab === "general" || tab === "local" || tab === "tools" || tab === "memory" ? (
+        {tab === "general" || tab === "local" || tab === "tools" || tab === "memory" || tab === "voice" ? (
           <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-3">
             {error ? <span className="mr-auto text-sm text-[var(--danger)]">{error}</span> : null}
             <button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-sm hover:bg-[var(--bg-hover)]">

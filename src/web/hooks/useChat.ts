@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatStreamEvent, ConversationDto, MessageDto } from "../../shared/types";
-import { api, ApiError, streamChat } from "../api/client";
+import type { ChatImageInput, ChatStreamEvent, ConversationDto, MessageDto } from "../../shared/types";
+import { api, ApiError, streamChat, type ChatRequestBody } from "../api/client";
 import { providerLabel } from "../lib/format";
 import { explainOllamaError, streamOllamaChat } from "../lib/ollama";
 
@@ -14,6 +14,8 @@ interface Options {
   onConversationCreated: (conversation: ConversationDto) => void;
   onConversationActivity: (id: string) => void;
   onError: (message: string) => void;
+  /** A cloud reply finished (e.g. to read it aloud). */
+  onReplyDone?: (message: MessageDto) => void;
 }
 
 const placeholder = (id: string, provider: string | null = null, model: string | null = null): UiMessage => ({
@@ -109,7 +111,7 @@ export function useChat(options: Options) {
 
   /** Cloud providers: stream through our API. Returns false if the message was rejected outright. */
   const runRemote = useCallback(
-    async (body: { conversationId?: string; message?: string; model: string; regenerate?: boolean; edit?: boolean }): Promise<boolean> => {
+    async (body: ChatRequestBody): Promise<boolean> => {
       const tempUserId = `local-user-${Date.now()}`;
       const assistantId = `local-assistant-${Date.now()}`;
       let before: UiMessage[] = [];
@@ -122,9 +124,11 @@ export function useChat(options: Options) {
           return [...base.map((m, i) => (i === lastUser ? { ...m, content: body.message ?? m.content } : m)), placeholder(assistantId)];
         }
         const base = body.regenerate ? withoutTrailingAssistant(prev) : prev;
-        const user: UiMessage[] = body.message
-          ? [{ ...placeholder(tempUserId), role: "user", content: body.message, streaming: false }]
-          : [];
+        const images = body.images?.map((i) => i.thumb) ?? null;
+        const user: UiMessage[] =
+          body.message || images
+            ? [{ ...placeholder(tempUserId), role: "user", content: body.message ?? "", images, streaming: false }]
+            : [];
         return [...base, ...user, placeholder(assistantId)];
       });
       const controller = new AbortController();
@@ -172,6 +176,7 @@ export function useChat(options: Options) {
           case "done":
             settle();
             patch(assistantId, (m) => ({ ...event.message, notices: m.notices }));
+            optionsRef.current.onReplyDone?.(event.message);
             break;
           case "error":
             settle();
@@ -296,8 +301,8 @@ export function useChat(options: Options) {
   );
 
   const send = useCallback(
-    (text: string, model: string) => {
-      const body = { ...(conversationId ? { conversationId } : {}), message: text, model };
+    (text: string, model: string, images: ChatImageInput[] = []) => {
+      const body = { ...(conversationId ? { conversationId } : {}), message: text, model, ...(images.length ? { images } : {}) };
       return model.startsWith("ollama:") ? runLocal(body) : runRemote(body);
     },
     [conversationId, runLocal, runRemote],

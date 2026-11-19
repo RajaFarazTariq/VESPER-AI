@@ -4,17 +4,19 @@ import { AppError, badRequest } from "./errors";
 
 const MAX_BODY_BYTES = 256 * 1024;
 
-/** Parse and validate a JSON body with a size cap. */
-export async function parseJson<T extends z.ZodType>(c: Context, schema: T): Promise<z.infer<T>> {
+/**
+ * Parse and validate a JSON body with a size cap (256 KB unless a route allows more, e.g. chat messages with images).
+ */
+export async function parseJson<T extends z.ZodType>(c: Context, schema: T, maxBytes = MAX_BODY_BYTES): Promise<z.infer<T>> {
   const length = Number(c.req.header("content-length") ?? "0");
-  if (length > MAX_BODY_BYTES) throw new AppError(413, "payload_too_large", "Request body is too large.");
+  if (length > maxBytes) throw new AppError(413, "payload_too_large", "Request body is too large.");
   let raw: string;
   try {
     raw = await c.req.text();
   } catch {
     throw badRequest("Could not read request body.");
   }
-  if (raw.length > MAX_BODY_BYTES) throw new AppError(413, "payload_too_large", "Request body is too large.");
+  if (raw.length > maxBytes) throw new AppError(413, "payload_too_large", "Request body is too large.");
   let data: unknown;
   try {
     data = raw ? JSON.parse(raw) : {};
