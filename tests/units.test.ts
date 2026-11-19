@@ -134,6 +134,16 @@ describe("number check", () => {
     expect(checkNumbers(answer, "")).toEqual({ checked: 0, missing: [] });
   });
 
+  it("accepts simple calculations from two figures the answer states and the sources support, nothing else", () => {
+    const evidence = "The 2023 census counted 241.49 million people; the 2017 census counted 207.68 million.";
+    // The live v0.9.8 report: a difference and a percentage change of two stated, supported figures.
+    expect(checkNumbers("Up from 207.7 million to 241.5 million: an increase of about 33.8 million (≈ 16% growth).", evidence).missing).toEqual([]);
+    // A wrong calculation is still flagged.
+    expect(checkNumbers("Up from 207.7 million to 241.5 million: an increase of about 35 million.", evidence).missing).toEqual(["35 million"]);
+    // The inputs must be stated in the answer: a bare figure that happens to equal a difference of two sources is flagged.
+    expect(checkNumbers("The increase was 33.8 million.", evidence).missing).toEqual(["33.8 million"]);
+  });
+
   it("needs version numbers to match exactly", () => {
     expect(checkNumbers("The latest is Python 3.15.2.", "Download Python 3.15.2").missing).toEqual([]);
     expect(checkNumbers("The latest is Python 3.15.3.", "Download Python 3.15.2").missing).toEqual(["3.15.3"]);

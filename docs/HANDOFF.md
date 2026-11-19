@@ -2,13 +2,39 @@
 
 Read this first when resuming work. Last updated: **2026-11-19**. No secrets are stored here.
 
-## 0. ▶ Resume here (where we stopped on 2026-11-19)
+## 0. ▶ Resume here (where we stopped on 2026-11-20)
 
-**State:** **v0.9.8 (deep research + dark theme by default) is built and checked locally, not pushed yet.** Live is
-**v0.9.7** (answer feedback, pushed 2026-11-19, `/api/health` → `0.9.7`). The deploy will apply migration
-`0008_deep_research.sql` (add-only, revert-safe). **First release on its own branch + pull request** (owner's rule
-since 2026-11-19, section 0 "How the owner wants each task run"). The owner replaced the GitHub token (confirmed
-2026-11-19). `.dev.vars` key lines were empty on 2026-11-19.
+**State:** **v0.9.9 (research sources tidy-up) is built and checked locally, not pushed yet** (to go on branch
+`release/v0.9.9-research-sources` + PR #2). Live is **v0.9.8** (deep research + dark theme by default, 2026-11-19):
+branch `release/v0.9.8-deep-research` (commit `533cb54`) → **PR #1** (CI green) → merge commit `7131695` on `main` →
+deploy green; `/api/health` → `0.9.8`; migration `0008_deep_research.sql` applied. The owner added a **branch
+protection rule for `main`** (exact ticks not confirmed yet; see section 2), so **`main` can't be pushed to
+directly**: every change, docs included, goes on a branch + PR. No migration in v0.9.9. The owner replaced the
+GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-19.
+**Agreed order (owner, 2026-11-20): v0.9.9 → then v0.10.0 Smarter memory** (plan in "Next" below).
+**Pending owner checks:** 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
+
+**v0.9.8 live research test (owner, 2026-11-19), census question:** ✔️ worked end to end, answered by **Groq**
+(gpt-oss-120b); 3 searches, 3 pages read (GHDx, PBS ×2), knowledge base "nothing relevant"; figures right
+(241.49 million 2023 vs 207.68 million 2017, +33.8 million ≈ 16%, from PBS); Wikipedia's 247.5 million correctly put
+under "Where sources disagree"; every source "date unknown" (none gave a date: honest). Problems found → v0.9.9:
+(1) the model cited "(S1)", which wasn't clickable or matched to the list; (2) 16 source chips (every search result,
+incl. an unrelated Yahoo article about another country's census, also item 7 in the Sources list); (3) the admin
+number check flagged the correct calculation "33.8 million".
+
+**v0.9.9 "research sources" (built 2026-11-20, owner approved):**
+1. The model cites with ids ([S2], [S1, S3]); the app turns them into links and renumbers them S1, S2… in reading
+   order (`linkCitations` in `llm/research.ts`; 【S1】 and (S1) handled; unknown ids stay plain; a source linked by
+   its address counts as cited).
+2. The Sources list shows **only cited sources**, labelled S1… to match, plus "N other sources were checked but not
+   cited" (if the brief cites nothing, all are listed with a note). The chips under the answer are exactly those
+   sources in the same order (they ride on the "Planning the research" step; search/page steps carry none).
+3. Number check: a figure that is the difference, sum, percentage change or share of **two figures stated in the
+   same answer and supported by the sources** is accepted (`derived` in `llm/number-check.ts`); anything else is
+   still flagged (e.g. "35 million", or "33.8 million" when the answer doesn't state the two inputs).
+4. 214 tests (2 new: citation linking, calculation check; the research test updated), typecheck, build.
+   **Still to do: branch + PR + merge, then the live test** (same census question: [S1] links, only cited sources,
+   fewer chips, number check clean).
 
 **v0.9.8 "deep research" (built 2026-11-19; owner approved the plan + 7 additions + my adjustments):**
 1. **Research** button in the composer (next to Tools; one-shot, turns off after sending). Admin → App settings →
@@ -247,13 +273,18 @@ Problems", 23 pages). Upload, folder, space meter, search, re-ranker and page ci
   always (`citedSources` in `web/lib/format.ts`). (C) 【 】 citations are shown as ( ) (`tidyCitations`).
 
 **First thing to do next session (in this order):**
-1. Health check. `0.9.7` means v0.9.8 isn't merged yet: give him the branch + PR commands again (section 0 "How the
-   owner wants each task run"). After the merge, watch `/api/health` until it says `0.9.8`, then the short live test
-   above. Then give him the branch-protection steps (promised 2026-11-19, see section 2). Check the **`.dev.vars` key
-   lines are still empty**.
+1. Health check. `0.9.8` means v0.9.9 isn't merged yet: give him the branch + PR commands (section 0 "How the owner
+   wants each task run"). After the merge, watch `/api/health` until `0.9.9`, then the live test (census question).
+   Ask him to confirm the branch protection rule's ticks (section 2), especially that "Require approvals" is **off**.
+   Check the **`.dev.vars` key lines are still empty**.
 2. Ask whether he tested 🎤 voice input and 👍/👎 on the live site.
-3. Next per the roadmap: smarter memory (relevant memories per request, project spaces, export), then answer
-   verification / GitHub integration (see item 4 below).
+3. **Then build v0.10.0 Smarter memory** (approved 2026-11-20, steps): (1) only relevant memories per message (word
+   matching, no model call) + **pinned** "always use" memories; (2) pin, **edit** and **export** in Settings →
+   Memory; (3) refuse to save sensitive data (passwords, card/bank numbers, CNIC/ID numbers, phone numbers) and say
+   why; (4) long chats keep context: the older part is summarised once (1 model request) and kept instead of being
+   dropped; (5) memories stay "notes about the user", never instructions, private per user; (6) tests, version, docs,
+   branch + PR commands, live test. Database changes add-only and revert-safe. After that: answer verification,
+   then GitHub integration.
 4. Owner said he'll do these later: re-ask on the live site (new chat, model Auto) the Copilot question, "What is the
    latest stable version of Python?" and "What was Pakistan's population in the 2023 census?". Expect Groq (not
    Gemini) to answer most of them, 61% for Java from GitHub's own blog, 3.15.2 from python.org, 241.49 million.
@@ -366,7 +397,7 @@ requirement: no paid services, no card on file, no paid fallback).
   tick "Require status checks to pass before merging" + "Require branches to be up to date", add the check `check`
   (the CI job) → tick "Do not allow bypassing the above settings" → leave force pushes and deletions off → Save.
   Effect: direct pushes to `main` are refused; merges need green CI; merging still deploys. Emergency rollback = the
-  PR's Revert button (also a PR). Status: not confirmed yet.
+  PR's Revert button (also a PR). Status: rule for `main` created 2026-11-19; ticks not confirmed yet.
 - An untracked `AI_Assistant_Feature_Roadmap.pdf` in his local folder is **his** file. Don't add it to git unless he asks.
 
 ## 3. Architecture (short)
@@ -436,7 +467,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Fewer tokens (v0.9.5)**: search first / one request, trimmed passages, relevant-only document passages, search cache, dates in text, fewer weak results, quoting warning, organisation-site search; welcome cards removed | ✅ live (v0.9.5, commit `208b3a8`, deployed 2026-11-19; 201 tests); Gemini 91.2%, Groq 95.8% on the first 8 questions (section 0); live re-test pending |
 | **Images + voice (v0.9.6)**: 📎/paste/drop images → Gemini/OpenRouter vision, previews kept; 🎤 Groq Whisper → Workers AI backup; 🔊 read aloud; admin switches + daily limits; migration 0006 | ✅ live (v0.9.6, deployed 2026-11-19; 205 tests); live-checked: image question ✔️, Read aloud ✔️, voice input not yet tested |
 | **Answer feedback (v0.9.7)**: 👍/👎 + optional reason/note under answers; Admin → Feedback (per-model counts, list with question/answer/sources); migration 0007 | ✅ live (v0.9.7, pushed 2026-11-19, commit `f01ec7e`; 207 tests); owner's live check pending |
-| **Deep research (v0.9.8)** + dark theme default: Research button → plan (1 model request) → 2–4 searches set aside/given back, last 10 kept for chat → ≤ 3 pages (no model calls) → brief written with no tools + app-made Sources list with exact dates; per-user daily runs (failed runs don't count); migration 0008 | ✅ built and checked locally 2026-11-19 (212 tests); **on a release branch, not merged yet**; live test pending |
+| **Deep research (v0.9.8)** + dark theme default: Research button → plan (1 model request) → 2–4 searches set aside/given back, last 10 kept for chat → ≤ 3 pages (no model calls) → brief written with no tools + app-made Sources list with exact dates; per-user daily runs (failed runs don't count); migration 0008 | ✅ live (v0.9.8, PR #1, merge commit `7131695`, deployed 2026-11-19; 212 tests); live research test ✔️ (2026-11-19, problems fixed in v0.9.9) |
+| **Research sources (v0.9.9)**: [S1] citations become links (renumbered in reading order); Sources list + chips show only cited sources; number check accepts simple calculations from stated, supported figures | ✅ built and checked locally 2026-11-20; **branch + PR not done yet**; live test pending |
+| **Next: Smarter memory (v0.10.0)** | ⏳ approved 2026-11-20, starts after v0.9.9 is merged |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:

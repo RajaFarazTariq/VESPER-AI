@@ -12,6 +12,7 @@ import { checkPublicUrl } from "../src/worker/tools/net";
 import { ALL_TOOLS, type ToolContext } from "../src/worker/tools/registry";
 import { htmlToText } from "../src/worker/tools/web";
 import { holdResearchSearches, releaseResearchSearches, webSearchesToday } from "../src/worker/db/app-settings";
+import { linkCitations } from "../src/worker/llm/research";
 
 const tool = (name: string) => ALL_TOOLS.find((t) => t.name === name)!;
 const ctx = (over: Partial<ToolContext> = {}): ToolContext => ({
@@ -641,7 +642,10 @@ describe("v0.9.8: deep research", () => {
         if (String(body.messages[0].content).startsWith("You plan web research")) {
           return sse([{ choices: [{ delta: { content: JSON.stringify({ queries: options.queries }) } }] }]);
         }
-        return options.write?.() ?? sse([{ choices: [{ delta: { content: "## Short answer\nAbout 241.49 million ([PBS](https://www.pbs.gov.pk/census))." } }] }]);
+        return (
+          options.write?.() ??
+          sse([{ choices: [{ delta: { content: "## Short answer\nAbout 241.49 million [S1]. A blog agrees [S2], and so does another (S3)." } }] }])
+        );
       }
       return new Response("unexpected " + url, { status: 500 });
     });
@@ -674,16 +678,26 @@ describe("v0.9.8: deep research", () => {
     // 3 searches, 3 pages opened (the most a run opens).
     expect(web.searched).toHaveLength(3);
     expect(web.spy.mock.calls.filter(([u]) => String(u).endsWith("/census"))).toHaveLength(3);
-    // The app's own Sources list: the service's date, the page's own date, or "date unknown"; never the snippet's date.
+    // Source ids became links; the app's own Sources list shows only the cited sources, labelled to match, with the
+    // service's date, the page's own date, or "date unknown" (never the snippet's date).
     const content = done.message.content;
-    expect(content).toContain(`1. [Official stats](https://www.pbs.gov.pk/census) · official (government) · published: 2026-11-10 · checked: ${today()}`);
-    expect(content).toContain("[Blog 1](https://blog1.example.com/census) · other website · published: 2026-11-03");
-    expect(content).toContain("[Blog 2](https://blog2.example.com/census) · other website · published: date unknown");
+    expect(content).toContain("About 241.49 million ([S1](https://www.pbs.gov.pk/census)). A blog agrees ([S2](https://blog1.example.com/census))");
+    expect(content).toContain(`- **S1** · [Official stats](https://www.pbs.gov.pk/census) · official (government) · published: 2026-11-10 · checked: ${today()}`);
+    expect(content).toContain("- **S2** · [Blog 1](https://blog1.example.com/census) · other website · published: 2026-11-03");
+    expect(content).toContain("- **S3** · [Blog 2](https://blog2.example.com/census) · other website · published: date unknown");
+    expect(content).toContain("1 other source was checked but not cited.");
+    expect(content).not.toContain("Blog 3");
     expect(content).not.toContain("2026-11-05");
     const tools = done.message.tools!;
     expect(tools[0]!.name).toBe("research_plan");
     expect(tools.filter((t) => t.name === "web_search")).toHaveLength(3);
     expect(tools.filter((t) => t.name === "read_page")).toHaveLength(3);
+    // The numbered chips under the answer are exactly S1–S3, in order (search and page steps carry none).
+    expect(tools.flatMap((t) => t.sources ?? []).map((s) => s.url)).toEqual([
+      "https://www.pbs.gov.pk/census",
+      "https://blog1.example.com/census",
+      "https://blog2.example.com/census",
+    ]);
     // Counted: one message, one finished run, 3 searches (the 4th set aside was given back).
     expect(await usage(admin)).toMatchObject({ todayMessages: 1, todayResearch: 1 });
     expect(await usedToday(admin)).toBe(3);
@@ -729,6 +743,18 @@ describe("v0.9.8: deep research", () => {
     expect(await usedToday(admin)).toBe(3);
     // The rest of the day's searches stay for normal chat.
     expect((await research(tester)).json.error.code).toBe("research_no_searches");
+  });
+
+  it("turns source ids into links, renumbered in reading order; unknown ids stay plain; a source linked by address counts", () => {
+    const source = (n: number) => ({ title: `T${n}`, url: `https://s${n}.example.com/p`, quality: "other" as const, kind: "other website", published: null, checked: "2026-11-20", snippet: "" });
+    const sources = [source(1), source(2), source(3), source(4)];
+    const { text, used } = linkCitations("First [S3]. Then (S1, S2) and 【S3】. Unknown [S9]. Also https://s4.example.com/p.", sources);
+    expect(text).toBe(
+      "First ([S1](https://s3.example.com/p)). Then ([S2](https://s1.example.com/p), [S3](https://s2.example.com/p)) and " +
+        "([S1](https://s3.example.com/p)). Unknown [S9]. Also https://s4.example.com/p.",
+    );
+    expect(used.map((s) => s.title)).toEqual(["T3", "T1", "T2", "T4"]);
+    expect(linkCitations("No citations here.", sources).used).toEqual([]);
   });
 
   it("sets searches aside atomically (runs at the same time can't go over) and gives back what wasn't used", async () => {
