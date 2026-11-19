@@ -1,4 +1,4 @@
-import { BookOpen, Bookmark, BookmarkMinus, Calculator, ChevronRight, CircleAlert, Clock, CloudSun, Coins, FileText, Library, Loader2, Search, ShieldCheck, Telescope, Wrench } from "lucide-react";
+import { BookOpen, Bookmark, BookmarkMinus, Calculator, ChevronRight, CircleAlert, Clock, CloudSun, Coins, FileText, Library, Loader2, ScrollText, Search, ShieldCheck, Telescope, Wrench } from "lucide-react";
 import { useState } from "react";
 import type { SourceDto, ToolEventDto } from "../../shared/types";
 
@@ -15,6 +15,7 @@ export const TOOL_ICONS: Record<string, typeof Wrench> = {
   search_knowledge: Library,
   answer_check: ShieldCheck, // admin-only number check
   research_plan: Telescope, // deep research: planning the searches
+  context_summary: ScrollText, // a long chat's older part kept as short notes
 };
 
 /** Every source used for a reply, once each, in the order the tools found them. */

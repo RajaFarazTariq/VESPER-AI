@@ -4,9 +4,20 @@ import type { AppEnv } from "../app-env";
 import { getAppSettings } from "../db/app-settings";
 import { hasSearchableKnowledge } from "../db/knowledge";
 import { getConfig } from "../env";
-import { addMemory, deleteAllMemories, deleteMemory, listMemories, MAX_MEMORY_CHARS, MemoryLimitError } from "../db/memories";
+import { addMemory, deleteAllMemories, deleteMemory, listMemories, MAX_MEMORY_CHARS, MemoryLimitError, updateMemory } from "../db/memories";
 import { AppError, notFound } from "../lib/errors";
+import { sensitiveMessage, sensitiveReason } from "../lib/sensitive";
 import { parseJson } from "../lib/validation";
+
+/** Passwords, card/bank numbers, ID card numbers and phone numbers are never stored (v0.10.0). */
+function refuseSensitive(content: string): void {
+  const reason = sensitiveReason(content);
+  if (reason) throw new AppError(400, "sensitive_memory", sensitiveMessage(reason));
+}
+
+const updateSchema = z
+  .object({ content: z.string().trim().min(1).max(MAX_MEMORY_CHARS).optional(), pinned: z.boolean().optional() })
+  .refine((p) => p.content !== undefined || p.pinned !== undefined, { message: "Nothing to update." });
 import { requireUser } from "../middleware/auth";
 import { toolInfo, webToolContext } from "../tools/registry";
 
@@ -17,6 +28,7 @@ export const memoryRoutes = new Hono<AppEnv>()
 
   .post("/", async (c) => {
     const { content } = await parseJson(c, z.object({ content: z.string().trim().min(1).max(MAX_MEMORY_CHARS) }));
+    refuseSensitive(content);
     try {
       const memory = await addMemory(c.env.DB, c.get("user").id, content, "user");
       return c.json({ memory }, 201);
@@ -24,6 +36,15 @@ export const memoryRoutes = new Hono<AppEnv>()
       if (error instanceof MemoryLimitError) throw new AppError(409, "memory_full", error.message);
       throw error;
     }
+  })
+
+  /** Edit the text and/or pin ("always use") one of your memories. */
+  .patch("/:id", async (c) => {
+    const patch = await parseJson(c, updateSchema);
+    if (patch.content !== undefined) refuseSensitive(patch.content);
+    const memory = await updateMemory(c.env.DB, c.get("user").id, c.req.param("id"), patch);
+    if (!memory) throw notFound("Memory");
+    return c.json({ memory });
   })
 
   .delete("/:id", async (c) => {

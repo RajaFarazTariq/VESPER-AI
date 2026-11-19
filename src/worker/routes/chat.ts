@@ -16,14 +16,16 @@ import {
   deleteTrailingAssistantMessages,
   deriveTitle,
   getConversation,
+  getConversationSummary,
   insertMessage,
   lastUserMessageImages,
   listMessages,
+  saveConversationSummary,
   updateConversation,
   updateLastUserMessage,
 } from "../db/conversations";
 import { searchableCollections } from "../db/knowledge";
-import { listMemories } from "../db/memories";
+import { listMemories, selectMemories } from "../db/memories";
 import { D1ProviderStateStore, utcDay } from "../db/provider-state";
 import { getAppSettings, holdResearchSearches, releaseResearchSearches, userMayUseModel, type SearchHold } from "../db/app-settings";
 import {
@@ -39,7 +41,8 @@ import { AppError, badRequest, notFound } from "../lib/errors";
 import { CHAT_BODY_LIMIT, chatImageSchema, MAX_IMAGES_PER_MESSAGE } from "../lib/images";
 import { parseJson } from "../lib/validation";
 import { getProviderModels } from "../llm/catalog";
-import { buildContext, buildSystemPrompt, normalizeTimeZone } from "../llm/context";
+import { buildContext, buildSystemPrompt, messageChars, normalizeTimeZone, oldestFitting, usableMessage } from "../llm/context";
+import { KEEP_SHARE, MAX_SUMMARY_CHARS, summarizeEarlier, summaryEvent } from "../llm/summary";
 import { presentEvent, presentMessage, viewerOf } from "../lib/present";
 import { getProviders } from "../llm/registry";
 import { runAgent, type AgentResult } from "../llm/agent";
@@ -142,8 +145,17 @@ async function prepareTurn(
     sendImages?: string[];
     /** Deep research: the system prompt gets the research rules instead of tool lines. */
     research?: boolean;
+    /** May ask a model to summarise the older part of a long chat (cloud turns; not local models). */
+    summarize?: boolean;
   },
-): Promise<{ conversation: ConversationDto; isNew: boolean; userMessage: MessageDto; context: ReturnType<typeof buildContext> }> {
+): Promise<{
+  conversation: ConversationDto;
+  isNew: boolean;
+  userMessage: MessageDto;
+  context: ReturnType<typeof buildContext>;
+  /** The chat outgrew the prompt: these older messages should be summarised (then `withSummary` builds the prompt). */
+  pendingSummary: { previous: string | null; older: MessageDto[]; withSummary: (summary: string) => ReturnType<typeof buildContext> } | null;
+}> {
   const db = c.env.DB;
   const config = getConfig(c.env);
   const text = input.message?.trim() ?? "";
@@ -183,22 +195,52 @@ async function prepareTurn(
     conversation = { ...conversation, model: selection };
   }
 
-  const [history, memories] = await Promise.all([
+  const [history, memories, earlier] = await Promise.all([
     listMessages(db, conversation.id, HISTORY_LIMIT),
     user.settings.memoryEnabled ? listMemories(db, user.id) : Promise.resolve(undefined),
+    getConversationSummary(db, conversation.id),
   ]);
-  const system = buildSystemPrompt({
-    appName: config.appName,
-    customInstructions: user.settings.systemPrompt,
-    adminInstructions: extras.adminInstructions,
-    ...(memories ? { memories } : {}),
-    tools: extras.tools.map((t) => t.name),
-    ...(extras.timeZone ? { timeZone: extras.timeZone } : {}),
-    ...(extras.knowledge ? { knowledge: extras.knowledge } : {}),
-    ...(extras.sendImages?.length ? { images: true } : {}),
-    ...(extras.research ? { research: true } : {}),
-  });
-  return { conversation, isNew, userMessage, context: buildContext(system, history, config.maxContextChars, extras.sendImages) };
+  // Memories: pinned ones plus those related to this message and the last few things the user said (v0.10.0).
+  const about = history
+    .filter((m) => m.role === "user")
+    .slice(-3)
+    .map((m) => m.content)
+    .join("\n");
+  const picked = memories ? selectMemories(memories, about || userMessage.content) : null;
+  const systemWith = (summary: string | undefined) =>
+    buildSystemPrompt({
+      appName: config.appName,
+      customInstructions: user.settings.systemPrompt,
+      adminInstructions: extras.adminInstructions,
+      ...(picked ? { memories: picked.selected, memoryTotal: picked.total } : {}),
+      tools: extras.tools.map((t) => t.name),
+      ...(extras.timeZone ? { timeZone: extras.timeZone } : {}),
+      ...(extras.knowledge ? { knowledge: extras.knowledge } : {}),
+      ...(extras.sendImages?.length ? { images: true } : {}),
+      ...(extras.research ? { research: true } : {}),
+      ...(summary ? { summary } : {}),
+    });
+
+  // Long chats: messages already covered by the running notes aren't sent again in full.
+  const recent = (earlier ? history.filter((m) => m.createdAt > earlier.until) : history).filter(usableMessage);
+  const system = systemWith(earlier?.summary);
+  const room = config.maxContextChars - system.length - (earlier ? 0 : MAX_SUMMARY_CHARS);
+  const size = recent.reduce((n, m) => n + messageChars(m), 0);
+  let pendingSummary = null;
+  if (extras.summarize && size > room && recent.length > 2) {
+    // Summarise everything but the newest ~60% of the room, so the next summary is only needed several turns later.
+    const cut = Math.min(oldestFitting(recent, Math.floor(room * KEEP_SHARE)), recent.length - 1);
+    if (cut >= 2) {
+      const keep = recent.slice(cut);
+      pendingSummary = {
+        previous: earlier?.summary ?? null,
+        older: recent.slice(0, cut),
+        withSummary: (summary: string) => buildContext(systemWith(summary), keep, config.maxContextChars, extras.sendImages),
+      };
+    }
+  }
+  // Until (or unless) a new summary is made: the old way, with any earlier notes.
+  return { conversation, isNew, userMessage, context: buildContext(system, recent, config.maxContextChars, extras.sendImages), pendingSummary };
 }
 
 export const chatRoutes = new Hono<AppEnv>()
@@ -331,6 +373,7 @@ export const chatRoutes = new Hono<AppEnv>()
         ...(!research && tools.some((t) => t.name === "search_knowledge") ? { knowledge } : {}),
         sendImages,
         research,
+        summarize: true,
       });
     } catch (error) {
       await settleResearch(null);
@@ -383,12 +426,39 @@ export const chatRoutes = new Hono<AppEnv>()
           reasoning: (text: string) => send({ type: "reasoning", text }),
           tool: (tool: ToolEventDto) => send({ type: "tool", tool }),
         };
+
+        // Long chat: summarise the older part once (1 model request), keep the notes, then answer with them.
+        let context = turn.context;
+        const extraTools: ToolEventDto[] = [];
+        if (turn.pendingSummary && !abort.signal.aborted) {
+          const pending = turn.pendingSummary;
+          await events.tool(summaryEvent("running", pending.older.length));
+          const notes = await summarizeEarlier({
+            appName: config.appName,
+            previous: pending.previous,
+            messages: pending.older,
+            plan: planned.plan,
+            providers,
+            signal: abort.signal,
+            store,
+            health,
+            events,
+          });
+          if (notes) {
+            await saveConversationSummary(c.env.DB, turn.conversation.id, notes, pending.older.at(-1)!.createdAt);
+            context = pending.withSummary(notes);
+          }
+          const done = summaryEvent(notes ? "done" : "error", pending.older.length);
+          extraTools.push(done);
+          await events.tool(done);
+        }
+
         let result: AgentResult;
         if (hold) {
           researchResult = await runResearch({
             plan: planned.plan,
             providers,
-            messages: turn.context,
+            messages: context,
             question: turn.userMessage.content,
             tools,
             toolContext,
@@ -404,7 +474,7 @@ export const chatRoutes = new Hono<AppEnv>()
           result = await runAgent({
             plan: planned.plan,
             providers,
-            messages: turn.context,
+            messages: context,
             tools,
             toolContext,
             maxTokens: config.maxOutputTokens,
@@ -428,7 +498,7 @@ export const chatRoutes = new Hono<AppEnv>()
           error: result.error?.message ?? null,
           tokensIn: result.usage.inputTokens,
           tokensOut: result.usage.outputTokens,
-          tools: result.tools,
+          tools: [...extraTools, ...result.tools],
           notBefore: turn.userMessage.createdAt,
         });
         if (result.status === "complete") {

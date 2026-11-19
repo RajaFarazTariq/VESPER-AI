@@ -124,6 +124,9 @@ export const api = {
     request<TranscriptionDto>("/api/media/transcribe", { method: "POST", body: JSON.stringify(body) }),
   listMemories: () => request<{ memories: MemoryDto[] }>("/api/memories"),
   addMemory: (content: string) => request<{ memory: MemoryDto }>("/api/memories", { method: "POST", body: JSON.stringify({ content }) }),
+  /** Edit the text and/or pin ("always use") a memory. */
+  updateMemory: (id: string, patch: { content?: string; pinned?: boolean }) =>
+    request<{ memory: MemoryDto }>(`/api/memories/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteMemory: (id: string) => request<{ ok: true }>(`/api/memories/${encodeURIComponent(id)}`, { method: "DELETE" }),
   deleteAllMemories: () => request<{ deleted: number }>("/api/memories", { method: "DELETE" }),
 
