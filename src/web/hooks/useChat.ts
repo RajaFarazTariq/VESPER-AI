@@ -301,30 +301,42 @@ export function useChat(options: Options) {
   );
 
   const send = useCallback(
-    (text: string, model: string, images: ChatImageInput[] = []) => {
-      const body = { ...(conversationId ? { conversationId } : {}), message: text, model, ...(images.length ? { images } : {}) };
+    (text: string, model: string, images: ChatImageInput[] = [], research = false) => {
+      const body = {
+        ...(conversationId ? { conversationId } : {}),
+        message: text,
+        model,
+        ...(images.length ? { images } : {}),
+        ...(research ? { research: true } : {}),
+      };
       return model.startsWith("ollama:") ? runLocal(body) : runRemote(body);
     },
     [conversationId, runLocal, runRemote],
   );
 
+  // Regenerate / Edit answer the same way as before: a research report is researched again.
+  const lastWasResearch = useCallback(() => {
+    const answer = [...messages].reverse().find((m) => m.role === "assistant");
+    return Boolean(answer?.tools?.some((t) => t.name === "research_plan"));
+  }, [messages]);
+
   const regenerate = useCallback(
     (model: string) => {
       if (!conversationId) return Promise.resolve(false);
-      const body = { conversationId, regenerate: true, model };
+      const body = { conversationId, regenerate: true, model, ...(lastWasResearch() ? { research: true } : {}) };
       return model.startsWith("ollama:") ? runLocal(body) : runRemote(body);
     },
-    [conversationId, runLocal, runRemote],
+    [conversationId, runLocal, runRemote, lastWasResearch],
   );
 
   /** Replace the last message you sent with new text and get a fresh answer. */
   const edit = useCallback(
     (text: string, model: string) => {
       if (!conversationId) return Promise.resolve(false);
-      const body = { conversationId, message: text, edit: true, model };
+      const body = { conversationId, message: text, edit: true, model, ...(lastWasResearch() ? { research: true } : {}) };
       return model.startsWith("ollama:") ? runLocal(body) : runRemote(body);
     },
-    [conversationId, runLocal, runRemote],
+    [conversationId, runLocal, runRemote, lastWasResearch],
   );
 
   return { conversationId, messages, loading, streaming, send, regenerate, edit, stop, load, reset };

@@ -21,6 +21,10 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
   models that can see them (Gemini, then a free OpenRouter vision model); only a small preview is kept
 - 🎤 **Voice**: speak your message (Groq's free Whisper, Cloudflare's as backup; English and Urdu) and check the text
   before sending; 🔊 "Read aloud" on answers with the device's own voices. Both have admin switches and daily limits
+- 🔭 **Deep research**: the Research button turns a question into 2–4 planned searches, up to 3 pages read and a
+  written brief (short answer, key findings, disagreements, what's uncertain) with a sources list showing publish and
+  checked dates. Two model requests per run; searches are set aside up front and the last 10 of the day stay for
+  normal chat
 - 👍 **Answer feedback**: 👍/👎 under every answer with an optional reason and note; the admin sees the list and the
   counts per model in Admin → Feedback
 - 🧠 Long-term memory you control: view, add and delete in Settings → Memory
@@ -37,12 +41,13 @@ and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, M
   message, source links under answers, and a responsive mobile layout
 - 💸 **No paid services, no credit card, no automatic billing**
 
-> Status: **Answer feedback (v0.9.7)** and **images + voice (v0.9.6)**: 👍/👎 on answers with an admin review tab,
-> image attachments and voice input/read-aloud, on top of accurate, current
+> Status: **Deep research (v0.9.8)**, **answer feedback (v0.9.7)** and **images + voice (v0.9.6)**: research
+> briefs with dated sources, 👍/👎 on answers with an admin review tab, image attachments and voice input/read-aloud
+> (dark theme by default), on top of accurate, current
 > answers with the live web as the main source (source labels and ranking, official pages read automatically,
 > trusted/blocked sites, answer rules, admin-only number check, search-first answers, a search cache, an accuracy test
 > set), the knowledge base, live information, multi-user accounts and the admin panel.
-> Next (per the roadmap): deep-research mode, smarter memory, then integrations (GitHub, Gmail,
+> Next (per the roadmap): smarter memory, answer verification, then integrations (GitHub, Gmail,
 > Calendar, Telegram). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---

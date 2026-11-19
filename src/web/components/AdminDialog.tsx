@@ -217,7 +217,8 @@ function UserRow({
             Today: {user.todayMessages}
             {isAdmin ? " messages (unlimited)" : effectiveLimit !== null ? ` / ${effectiveLimit} messages` : " messages"}
             {user.todayImages > 0 ? ` · ${user.todayImages} image${user.todayImages === 1 ? "" : "s"}` : ""}
-            {user.todaySpeechSeconds > 0 ? ` · ${Math.ceil(user.todaySpeechSeconds / 60)} min voice` : ""} · {user.conversations} chat
+            {user.todaySpeechSeconds > 0 ? ` · ${Math.ceil(user.todaySpeechSeconds / 60)} min voice` : ""}
+            {user.todayResearch > 0 ? ` · ${user.todayResearch} research run${user.todayResearch === 1 ? "" : "s"}` : ""} · {user.conversations} chat
             {user.conversations === 1 ? "" : "s"} · last sign-in {formatDate(user.lastLoginAt)} · joined {formatDate(user.createdAt)}
           </p>
         </div>
@@ -304,6 +305,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const [blockedText, setBlockedText] = useState("");
   const [imagesText, setImagesText] = useState("");
   const [speechText, setSpeechText] = useState("");
+  const [researchRunsText, setResearchRunsText] = useState("");
+  const [researchKeepText, setResearchKeepText] = useState("");
   const [webSearch, setWebSearch] = useState<{ keyConfigured: boolean; usedToday: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -319,6 +322,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         setBlockedText(r.settings.blockedSites.join("\n"));
         setImagesText(String(r.settings.imagesPerDay));
         setSpeechText(String(r.settings.speechMinutesPerDay));
+        setResearchRunsText(String(r.settings.researchRunsPerDay));
+        setResearchKeepText(String(r.settings.researchSearchReserve));
         setTools(r.tools);
         setWebSearch(r.webSearch);
       },
@@ -336,6 +341,10 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const imagesValid = imagesText.trim() !== "" && Number.isInteger(imagesPerDay) && imagesPerDay >= 0 && imagesPerDay <= 1_000;
   const speechMinutes = Number(speechText);
   const speechValid = speechText.trim() !== "" && Number.isInteger(speechMinutes) && speechMinutes >= 0 && speechMinutes <= 1_440;
+  const researchRuns = Number(researchRunsText);
+  const researchRunsValid = researchRunsText.trim() !== "" && Number.isInteger(researchRuns) && researchRuns >= 0 && researchRuns <= 100;
+  const researchKeep = Number(researchKeepText);
+  const researchKeepValid = researchKeepText.trim() !== "" && Number.isInteger(researchKeep) && researchKeep >= 0 && researchKeep <= 1_000;
   const next: AppSettingsDto = {
     ...draft,
     defaultDailyLimit: limitValid ? limit : draft.defaultDailyLimit,
@@ -344,7 +353,11 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
     blockedSites: siteLines(blockedText),
     imagesPerDay: imagesValid ? imagesPerDay : draft.imagesPerDay,
     speechMinutesPerDay: speechValid ? speechMinutes : draft.speechMinutesPerDay,
+    researchRunsPerDay: researchRunsValid ? researchRuns : draft.researchRunsPerDay,
+    researchSearchReserve: researchKeepValid ? researchKeep : draft.researchSearchReserve,
   };
+  // Research can use the day's searches above the ones kept for normal chat.
+  const researchSearches = next.webSearchDailyLimit - next.researchSearchReserve;
   const dirty = JSON.stringify(next) !== JSON.stringify(saved);
 
   const save = async () => {
@@ -362,6 +375,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       setBlockedText(settings.blockedSites.join("\n"));
       setImagesText(String(settings.imagesPerDay));
       setSpeechText(String(settings.speechMinutesPerDay));
+      setResearchRunsText(String(settings.researchRunsPerDay));
+      setResearchKeepText(String(settings.researchSearchReserve));
       onNotice("App settings saved.", "info");
     } catch (e) {
       setError(errorText(e, "Could not save settings."));
@@ -456,6 +471,41 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       </Field>
       <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
         <Toggle
+          checked={draft.researchEnabled}
+          onChange={(researchEnabled) => setDraft({ ...draft, researchEnabled })}
+          label="Deep research"
+          hint="Research button in the message box: the model plans 2–4 searches, up to 3 pages are read, then it writes a report with sources and dates. Uses 2 model requests and 2–4 web searches per run; searches are set aside at the start and unused ones are given back."
+        />
+        <label className="ml-12 flex flex-wrap items-center gap-2 text-xs text-[var(--text-soft)]">
+          Research runs per user per day
+          <input
+            value={researchRunsText}
+            onChange={(e) => setResearchRunsText(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            aria-label="Research runs per user per day"
+            className={`w-20 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)] ${researchRunsValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+          />
+          <span>(admins unlimited; failed or stopped runs don't count)</span>
+        </label>
+        <label className="ml-12 flex flex-wrap items-center gap-2 text-xs text-[var(--text-soft)]">
+          Web searches kept for normal chat
+          <input
+            value={researchKeepText}
+            onChange={(e) => setResearchKeepText(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            aria-label="Web searches kept for normal chat"
+            className={`w-20 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)] ${researchKeepValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+          />
+          <span>(research can't use the last ones of the day)</span>
+        </label>
+        <p className={`ml-12 text-xs ${researchSearches >= 2 ? "text-[var(--text-soft)]" : "text-amber-600 dark:text-amber-400"}`}>
+          {researchSearches >= 2
+            ? `Research can use ${researchSearches} of the ${next.webSearchDailyLimit} daily web searches (about ${Math.floor(researchSearches / 4)}–${Math.floor(researchSearches / 2)} runs a day for the whole app).`
+            : `Research is effectively off: the searches kept for normal chat (${next.researchSearchReserve}) leave fewer than 2 of the ${next.webSearchDailyLimit} daily searches for it.`}
+        </p>
+      </div>
+      <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
+        <Toggle
           checked={draft.imagesEnabled}
           onChange={(imagesEnabled) => setDraft({ ...draft, imagesEnabled })}
           label="Image attachments"
@@ -521,7 +571,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         <button
           type="button"
           onClick={() => void save()}
-          disabled={!dirty || !limitValid || !searchValid || !imagesValid || !speechValid || saving}
+          disabled={!dirty || !limitValid || !searchValid || !imagesValid || !speechValid || !researchRunsValid || !researchKeepValid || saving}
           className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-text)] disabled:opacity-40"
         >
           {saving ? "Saving…" : "Save"}

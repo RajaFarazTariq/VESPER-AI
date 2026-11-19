@@ -51,6 +51,9 @@ export const appSettingsSchema = z.object({
   imagesPerDay: z.number().int().min(0).max(1_000),
   voiceEnabled: z.boolean(),
   speechMinutesPerDay: z.number().int().min(0).max(1_440),
+  researchEnabled: z.boolean(),
+  researchRunsPerDay: z.number().int().min(0).max(100),
+  researchSearchReserve: z.number().int().min(0).max(1_000),
 });
 
 type Key = keyof AppSettingsDto;
@@ -73,17 +76,72 @@ export function defaultAppSettings(config: AppConfig): AppSettingsDto {
     voiceEnabled: true,
     // Groq's free speech-to-text allows 8 hours a day for the whole app; 15 minutes each leaves room for many users.
     speechMinutesPerDay: 15,
+    researchEnabled: true,
+    researchRunsPerDay: 3,
+    // With the default 30 searches a day, research can use 20 (about 5–10 runs for the whole app).
+    researchSearchReserve: 10,
   };
 }
 
+const DAY_MS = 86_400_000;
+/** The shared daily web-search counter (the web_search tool and deep research both use it). */
+const SEARCH_COUNTER = "tool:web_search";
+const today = (now = Date.now()) => Math.floor(now / DAY_MS) * DAY_MS;
+
 /** Web searches already used today (UTC), from the shared counter the web_search tool increments. */
 export async function webSearchesToday(db: D1Database): Promise<number> {
-  const windowStart = Math.floor(Date.now() / 86_400_000) * 86_400_000;
   const row = await db
     .prepare("SELECT count, window_start FROM rate_limits WHERE key = ?1")
-    .bind("tool:web_search")
+    .bind(SEARCH_COUNTER)
     .first<{ count: number; window_start: number }>();
-  return row && row.window_start === windowStart ? row.count : 0;
+  return row && row.window_start === today() ? row.count : 0;
+}
+
+/** Searches a research run has set aside (to give back what it didn't use). */
+export interface SearchHold {
+  granted: number;
+  windowStart: number;
+}
+
+/**
+ * Deep research sets its searches aside before it starts, so two runs at the same time can't both go over. Takes up
+ * to `want` searches (at least `min`) from today's count, never touching the last `keep` searches of the daily cap
+ * (those stay for normal chat). Returns granted 0 and what's available when there isn't enough; nothing is taken then.
+ */
+export async function holdResearchSearches(
+  db: D1Database,
+  options: { cap: number; keep: number; want: number; min: number },
+): Promise<SearchHold & { available: number }> {
+  const ceiling = options.cap - options.keep;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const windowStart = today();
+    const available = Math.max(0, ceiling - (await webSearchesToday(db)));
+    const granted = Math.min(options.want, available);
+    if (granted < options.min) return { granted: 0, windowStart, available };
+    // Atomic: only succeeds if the count still leaves room (another run may have taken searches meanwhile).
+    const row = await db
+      .prepare(
+        `INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET
+           count = CASE WHEN window_start = ?2 THEN count + ?3 ELSE ?3 END,
+           window_start = ?2
+         WHERE (CASE WHEN window_start = ?2 THEN count ELSE 0 END) + ?3 <= ?4
+         RETURNING count`,
+      )
+      .bind(SEARCH_COUNTER, windowStart, granted, ceiling)
+      .first<{ count: number }>();
+    if (row) return { granted, windowStart, available };
+  }
+  return { granted: 0, windowStart: today(), available: 0 };
+}
+
+/** Give back searches a run set aside but didn't use (only within the same day's count). */
+export async function releaseResearchSearches(db: D1Database, hold: SearchHold, unused: number): Promise<void> {
+  if (unused <= 0) return;
+  await db
+    .prepare("UPDATE rate_limits SET count = MAX(0, count - ?3) WHERE key = ?1 AND window_start = ?2")
+    .bind(SEARCH_COUNTER, hold.windowStart, unused)
+    .run();
 }
 
 /** Whether a regular user may use this model selection. Auto and local (browser-side) models are always allowed. */

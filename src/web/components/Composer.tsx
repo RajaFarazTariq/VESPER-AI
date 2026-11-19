@@ -1,4 +1,4 @@
-import { ArrowUp, Check, LoaderCircle, Mic, Paperclip, Settings2, Square, Wrench, X } from "lucide-react";
+import { ArrowUp, Check, LoaderCircle, Mic, Paperclip, Settings2, Square, Telescope, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import type { SpeechLanguage, ToolInfoDto } from "../../shared/types";
 import { api, ApiError } from "../api/client";
@@ -337,6 +337,34 @@ function MicButton({
       title={state === "transcribing" ? "Turning speech into text…" : `Speak (up to ${Math.round(maxSeconds / 60)} min)`}
     >
       {busy ? <LoaderCircle size={17} className="animate-spin" /> : <Mic size={17} />}
+    </button>
+  );
+}
+
+/**
+ * "Research" switch inside the composer: the next message becomes a deep-research request (several searches, a few
+ * pages read, a written brief with sources). Turns itself off after sending.
+ */
+export function ResearchToggle({ on, onChange, runsPerDay }: { on: boolean; onChange: (on: boolean) => void; runsPerDay: number }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!on)}
+      aria-pressed={on}
+      className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[13px] transition-colors ${
+        on
+          ? "bg-[var(--accent-soft)] font-medium text-[var(--accent)]"
+          : "text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+      }`}
+      title={
+        on
+          ? "Deep research is on for the next message. Click to turn it off."
+          : `Deep research: several searches, pages read, a report with sources (${runsPerDay} a day)`
+      }
+    >
+      <Telescope size={14} />
+      <span>Research</span>
+      {on ? <X size={12} aria-hidden /> : null}
     </button>
   );
 }

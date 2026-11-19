@@ -331,29 +331,36 @@ const STRONG_SOURCES = new Set<SourceQuality>(["trusted", "government", "officia
 /**
  * One Tavily search, through the cache: a saved result (same words, topic and site filters, not expired) costs
  * nothing; otherwise it counts against the app's daily allowance and is saved for next time.
+ * Deep research passes `counted: false` (it set its searches aside beforehand) and `network: false` once its
+ * searches are used up (then only a saved result can answer; null = skipped).
+ * `checkedAt`: when the search was actually made (null for a saved result from before v0.9.8).
  */
 async function tavilySearch(
   web: WebToolContext,
   ctx: ToolContext,
   request: { query: string; topic: "general" | "news"; include?: string[]; maxResults: number },
   ttlMs: number,
-): Promise<{ results: TavilyResult[]; cached: boolean }> {
+  options: { counted?: boolean; network?: boolean } = {},
+): Promise<{ results: TavilyResult[]; cached: boolean; checkedAt: number | null }> {
   const exclude = web.blockedSites ?? [];
   const key = await searchCacheKey({ query: request.query, topic: request.topic, ...(request.include ? { include: request.include } : {}), exclude });
   const saved = await getCachedSearch(ctx.db, key, ctx.now.getTime());
   if (saved) {
     try {
-      return { results: (JSON.parse(saved) as TavilyResponse).results ?? [], cached: true };
+      return { results: (JSON.parse(saved.body) as TavilyResponse).results ?? [], cached: true, checkedAt: saved.checkedAt };
     } catch {
       // unreadable entry: search again
     }
   }
+  if (options.network === false) throw new SearchSkipped();
   // One shared allowance for the whole app per UTC day (the free plan is shared by everyone).
-  const { allowed } = await hitRateLimit(ctx.db, "tool:web_search", web.webSearchDailyLimit, DAY_MS);
-  if (!allowed) {
-    throw new ToolInputError(
-      "Today's web search allowance for this app is used up. Answer from your own knowledge and tell the user it may be out of date.",
-    );
+  if (options.counted !== false) {
+    const { allowed } = await hitRateLimit(ctx.db, "tool:web_search", web.webSearchDailyLimit, DAY_MS);
+    if (!allowed) {
+      throw new ToolInputError(
+        "Today's web search allowance for this app is used up. Answer from your own knowledge and tell the user it may be out of date.",
+      );
+    }
   }
   const response = await fetchJson<TavilyResponse>("https://api.tavily.com/search", "Web search", {
     method: "POST",
@@ -375,8 +382,19 @@ async function tavilySearch(
   });
   const results = response.results ?? [];
   await putCachedSearch(ctx.db, key, JSON.stringify({ results }), ttlMs, ctx.now.getTime());
-  return { results, cached: false };
+  return { results, cached: false, checkedAt: ctx.now.getTime() };
 }
+
+/** A research search that wasn't made: its searches were used up and no saved result matched. */
+export class SearchSkipped extends Error {
+  constructor() {
+    super("search skipped");
+    this.name = "SearchSkipped";
+  }
+}
+
+/** "2026-11-19", or "unknown" for a saved result from before checked dates were kept. */
+const checkedDate = (checkedAt: number | null) => (checkedAt === null ? "unknown" : new Date(checkedAt).toISOString().slice(0, 10));
 
 const asFound = (r: TavilyResult, now: Date) => ({
   title: clip(r.title || r.url!, 150),
@@ -478,13 +496,102 @@ const webSearch = define({
       };
     });
     const heading = results.length ? `${results.length} results for "${clip(query, 80)}"` : `No results for "${clip(query, 80)}"`;
+    // Saved results carry the date the search was really made, not today.
     return {
-      content: wrapUntrusted("a web search", { query, retrieved: ctx.now.toISOString().slice(0, 10), results }),
+      content: wrapUntrusted("a web search", { query, retrieved: checkedDate(first.checkedAt), results }),
       summary: notes.length ? `${heading}; ${notes.join("; ")}` : heading,
       sources: results.map((r) => ({ title: r.title, url: r.url })),
     };
   },
 });
+
+// ------------------------------------------------------------------ deep research helpers (v0.9.8)
+
+const SHORT_QUALITY: Record<SourceQuality, string> = {
+  trusted: "trusted site",
+  government: "official (government)",
+  official: "official (own website)",
+  education: "university / research",
+  other: "other website",
+};
+
+/** A web source as deep research uses it. */
+export interface ResearchSource {
+  title: string;
+  url: string;
+  quality: SourceQuality;
+  /** Short source type, e.g. "official (government)". */
+  kind: string;
+  /** Publish date from the search service or the page's own metadata; null = unknown (never guessed from the text). */
+  published: string | null;
+  /** When it was looked up: today, or the date a saved search was first made ("unknown" for very old saved rows). */
+  checked: string;
+  snippet: string;
+  /** The parts of the page about the question, when the page was opened. */
+  passages?: string[];
+  /** Came from a saved search (cost no search). */
+  saved?: boolean;
+}
+
+/**
+ * One deep-research search. Never counted here: the run set its searches aside beforehand (holdResearchSearches).
+ * `network: false` = its searches are used up, so only a saved result can answer (otherwise SearchSkipped).
+ */
+export async function researchSearch(
+  web: WebToolContext,
+  ctx: ToolContext,
+  query: string,
+  about: string,
+  options: { network: boolean },
+): Promise<{ sources: ResearchSource[]; cached: boolean }> {
+  const ttl = isTimeSensitive(about) ? HOUR_MS : 6 * HOUR_MS;
+  const found = await tavilySearch(web, ctx, { query, topic: "general", maxResults: SEARCH_RESULTS }, ttl, {
+    counted: false,
+    network: options.network,
+  });
+  const items = found.results.filter((r) => typeof r.url === "string" && /^https?:\/\//i.test(r.url)).map((r) => asFound(r, ctx.now));
+  const ranked = rankResults(
+    // A date written in the snippet only helps the ranking; it is never shown as the publish date.
+    items.map((r) => ({ ...r, ...(r.published || !r.dateInText ? {} : { published: r.dateInText }) })),
+    {
+      trusted: web.trustedSites ?? [],
+      blocked: web.blockedSites ?? [],
+      about,
+      ...(isTimeSensitive(about) ? { prefer: "year" as const } : {}),
+      now: ctx.now,
+      keep: RESULTS_FOR_MODEL,
+    },
+  );
+  const original = new Map(items.map((r) => [r.url, r]));
+  return {
+    cached: found.cached,
+    sources: ranked.map((r) => ({
+      title: r.title,
+      url: r.url,
+      quality: r.quality,
+      kind: SHORT_QUALITY[r.quality],
+      published: publishedDate(original.get(r.url)?.published, ctx.now.getTime()) ?? null,
+      checked: checkedDate(found.checkedAt),
+      snippet: r.snippet,
+      ...(found.cached ? { saved: true } : {}),
+    })),
+  };
+}
+
+/** Open one page for deep research and keep only the passages about the question (no model call). */
+export async function researchPage(
+  url: string,
+  about: string,
+  ctx: ToolContext,
+): Promise<{ title: string; url: string; passages: string[]; published: string | null }> {
+  const page = await fetchPageText(url, { userAgent: userAgent(ctx), ...(ctx.signal ? { signal: ctx.signal } : {}) });
+  return {
+    title: clip(page.title || page.url.hostname, 150),
+    url: page.url.href,
+    passages: relevantPassages(page.text, about, OFFICIAL_PAGE_PASSAGES),
+    published: page.published ?? null,
+  };
+}
 
 // ------------------------------------------------------------------ read_page (direct fetch + HTMLRewriter)
 
@@ -503,13 +610,27 @@ export function decodeEntities(text: string): string {
   });
 }
 
+/** Meta tags where pages state their own publish date (never guessed from the text). */
+const PUBLISHED_META =
+  'meta[property="article:published_time"], meta[name="article:published_time"], meta[itemprop="datePublished"], ' +
+  'meta[property="og:published_time"], meta[name="date"], meta[name="pubdate"], meta[name="publish-date"], meta[name="DC.date.issued"]';
+
+/** "2026-11-10T08:00:00Z" → "2026-11-10"; nothing for unreadable, future or implausibly old dates. */
+export function publishedDate(raw: string | null | undefined, now = Date.now()): string | undefined {
+  const t = raw ? Date.parse(raw.trim()) : Number.NaN;
+  if (!Number.isFinite(t) || t > now + DAY_MS || t < Date.UTC(1990, 0, 1)) return undefined;
+  return new Date(t).toISOString().slice(0, 10);
+}
+
 /** Readable text of an HTML page: skips scripts, styles, navigation, headers/footers and forms. */
-export async function htmlToText(html: string): Promise<{ title: string; text: string }> {
+export async function htmlToText(html: string): Promise<{ title: string; text: string; published?: string }> {
   let title = "";
+  let published: string | undefined;
   let skip = 0;
   const out: string[] = [];
   const rewriter = new HTMLRewriter()
     .on("title", { text: (t) => void (title += t.text) })
+    .on(PUBLISHED_META, { element: (el) => void (published ??= publishedDate(el.getAttribute("content"))) })
     .on("head, script, style, noscript, svg, template, iframe, nav, footer, form, aside, header, button, select", {
       element(el) {
         skip++;
@@ -530,7 +651,7 @@ export async function htmlToText(html: string): Promise<{ title: string; text: s
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .join("\n");
-  return { title: decodeEntities(title).replace(/\s+/g, " ").trim(), text };
+  return { title: decodeEntities(title).replace(/\s+/g, " ").trim(), text, ...(published ? { published } : {}) };
 }
 
 /**
@@ -541,7 +662,7 @@ export async function htmlToText(html: string): Promise<{ title: string; text: s
 export async function fetchPageText(
   raw: string,
   options: { userAgent: string; signal?: AbortSignal; maxBytes?: number },
-): Promise<{ url: URL; title: string; text: string; truncated: boolean }> {
+): Promise<{ url: URL; title: string; text: string; truncated: boolean; published?: string }> {
   let url = checkPublicUrl(raw);
   let response: Response | null = null;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -581,9 +702,9 @@ export async function fetchPageText(
     throw new ToolInputError(`That address isn't a readable web page (it's ${type.split(";")[0]}).`);
   }
   const { text: body, truncated } = await readLimited(response, options.maxBytes ?? 1_500_000);
-  const page = isHtml ? await htmlToText(body) : { title: "", text: body.trim() };
+  const page: { title: string; text: string; published?: string } = isHtml ? await htmlToText(body) : { title: "", text: body.trim() };
   if (!page.text) throw new ToolInputError("The page has no readable text (it may need JavaScript or a login).");
-  return { url, title: page.title, text: page.text, truncated };
+  return { url, title: page.title, text: page.text, truncated, ...(page.published ? { published: page.published } : {}) };
 }
 
 const readPage = define({

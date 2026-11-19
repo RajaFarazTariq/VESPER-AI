@@ -32,6 +32,8 @@ export interface AdminUserDto extends UserDto {
   /** Images attached and seconds of speech turned into text today (UTC). */
   todayImages: number;
   todaySpeechSeconds: number;
+  /** Deep-research runs that finished today (failed or stopped runs aren't counted). */
+  todayResearch: number;
   conversations: number;
   github: boolean;
   google: boolean;
@@ -67,6 +69,12 @@ export interface AppSettingsDto {
   voiceEnabled: boolean;
   /** Minutes of speech each user may turn into text per UTC day (admins unlimited). */
   speechMinutesPerDay: number;
+  /** Deep research: several searches, a few pages read, one written report. */
+  researchEnabled: boolean;
+  /** Research runs each user may finish per UTC day (admins unlimited). */
+  researchRunsPerDay: number;
+  /** The last N of the day's web searches are kept for normal chat: research can't use them. */
+  researchSearchReserve: number;
 }
 
 /** What the chat screen may offer right now (admin switches + whether a capable service is set up). */
@@ -77,6 +85,8 @@ export interface FeaturesDto {
    * speechToText: the microphone button can be offered (Voice on + Groq or Workers AI available).
    */
   voice: { enabled: boolean; speechToText: boolean; minutesPerDay: number; maxRecordingSeconds: number };
+  /** The Research button: switch on, web search set up, and the daily cap above the searches kept for chat. */
+  research: { enabled: boolean; runsPerDay: number };
 }
 
 export interface TranscriptionDto {

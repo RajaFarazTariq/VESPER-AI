@@ -4,9 +4,45 @@ Read this first when resuming work. Last updated: **2026-11-19**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-19)
 
-**State:** **v0.9.7 (👍/👎 answer feedback) is built and checked locally, not pushed yet.** Live is **v0.9.6**
-(images + voice). The deploy will apply migration `0007_message_feedback.sql` (add-only). The owner **replaced the
-GitHub token** (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-19.
+**State:** **v0.9.8 (deep research + dark theme by default) is built and checked locally, not pushed yet.** Live is
+**v0.9.7** (answer feedback, pushed 2026-11-19, `/api/health` → `0.9.7`). The deploy will apply migration
+`0008_deep_research.sql` (add-only, revert-safe). **First release on its own branch + pull request** (owner's rule
+since 2026-11-19, section 0 "How the owner wants each task run"). The owner replaced the GitHub token (confirmed
+2026-11-19). `.dev.vars` key lines were empty on 2026-11-19.
+
+**v0.9.8 "deep research" (built 2026-11-19; owner approved the plan + 7 additions + my adjustments):**
+1. **Research** button in the composer (next to Tools; one-shot, turns off after sending). Admin → App settings →
+   Deep research: on/off (on), research runs per user per day (3; admins unlimited), web searches kept for normal
+   chat (10). The panel shows how many searches research can use and warns when it's effectively off.
+2. **Plan** (model request 1): 2–4 focused queries as JSON (`llm/research.ts`, `parsePlan`; unreadable → the question).
+3. **Search**: before the run, 4 searches are **set aside** atomically on the shared daily counter
+   (`holdResearchSearches`, never touching the last N kept for chat); < 2 available → refused before anything starts,
+   nothing counted. Searches run within the hold; saved results cost nothing; unused ones are **given back**
+   (`releaseResearchSearches`). Searches really made stay spent even if the run fails. Knowledge base searched once.
+4. **Read**: up to **3** pages (official/trusted first), passages picked by word matching (**no model call**).
+5. **Write** (model request 2): **no tools offered**; material wrapped as untrusted; research rules in the system
+   prompt (`RESEARCH_RULES` in `llm/context.ts`). The app appends the **Sources** list itself: type, published date
+   (Tavily's date or the page's own `article:published_time`-style meta; otherwise "date unknown"; never the
+   date-in-snippet guess), checked date (saved searches keep their first date, `search_cache.checked_at`), and
+   research notes (e.g. "Only 3 of the 4 planned searches ran…").
+6. Progress shown as steps (Planning the research → Web search ×N → Read a web page ×N → answer streams); the
+   admin-only number check runs on the brief.
+7. Counting: the run is counted at the start (`consumeDailyResearch`) and given back if it fails or is stopped, so
+   only finished reports count; the message counts like any message. Regenerate/Edit of a research answer research
+   again.
+8. **Model requests per run: 2** (plan + write); a provider failure adds one per extra provider tried (+1 retry for
+   temporary errors). Cloudflare calls per run ≈ 10–20 (≤ 4 searches, ≤ 3 pages, 2 model calls), under the free
+   plan's 50.
+9. **Dark theme is now the default** (owner's request 2026-11-19): `web/lib/theme.ts` `DEFAULT_THEME = "dark"`,
+   `<html class="dark">` in `index.html` (no white flash); a theme someone picked in Settings is kept.
+10. 212 tests (4 new in `tests/web.test.ts` + the automatic migration check) (search and pages faked: full run with dates/no tools/untrusted material,
+    10-search reserve + running out partway, atomic hold + give back, failed run not counted). **Still to do: branch
+    + PR + merge, then the short live test** (one research question, see below).
+- Live test for v0.9.8: new chat → **Research** on → "What was Pakistan's population in the 2023 census, and how does
+  it compare with the 2017 census?" → expect the steps, a brief with Short answer / Key findings / What's uncertain,
+  and a Sources list with published/checked dates; Admin → Users shows "1 research run"; App settings shows
+  searches used today (2–4 more than before).
+- Live status of v0.9.7 (pushed 2026-11-19): not yet confirmed by the owner ("checking").
 
 **v0.9.7 "answer feedback" (built 2026-11-19, owner approved the 6 steps):**
 1. 👍/👎 under each answer (after Copy / Read aloud), saved at once; clicking the same thumb again takes it back.
@@ -211,11 +247,13 @@ Problems", 23 pages). Upload, folder, space meter, search, re-ranker and page ci
   always (`citedSources` in `web/lib/format.ts`). (C) 【 】 citations are shown as ( ) (`tidyCitations`).
 
 **First thing to do next session (in this order):**
-1. Health check. `0.9.6` means v0.9.7 isn't pushed yet: give him the push commands (section 2). After the push,
-   watch `/api/health` until it says `0.9.7`, then the short live test above. Check the **`.dev.vars` key lines are
-   still empty**.
-2. Ask whether he tested 🎤 voice input on the live site (the image question and Read aloud already passed).
-3. Next per the roadmap: deep-research mode, then smarter memory (see item 4 below).
+1. Health check. `0.9.7` means v0.9.8 isn't merged yet: give him the branch + PR commands again (section 0 "How the
+   owner wants each task run"). After the merge, watch `/api/health` until it says `0.9.8`, then the short live test
+   above. Then give him the branch-protection steps (promised 2026-11-19, see section 2). Check the **`.dev.vars` key
+   lines are still empty**.
+2. Ask whether he tested 🎤 voice input and 👍/👎 on the live site.
+3. Next per the roadmap: smarter memory (relevant memories per request, project spaces, export), then answer
+   verification / GitHub integration (see item 4 below).
 4. Owner said he'll do these later: re-ask on the live site (new chat, model Auto) the Copilot question, "What is the
    latest stable version of Python?" and "What was Pakistan's population in the 2023 census?". Expect Groq (not
    Gemini) to answer most of them, 61% for Java from GitHub's own blog, 3.15.2 from python.org, 241.49 million.
@@ -260,11 +298,25 @@ free-tier terms for serving other users (not done yet; fine for a few testers).
   fix obvious issues, report what's left. No exhaustive or repeated suites.
 - **Document every stage**: update this file, docs/CONFIGURATION.md (every setting/secret/service + the stage log)
   and README/ARCHITECTURE as needed, and bump the version (`src/worker/version.ts`, package.json, package-lock.json).
-- He pushes himself. Give commands like:
-  `git add --all -- . ":(exclude)AI_Assistant_Feature_Roadmap.pdf"` → `git status` → `git commit -m "…"` →
-  `git -c credential.helper= push origin main` (git then asks Username `RajaFarazTariq` and the token as password).
-  Run them in the project folder, not in `C:\Projects` (his office projects live there).
-- After his push: watch `/api/health` until the new version shows, then confirm.
+- He pushes himself. **Since 2026-11-19 (his rule): every release goes on its own branch** so any release can be
+  reverted. Never give "commit straight to main" commands again. The commands, in the project folder (not
+  `C:\Projects`):
+  1. `git switch main` → `git -c credential.helper= pull origin main` (start from the live code)
+  2. `git switch -c release/v<version>-<short-name>` (e.g. `release/v0.9.8-deep-research`)
+  3. `git add --all -- . ":(exclude)AI_Assistant_Feature_Roadmap.pdf"` → `git status`
+  4. `git commit -m "<accurate title, ≤ 72 chars>" -m "<description paragraph(s): what changed, why, migrations, how
+     it was tested>"` (one `-m` per paragraph; no tool/assistant attribution lines)
+  5. `git -c credential.helper= push -u origin <branch>` (asks Username `RajaFarazTariq` and the token as password).
+     A branch push does **not** deploy.
+  6. Open the pull-request link git prints → paste the **PR title and description** given with the commands → wait
+     for the green CI check (typecheck + tests + build) → **Merge pull request** (keep "Create a merge commit") →
+     that merge to `main` deploys.
+  7. `git switch main` → `git -c credential.helper= pull origin main`.
+  **To revert a release:** on GitHub open the merged PR → **Revert** → merge the revert PR (deploys the previous
+  version). Code only: add-only migrations stay in the database, which is harmless (older code ignores new
+  tables/columns). Releases up to v0.9.7 were committed straight to `main` (commits `2fb0c09` = v0.9.6,
+  `f01ec7e` = v0.9.7); revert those with `git revert <commit>` on a branch if ever needed.
+- After the merge: watch `/api/health` until the new version shows, then confirm.
 - This is a **personal project**: don't save anything about it in the assistant's memory system, and no EOD/history
   logging; this file is the memory. Don't touch his office work.
 - Explain in **easy, plain words** (no jargon); he asked for that explicitly. Work **fast**: he prefers short status
@@ -305,7 +357,16 @@ requirement: no paid services, no card on file, no paid fallback).
   placeholder (see docs/CONFIGURATION.md §6). Never ask him to paste it into the chat.
 - Wants **step-by-step, one step at a time** instructions for anything he does in a dashboard.
 - Explain in plain words; he's not deep in this stack.
-- Deploys happen automatically: a push to `main` triggers GitHub Actions → tests → D1 migrations → `wrangler deploy`.
+- Deploys happen automatically: a push to `main` (including merging a PR) triggers GitHub Actions → tests → D1
+  migrations → `wrangler deploy`. Release branches don't deploy; pull requests run CI (typecheck, tests, build).
+  Release workflow: section 0, "How the owner wants each task run".
+- **Branch protection on `main`** (steps given 2026-11-19, to do after the first PR's CI has run once, so the `check`
+  status exists): GitHub → VESPER-AI → Settings → Branches → Add classic branch protection rule → pattern `main` →
+  tick "Require a pull request before merging" (leave **Require approvals unticked**: he can't approve his own PR) →
+  tick "Require status checks to pass before merging" + "Require branches to be up to date", add the check `check`
+  (the CI job) → tick "Do not allow bypassing the above settings" → leave force pushes and deletions off → Save.
+  Effect: direct pushes to `main` are refused; merges need green CI; merging still deploys. Emergency rollback = the
+  PR's Revert button (also a PR). Status: not confirmed yet.
 - An untracked `AI_Assistant_Feature_Roadmap.pdf` in his local folder is **his** file. Don't add it to git unless he asks.
 
 ## 3. Architecture (short)
@@ -374,7 +435,8 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Source fixes (v0.9.4)**: server reads official pages, "quoting X" labels + R3b, plain document citations, Note only for disagreements, Groq ≤10 s wait | ✅ live (v0.9.4, commit `4758a66`, deployed 2026-11-19; 184 tests); Gemini accuracy 87.3% (section 0); live re-test pending |
 | **Fewer tokens (v0.9.5)**: search first / one request, trimmed passages, relevant-only document passages, search cache, dates in text, fewer weak results, quoting warning, organisation-site search; welcome cards removed | ✅ live (v0.9.5, commit `208b3a8`, deployed 2026-11-19; 201 tests); Gemini 91.2%, Groq 95.8% on the first 8 questions (section 0); live re-test pending |
 | **Images + voice (v0.9.6)**: 📎/paste/drop images → Gemini/OpenRouter vision, previews kept; 🎤 Groq Whisper → Workers AI backup; 🔊 read aloud; admin switches + daily limits; migration 0006 | ✅ live (v0.9.6, deployed 2026-11-19; 205 tests); live-checked: image question ✔️, Read aloud ✔️, voice input not yet tested |
-| **Answer feedback (v0.9.7)**: 👍/👎 + optional reason/note under answers; Admin → Feedback (per-model counts, list with question/answer/sources); migration 0007 | ✅ built and checked locally 2026-11-19 (207 tests); **not pushed yet**; live test pending |
+| **Answer feedback (v0.9.7)**: 👍/👎 + optional reason/note under answers; Admin → Feedback (per-model counts, list with question/answer/sources); migration 0007 | ✅ live (v0.9.7, pushed 2026-11-19, commit `f01ec7e`; 207 tests); owner's live check pending |
+| **Deep research (v0.9.8)** + dark theme default: Research button → plan (1 model request) → 2–4 searches set aside/given back, last 10 kept for chat → ≤ 3 pages (no model calls) → brief written with no tools + app-made Sources list with exact dates; per-user daily runs (failed runs don't count); migration 0008 | ✅ built and checked locally 2026-11-19 (212 tests); **on a release branch, not merged yet**; live test pending |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -412,7 +474,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 207 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 212 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
@@ -439,6 +501,11 @@ Apply new migrations locally first: `npx wrangler d1 migrations apply DB --local
   `tests/migrations.test.ts` seeds data before each migration and fails if any row disappears; since the deploy
   workflow runs tests first, such a change can't reach production. Wiping data on purpose is a separate,
   explicit step the owner must ask for, never part of a migration.
+- **Revert-safe database changes (owner's rule, 2026-11-19).** Every new column must allow NULL or have a DEFAULT,
+  and older code must never need a new table, so reverting the code to the previous release keeps working against
+  the newer database (older code doesn't mention the new columns in its INSERTs, and `getAppSettings` ignores
+  settings keys it doesn't know). Never rename or retype a column; add a new one instead. Reverting code never
+  removes migrations (they stay applied, which is harmless under this rule).
 - **Worker entry module may only export handlers.** Keep the Hono app in `src/worker/app.ts`; `index.ts` exports only
   `default`. There's a regression test for this.
 - **Gemini rejects tool history it didn't create** (thought signatures in `extra_content`). Tool calls carry `origin`, and

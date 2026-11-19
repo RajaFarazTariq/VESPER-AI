@@ -1,9 +1,9 @@
-import { ArrowDown, Menu, Mic, Paperclip, Sparkles, SquarePen } from "lucide-react";
+import { ArrowDown, Menu, Mic, Paperclip, Sparkles, SquarePen, Telescope } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ConversationDto, FeaturesDto, ModelsResponse, PublicConfigDto, ToolInfoDto, UserDto, UserSettings } from "../shared/types";
 import { api, ApiError } from "./api/client";
 import { AdminDialog } from "./components/AdminDialog";
-import { Composer, ToolsButton } from "./components/Composer";
+import { Composer, ResearchToggle, ToolsButton } from "./components/Composer";
 import { LoginPage } from "./components/LoginPage";
 import { MessageItem } from "./components/MessageItem";
 import { ModelPicker } from "./components/ModelPicker";
@@ -133,6 +133,8 @@ function ChatApp({
   const [attachments, setAttachments] = useState<PendingImage[]>([]);
   const [preparing, setPreparing] = useState(0);
   const [features, setFeatures] = useState<FeaturesDto | null>(null);
+  /** Deep research for the next message (turns itself off after sending). */
+  const [researchMode, setResearchMode] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const toast = useCallback((message: string, kind: Toast["kind"] = "error") => {
@@ -282,6 +284,7 @@ function ChatApp({
       setSelection(settings.defaultModel);
       setInput("");
       setAttachments([]);
+      setResearchMode(false);
       setSidebarOpen(false);
       if (push && window.location.pathname !== "/") window.history.pushState(null, "", "/");
     },
@@ -303,25 +306,38 @@ function ChatApp({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const researchOn = Boolean(features?.research.enabled);
   const send = async (text = input) => {
     const message = text.trim();
     const images = imagesOn ? attachments : [];
+    const research = researchOn && researchMode;
     if ((!message && images.length === 0) || chat.streaming || preparing > 0) return;
     if (images.length > 0 && selection.startsWith("ollama:")) {
       toast("Images work with the cloud models only. Remove the images or choose a cloud model.");
       return;
     }
+    if (research && (images.length > 0 || !message)) {
+      toast("Deep research works with text questions only. Remove the images, or turn Research off.");
+      return;
+    }
+    if (research && selection.startsWith("ollama:")) {
+      toast("Deep research needs a cloud model. Choose Auto or another cloud model, or turn Research off.");
+      return;
+    }
     setInput("");
     setAttachments([]);
+    setResearchMode(false);
     stopSpeaking();
     const accepted = await chat.send(
       message,
       selection,
       images.map(({ data, thumb }) => ({ data, thumb })),
+      research,
     );
     if (!accepted) {
       setInput(message);
       setAttachments(images);
+      setResearchMode(research);
     }
   };
 
@@ -343,6 +359,7 @@ function ChatApp({
   const firstName = (user.name ?? "").trim().split(/\s+/)[0] || null;
   const capabilities = Object.keys(CAPABILITY_LABELS).filter((name) => activeNames.has(name));
   const mediaChips = [
+    ...(researchOn ? [{ key: "research", label: "Deep research", Icon: Telescope }] : []),
     ...(imagesOn ? [{ key: "images", label: "Understands images", Icon: Paperclip }] : []),
     ...(features?.voice.speechToText ? [{ key: "voice", label: "Voice input", Icon: Mic }] : []),
   ];
@@ -360,6 +377,7 @@ function ChatApp({
         placement="up"
       />
       <ToolsButton tools={activeTools} onManage={() => setSettingsTab("tools")} />
+      {researchOn ? <ResearchToggle on={researchMode} onChange={setResearchMode} runsPerDay={features!.research.runsPerDay} /> : null}
     </>
   );
   // 📎 and 🎤 appear only when the admin has them switched on and a service that can do them is set up.
@@ -487,7 +505,7 @@ function ChatApp({
                   onStop={chat.stop}
                   streaming={chat.streaming}
                   disabled={chat.loading}
-                  placeholder={`Ask ${appName} anything…`}
+                  placeholder={researchOn && researchMode ? "What should I research? (a few searches, then a report with sources)" : `Ask ${appName} anything…`}
                   controls={composerControls}
                   {...composerMedia}
                 />
@@ -557,7 +575,7 @@ function ChatApp({
                 onStop={chat.stop}
                 streaming={chat.streaming}
                 disabled={chat.loading}
-                placeholder={`Message ${appName}…`}
+                placeholder={researchOn && researchMode ? "What should I research?" : `Message ${appName}…`}
                 controls={composerControls}
                 {...composerMedia}
               />
