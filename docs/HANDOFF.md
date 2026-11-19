@@ -4,30 +4,34 @@ Read this first when resuming work. Last updated: **2026-11-20**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-20)
 
-**State:** **v0.12.0 (GitHub for each user, read-only) is built and checked locally, not pushed yet** (to go on
-branch `release/v0.12.0-github-read-only` + PR #7; adds **migration 0011**, applied by the deploy). It needs the owner's
-**GitHub App + 4 Cloudflare secrets** (CONFIGURATION section 2 and 5) before it can be used live. Live is **v0.11.0**
-(answer verification; PR #6, merge `d2a7a46`, migration 0010). Earlier: v0.10.1 via PR #5, v0.10.0 via PR #4
-(migration 0009), v0.9.10 via PR #3, v0.9.9 via PR #2, v0.9.8 via PR #1. Push note: `origin` has no token, so the
-owner pushes a branch with the token in the URL and **without `-u`** (keeps the token out of `.git/config`):
-`git -c credential.helper= push https://<TOKEN>@github.com/RajaFarazTariq/VESPER-AI.git <branch>`.
+**State:** **v0.12.1 (new logo) is built and checked locally, not pushed yet** (to go on branch
+`release/v0.12.1-new-logo` + PR #8; no database or settings changes). Live is **v0.12.0** (GitHub for each user,
+read-only; PR #7, merge `de648de`, deployed 2026-11-20, migration 0011 applied, `/api/health` → `0.12.0`). It needs
+the owner's **GitHub App + 4 Cloudflare secrets** (CONFIGURATION sections 2 and 5) before GitHub can be used live.
+Earlier: v0.11.0 via PR #6 (migration 0010), v0.10.1 via PR #5, v0.10.0 via PR #4 (migration 0009), v0.9.10 via PR #3,
+v0.9.9 via PR #2, v0.9.8 via PR #1.
+**How the owner pushes (his preference, 2026-11-20):** git asks for the username and token; nothing is typed into the
+command: `git -c credential.helper= push -u origin <branch>` → Username `RajaFarazTariq`, Password = the token. If it
+fails with "No anonymous write access" without asking (VS Code's terminal swallowed the prompt), use
+`$env:GIT_ASKPASS = ""; git -c credential.helper= -c core.askPass= push -u origin <branch>`. Always run git from the
+project folder (a new VS Code terminal may open in `C:\Projects`, another project).
 
-**Logo (owner's choice, 2026-11-20): "Mark V5 · faceted blades"**: a dark rounded-square tile with a thin light
-border; the V is two blades, the left one white/very light lavender, the right one violet, meeting at the bottom;
-hollow cyan circuit nodes on short stems at both top ends; a solid cyan orbit ring crossing the middle (tilted, a
-small cyan node at its left end) with a dotted second orbit below it; a white four-point sparkle at the orbit's right
-end; tiny dots in the tile's corners. Wordmark: VESPER in large, widely spaced light capitals; under it a small cyan
-ring, a short teal line and "AI AGENT" in small spaced warm-orange capitals. Earlier candidates (Circuit V, Orbit V
-tile, Mark V3) were dropped. The owner's images came as chat pictures only (no files). **Next: v0.12.1 "New logo"** on
-its own branch after v0.12.0 is pushed: the mark as SVG → `public/favicon.svg` (plus a simplified small-size version
-if the detail doesn't read at 16 px), the sign-in/brand panel and the message avatar.
+**Logo (owner's choice, 2026-11-20): "Mark V5 · faceted blades"**, built in **v0.12.1**: a dark rounded-square tile
+with a thin light border; the V is two blades (left white/light lavender, right violet), hollow cyan circuit nodes at
+both top ends, a solid cyan orbit ring across the middle (tilted, a cyan node at its left end) with a dotted second
+orbit, a white four-point sparkle at the orbit's right end, tiny corner dots. Wordmark: VESPER in widely spaced
+capitals; under it a cyan ring, a teal line and "AI AGENT" in small spaced warm-orange capitals. Files:
+`public/logo.svg` (full mark, 120 viewBox: sign-in brand panel 120 px, welcome screen 56 px) and `public/favicon.svg`
+(simplified for small sizes: wider blades, thinner single orbit, no dotted orbit or corner dots; browser tab, sidebar,
+mobile header, message avatar). The brand name uses letter-spacing 0.16em in the app, 0.32em in the sign-in wordmark
+(`.auth-wordmark`, `.auth-tagline` in `styles.css`). Redrawn as SVG from the owner's chat pictures (no source files).
 
 **Rules in force:** a **branch protection rule for `main`** (exact ticks not confirmed yet; see section 2), so
 **`main` can't be pushed to directly**: every change, docs included, goes on a branch + PR. The owner replaced the
 GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-20.
-**Order (owner, 2026-11-20):** v0.10.1 ✅ → v0.11.0 ✅ → v0.12.0 GitHub read-only (built) → v0.12.1 new logo →
-v0.13.0 GitHub write actions (to propose).
-**Pending owner checks:** create the GitHub App + secrets, then the v0.12.0 live test (below); v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
+**Order (owner, 2026-11-20):** v0.10.1 ✅ → v0.11.0 ✅ → v0.12.0 GitHub read-only ✅ → v0.12.1 new logo (built) →
+next: propose (v0.13.0 GitHub write actions with approval cards is planned below).
+**Pending owner checks:** v0.12.1 quick look (tab icon, sidebar, sign-in page); create the GitHub App + secrets, then the v0.12.0 live test (below); v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
 
 **v0.10.0 live test (owner, 2026-11-20):** ✔️ phone number refused with the reason; memories "planning a trip to
@@ -623,8 +627,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Smarter memory (v0.10.0)**: relevant + pinned memories per message; pin/edit/export; sensitive data refused; long chats summarised once into kept notes; migration 0009 | ✅ live (v0.10.0, PR #4, deployed 2026-11-20; 224 tests); live test ✔️ (2026-11-20) |
 | **Table display fix (v0.10.1)**: `<br>` in tables becomes a line break; no mid-word breaks in table columns | ✅ live (v0.10.1, PR #5, merge `e752cb9`, deployed 2026-11-20; 225 tests) |
 | **Answer verification (v0.11.0)**: "Check" under answers that used sources → claims rated Supported / Contradicted / Not in the sources with the source; research reports checked automatically; number check skips general-knowledge numbers; admin switches + daily checks; migration 0010 | ✅ live (v0.11.0, PR #6, merge `d2a7a46`, deployed 2026-11-20; 234 tests); live Check ✔️ (3 of 3 supported) |
-| **GitHub for each user, read-only (v0.12.0)**: Settings → Connections (GitHub App, encrypted tokens, one renewal at a time), 5 read-only tools, untrusted-content + leak guard, org/SSO messages, code-search fallback, 15-min cache with ETags, 10 requests per message, PR review in parts, Check via references; migration 0011 | 🔨 built 2026-11-20 (243 tests), not pushed yet (PR #7); needs the GitHub App + 4 secrets |
-| **Next: v0.12.1 new logo**, then v0.13.0 GitHub write actions (approval cards) | ⏳ |
+| **GitHub for each user, read-only (v0.12.0)**: Settings → Connections (GitHub App, encrypted tokens, one renewal at a time), 5 read-only tools, untrusted-content + leak guard, org/SSO messages, code-search fallback, 15-min cache with ETags, 10 requests per message, PR review in parts, Check via references; migration 0011 | ✅ live (v0.12.0, PR #7, merge `de648de`, deployed 2026-11-20; 243 tests); needs the GitHub App + 4 secrets before use |
+| **New logo (v0.12.1)**: "Mark V5 · faceted blades" as `public/logo.svg` (full) + `public/favicon.svg` (small sizes); sign-in wordmark (VESPER / AI AGENT); spaced brand name | 🔨 built 2026-11-20, not pushed yet (PR #8) |
+| **Next: to propose** (v0.13.0 GitHub write actions with approval cards is planned) | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -634,7 +639,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 - Signature classes: `dusk-glow` (welcome/sign-in background), `dusk-text` (gradient greeting word), `shimmer-text`
   ("Thinking…"), `rise-in` (entry animation). Animations are disabled for `prefers-reduced-motion`.
 - System fonts only (`--font-sans`, `--font-display`): the CSP allows fonts from the site itself, no web fonts.
-- Logo: `public/favicon.svg` (evening-star mark, indigo→violet). Radii: cards `rounded-2xl`, dialogs `rounded-3xl`,
+- Logo (v0.12.1): `public/logo.svg` (full mark) for large spots, `public/favicon.svg` (simplified) for ≤ 48 px; dark tile, violet/white blades, cyan orbit. Radii: cards `rounded-2xl`, dialogs `rounded-3xl`,
   composer `rounded-[26px]`, pills `rounded-full`.
 - Layout: `Sidebar.tsx` (search, date groups, collapsible rail saved in localStorage `vesper-sidebar-collapsed`,
   account menu with Settings/Admin/Theme/Sign out); welcome screen + docked composer in `App.tsx`; `Composer.tsx`

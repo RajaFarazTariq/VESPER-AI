@@ -28,7 +28,7 @@
   --accent-strong: #4a3bdf;
   --accent-text: #ffffff;
   --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
-  --accent-2: #b14ce8; /* second dusk tone, used only in the logo and the welcome glow */
+  --accent-2: #b14ce8; /* second dusk tone, used only in the welcome glow */
   --user-bubble: #f1f0fc;
   --danger: #d1242f;
   --code-bg: #f7f7fb;
@@ -161,13 +161,16 @@ body {
 
 /* ---------- Sign-in page ----------
  * Split layout. The form side follows the app theme (tokens above). The brand panel, shown on wide
- * screens only, is always dark: the logo inside fine orbit lines. Static, no decorative animation. */
+ * screens only, is always dark: the logo inside fine orbit lines, then the wordmark. Static, no decorative
+ * animation. The logo's own colours (v0.12.1): cyan nodes and orbit, violet blades, a warm "AI AGENT" line. */
 .auth-showcase {
   --sc-bg: #0b0b10;
   --sc-text: #ececf3;
   --sc-soft: #a3a3b6;
   --sc-ring: #ffffff;
-  --sc-accent: #a197ff;
+  --sc-accent: #22d3ee;
+  --sc-word: #f2f0ff;
+  --sc-amber: #f0a35e;
   background:
     radial-gradient(70% 55% at 50% 42%, rgb(91 76 240 / 0.1), transparent 70%),
     var(--sc-bg);
@@ -194,6 +197,38 @@ body {
 }
 .auth-planet-faint {
   fill-opacity: 0.45;
+}
+.auth-wordmark {
+  font-family: var(--font-display);
+  font-size: 40px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.32em;
+  /* The spacing after the last letter would push the word off-centre. */
+  margin-right: -0.32em;
+  color: var(--sc-word);
+}
+.auth-tagline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.42em;
+  margin-right: -0.42em;
+  color: var(--sc-amber);
+}
+.auth-tagline-ring {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--sc-accent);
+  border-radius: 50%;
+}
+.auth-tagline-rule {
+  width: 34px;
+  height: 1.5px;
+  background: var(--sc-accent);
+  opacity: 0.8;
 }
 .auth-halo {
   background: radial-gradient(closest-side, rgb(91 76 240 / 0.38), rgb(177 76 232 / 0.1) 60%, transparent);
