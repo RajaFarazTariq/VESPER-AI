@@ -1,4 +1,5 @@
 import type { ProviderId } from "../shared/types";
+import { validSecretKey } from "./lib/secret-box";
 import { PROVIDER_IDS } from "../shared/types";
 
 /**
@@ -36,6 +37,15 @@ export interface Env {
   // --- Live information (optional) ---
   /** Tavily web search (free plan: 1,000 credits/month). Without it, web search is simply not offered. */
   TAVILY_API_KEY?: string;
+
+  // --- GitHub for each user, read-only (v0.12.0; all four needed, otherwise GitHub isn't offered) ---
+  /** The VESPER GitHub App (github.com → Settings → Developer settings → GitHub Apps). */
+  GITHUB_APP_CLIENT_ID?: string;
+  GITHUB_APP_CLIENT_SECRET?: string;
+  /** The app's short name from its public link github.com/apps/<slug>. */
+  GITHUB_APP_SLUG?: string;
+  /** Base64 of 32 random bytes: encrypts users' GitHub tokens in the database. */
+  GITHUB_TOKEN_KEY?: string;
 
   // --- Optional tuning ---
   APP_NAME?: string;
@@ -75,6 +85,8 @@ export interface AppConfig {
   adminEmails: Set<string>;
   githubLoginEnabled: boolean;
   googleLoginEnabled: boolean;
+  /** The GitHub App is fully set up (client id + secret + slug + a valid encryption key). */
+  githubAppEnabled: boolean;
   defaultDailyLimit: number;
   devLogin: boolean;
   maxContextChars: number;
@@ -134,6 +146,9 @@ export function getConfig(env: Env): AppConfig {
     adminEmails: csvSet(env.ADMIN_EMAILS),
     githubLoginEnabled: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
     googleLoginEnabled: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
+    githubAppEnabled:
+      Boolean(env.GITHUB_APP_CLIENT_ID?.trim() && env.GITHUB_APP_CLIENT_SECRET?.trim() && /^[a-z0-9-]{1,100}$/i.test(env.GITHUB_APP_SLUG?.trim() ?? "")) &&
+      validSecretKey(env.GITHUB_TOKEN_KEY),
     defaultDailyLimit: intVar(env.DEFAULT_DAILY_LIMIT, 30, 0, 100_000),
     devLogin: boolVar(env.DEV_LOGIN, false),
     maxContextChars: intVar(env.MAX_CONTEXT_CHARS, 16_000, 2_000, 400_000),

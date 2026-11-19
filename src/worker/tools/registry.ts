@@ -5,6 +5,7 @@ import { addMemory, deleteMemory, MemoryLimitError } from "../db/memories";
 import { sensitiveMessage, sensitiveReason } from "../lib/sensitive";
 import { CalcError, evaluate } from "./calculator";
 import { searchKnowledge } from "./knowledge";
+import { GITHUB_TOOLS } from "./github";
 import { define, ToolInputError, type AgentTool, type ToolServerState, type WebToolContext } from "./types";
 import { WEB_TOOLS } from "./web";
 
@@ -12,6 +13,7 @@ import { WEB_TOOLS } from "./web";
 export {
   ToolInputError,
   type AgentTool,
+  type GithubAccess,
   type ToolContext,
   type ToolOutput,
   type ToolServerState,
@@ -128,7 +130,7 @@ const forget = define({
   },
 });
 
-export const ALL_TOOLS: AgentTool[] = [calculator, datetime, remember, forget, ...WEB_TOOLS, searchKnowledge];
+export const ALL_TOOLS: AgentTool[] = [calculator, datetime, remember, forget, ...WEB_TOOLS, searchKnowledge, ...GITHUB_TOOLS];
 
 const isAvailable = (t: AgentTool, server: ToolServerState) => (t.isAvailable ? t.isAvailable(server) : true);
 

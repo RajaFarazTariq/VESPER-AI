@@ -6,6 +6,7 @@ import { prefetchNote } from "./prefetch";
 import { executeRoute, type RouteError, type RouteTarget, type RouterEvents } from "./router";
 import type { ChatMessage, Provider, ToolCall, ToolSpec } from "./types";
 import { packEvidence } from "./verify";
+import { GITHUB_TOOL_NAMES } from "../tools/github";
 
 /** Model ↔ tool rounds per user message. Every round is one request against a free quota. */
 export const MAX_TOOL_ROUNDS = 5;
@@ -23,7 +24,15 @@ const PAIRED_KNOWLEDGE_RESULTS = 3;
  */
 const CHECKED_TOOLS = new Set(["web_search", "read_page", "wikipedia", "search_knowledge", "weather", "currency"]);
 /** Tools whose results are kept with the answer for "Check this answer" (v0.11.0), when a look-up tool was used. */
-const KEPT_TOOLS = new Set([...CHECKED_TOOLS, "calculator", "current_datetime"]);
+const KEPT_TOOLS = new Set([...CHECKED_TOOLS, ...GITHUB_TOOL_NAMES, "calculator", "current_datetime"]);
+/**
+ * Tools that send something to an address the model chooses. Once private repository content is in the answer,
+ * they're refused for the rest of it, so text planted in a repo can't make the model send the code elsewhere (v0.12.0).
+ */
+const LEAKY_TOOLS = new Set(["read_page"]);
+export const LEAK_GUARD_MESSAGE =
+  "Opening web pages is switched off for the rest of this answer because it contains private repository content " +
+  "(this keeps the code from being sent to other websites). Answer without it, or tell the user to ask in a new message.";
 
 /** The knowledge-base search to run alongside a web look-up, or null when it isn't needed. */
 function pairedKnowledgeCall(call: ToolCall, tools: Map<string, AgentTool>): ToolCall | null {
@@ -73,7 +82,7 @@ async function runTool(
   call: ToolCall,
   tools: Map<string, AgentTool>,
   ctx: ToolContext,
-): Promise<{ event: ToolEventDto; content: string; evidence?: string }> {
+): Promise<{ event: ToolEventDto; content: string; evidence?: string; keep?: string; private?: boolean }> {
   const tool = tools.get(call.name);
   const base = { id: call.id, name: call.name, label: tool?.label ?? call.name };
   let args: Record<string, unknown> = {};
@@ -104,6 +113,8 @@ async function runTool(
       },
       content: output.content.slice(0, MAX_TOOL_RESULT_CHARS),
       ...(output.evidence ? { evidence: output.evidence } : {}),
+      ...(output.keep ? { keep: output.keep } : {}),
+      ...(output.private ? { private: true } : {}),
     };
   } catch (error) {
     const known = error instanceof ToolInputError || error instanceof SyntaxError;
@@ -144,6 +155,7 @@ export async function runAgent(input: {
   let knowledgeChecked = false; // has the knowledge base been searched in this reply?
   const evidence: string[] = []; // everything the tools returned in this reply, for the number check
   const kept: string[] = []; // what the look-up tools returned, kept with the answer so it can be checked later
+  let privateContent = false; // private repository content is in this answer: no more web pages (leak guard)
   const result: AgentResult = {
     status: "error",
     target: null,
@@ -171,6 +183,12 @@ export async function runAgent(input: {
    * Used for the model's own calls and for the server's prefetch alike.
    */
   const execute = async (call: ToolCall): Promise<{ content: string; ok: boolean }> => {
+    if (privateContent && LEAKY_TOOLS.has(call.name)) {
+      const refused: ToolEventDto = { ...running(call), status: "error", summary: "Not opened: this answer contains private repository content" };
+      result.tools.push(refused);
+      await input.events.tool(refused);
+      return { content: JSON.stringify({ error: LEAK_GUARD_MESSAGE }), ok: false };
+    }
     const paired = knowledgeChecked ? null : pairedKnowledgeCall(call, toolMap);
     if (paired || call.name === "search_knowledge") knowledgeChecked = true;
     await input.events.tool(running(call));
@@ -181,8 +199,10 @@ export async function runAgent(input: {
     ]);
     result.tools.push(main.event);
     await input.events.tool(main.event);
+    if (main.private) privateContent = true;
+    // GitHub results go to the number check (in memory) but only their references are kept with the answer.
     evidence.push(main.content, main.evidence ?? "");
-    if (main.event.status === "done" && KEPT_TOOLS.has(call.name)) kept.push(`[${main.event.label}]\n${main.content}`);
+    if (main.event.status === "done" && KEPT_TOOLS.has(call.name)) kept.push(`[${main.event.label}]\n${main.keep ?? main.content}`);
     let content = main.content;
     if (extra) {
       result.tools.push(extra.event);
@@ -258,8 +278,9 @@ export async function runAgent(input: {
 
     if (route.toolCalls.length === 0) {
       result.status = "complete";
-      if (result.tools.some((t) => CHECKED_TOOLS.has(t.name) && t.status === "done")) {
-        result.evidence = packEvidence(kept);
+      const used = (names: Set<string>) => result.tools.some((t) => names.has(t.name) && t.status === "done");
+      if (used(CHECKED_TOOLS) || used(GITHUB_TOOL_NAMES)) result.evidence = packEvidence(kept);
+      if (used(CHECKED_TOOLS)) {
         // Admin-only: are the answer's numbers in what the tools returned, the passages, the question or the chat?
         // (Only sentences about what the tools returned are checked: general-knowledge numbers are left alone.)
         const chat = messages.map((m) => (typeof m.content === "string" ? m.content : ""));

@@ -11,6 +11,9 @@ import { getProviderModels } from "../llm/catalog";
 import { getProviders } from "../llm/registry";
 import { planRoute } from "../llm/router";
 import { sourcesOfTools, verifyAnswer } from "../llm/verify";
+import { GITHUB_REF, resolveGithubRefs } from "../tools/github";
+import { githubAccess, githubConnected } from "../tools/github-client";
+import { githubAllowed } from "./connections";
 import { requireUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/security";
 
@@ -39,6 +42,11 @@ export const answerCheckRoutes = new Hono<AppEnv>()
       throw new AppError(400, "no_sources", "This answer didn't use any sources, so there's nothing to check it against.");
     }
     if (answer.status !== "complete") throw badRequest("Only finished answers can be checked.");
+    // GitHub answers keep only references; the check reads them again through the user's own access (v0.12.0).
+    const usesGithub = answer.evidence.includes(GITHUB_REF);
+    if (usesGithub && !(githubAllowed(c.env, user, settings) && (await githubConnected(c.env.DB, user.id)))) {
+      throw new AppError(409, "github_reconnect", "This answer used your GitHub repositories: reconnect GitHub in Settings → Connections to check it.");
+    }
 
     const providers = getProviders(c.env);
     const store = new D1ProviderStateStore(c.env.DB);
@@ -60,11 +68,17 @@ export const answerCheckRoutes = new Hono<AppEnv>()
           : `You've used all ${perDay} answer checks for today. They reset at 00:00 UTC.`,
       );
     }
+    const evidence = usesGithub
+      ? await resolveGithubRefs(
+          answer.evidence,
+          githubAccess({ env: c.env, db: c.env.DB, userId: user.id, userAgent: `${config.appName.replace(/[^\w.-]/g, "") || "Assistant"}/check` }),
+        )
+      : answer.evidence;
     const verification = await verifyAnswer({
       appName: config.appName,
       question: answer.question,
       answer: answer.content,
-      evidence: answer.evidence,
+      evidence,
       sources: sourcesOfTools(answer.tools),
       trigger: "user",
       plan: planned.plan,

@@ -20,3 +20,6 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# Logo candidates the owner is choosing between (local only until one is picked)
+brand/logo-candidates/

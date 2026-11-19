@@ -10,6 +10,7 @@ import type {
   FeedbackItemDto,
   FeedbackReason,
   FeedbackSummaryDto,
+  GithubConnectionDto,
   KnowledgeChunkInput,
   KnowledgeCollectionDto,
   KnowledgeDocKind,
@@ -121,6 +122,9 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  /** Settings → Connections (v0.12.0). Connecting is a normal link to /api/connections/github/start. */
+  connections: () => request<{ github: GithubConnectionDto }>("/api/connections"),
+  disconnectGithub: () => request<{ github: GithubConnectionDto }>("/api/connections/github/disconnect", { method: "POST", body: "{}" }),
   /** "Check this answer" (v0.11.0): the answer's key claims rated against its sources (saved; asking again is free). */
   checkAnswer: (messageId: string) =>
     request<{ verification: VerificationDto }>(`/api/answer-check/${encodeURIComponent(messageId)}`, { method: "POST", body: "{}" }),
@@ -140,7 +144,12 @@ export const api = {
       request<{ user: AdminUserDto }>(`/api/admin/users/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
     deleteUser: (id: string) => request<{ ok: true }>(`/api/admin/users/${encodeURIComponent(id)}`, { method: "DELETE" }),
     settings: () =>
-      request<{ settings: AppSettingsDto; tools: ToolInfoDto[]; webSearch: { keyConfigured: boolean; usedToday: number } }>(
+      request<{
+        settings: AppSettingsDto;
+        tools: ToolInfoDto[];
+        webSearch: { keyConfigured: boolean; usedToday: number };
+        github?: { configured: boolean };
+      }>(
         "/api/admin/settings",
       ),
     updateSettings: (patch: Partial<AppSettingsDto>) =>

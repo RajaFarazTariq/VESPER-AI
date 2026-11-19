@@ -293,6 +293,20 @@ function ChatApp({
 
   // URL routing: /c/<id> opens a conversation; back/forward work.
   useEffect(() => {
+    // Back from GitHub (v0.12.0): open Settings → Connections and say how it went.
+    const github = new URLSearchParams(window.location.search).get("github");
+    if (github) {
+      const outcomes: Record<string, [string, "info" | "error"]> = {
+        connected: ["GitHub connected. If you haven't yet, choose which repositories VESPER may read.", "info"],
+        installed: ["Your repository choice was saved on GitHub.", "info"],
+        denied: ["GitHub wasn't connected (you cancelled on GitHub).", "error"],
+        failed: ["Couldn't connect GitHub. Please try again.", "error"],
+        not_available: ["GitHub isn't available for your account.", "error"],
+      };
+      const [message, kind] = outcomes[github] ?? outcomes.failed!;
+      toast(message, kind);
+      setSettingsTab("connections");
+    }
     const initial = conversationIdFromPath();
     if (initial) void openConversation(initial, false);
     else if (window.location.search) window.history.replaceState(null, "", "/");

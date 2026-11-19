@@ -8,12 +8,17 @@ import {
   Clock,
   CloudSun,
   Coins,
+  FileCode,
   FileText,
+  FolderGit2,
+  GitPullRequest,
+  CircleDot,
   Library,
   ListChecks,
   Loader2,
   ScrollText,
   Search,
+  SearchCode,
   ShieldCheck,
   Telescope,
   Wrench,
@@ -36,6 +41,11 @@ export const TOOL_ICONS: Record<string, typeof Wrench> = {
   research_plan: Telescope, // deep research: planning the searches
   context_summary: ScrollText, // a long chat's older part kept as short notes
   fact_check: ListChecks, // a research report checked against its sources (v0.11.0)
+  github_repo: FolderGit2, // the user's own GitHub, read-only (v0.12.0)
+  github_file: FileCode,
+  github_search: SearchCode,
+  github_issues: CircleDot,
+  github_pr_changes: GitPullRequest,
 };
 
 /** Every source used for a reply, once each, in the order the tools found them. */
@@ -80,7 +90,8 @@ export function SourceList({ sources }: { sources: SourceDto[] }) {
             className="inline-flex max-w-[16rem] items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
           >
             <span className="shrink-0 font-medium">{i + 1}</span>
-            <span className="truncate">{hostOf(s.url)}</span>
+            {/* GitHub sources are all on github.com: show which repo, file and lines instead. */}
+            <span className="truncate">{hostOf(s.url) === "github.com" ? s.title : hostOf(s.url)}</span>
           </a>
         ) : (
           <span
@@ -142,6 +153,11 @@ const PLAIN: Record<string, [running: string, done: string]> = {
   currency: ["Checking exchange rates…", "Checked exchange rates"],
   search_knowledge: ["Searching the knowledge base…", "Searched the knowledge base"],
   fact_check: ["Checking the facts against the sources…", "Checked the facts against the sources"],
+  github_repo: ["Looking at the repository…", "Looked at the repository"],
+  github_file: ["Reading code…", "Read code"],
+  github_search: ["Searching the code…", "Searched the code"],
+  github_issues: ["Reading issues…", "Read issues"],
+  github_pr_changes: ["Reading the pull request…", "Read the pull request"],
 };
 
 function PlainToolLine({ tool }: { tool: ToolEventDto }) {
