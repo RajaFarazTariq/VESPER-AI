@@ -4,9 +4,8 @@ Read this first when resuming work. Last updated: **2026-11-19**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-19)
 
-**State:** **v0.9.4 is live** (commit `4758a66`). **v0.9.5 is finished and handed to the owner to push**
-(2026-11-19; 201 tests, typecheck and build clean). If `/api/health` shows `0.9.5`, it's deployed. The deploy also
-applies migration `0005_search_cache.sql` (add-only).
+**State:** **v0.9.5 is live** (commit `208b3a8`, deployed 2026-11-19; `/api/health` → `0.9.5`; 201 tests,
+typecheck and build clean). The deploy applied migration `0005_search_cache.sql` (add-only).
 
 **v0.9.5 "fewer tokens" (built 2026-11-19, owner approved all 10 steps):**
 1. **Search first, one request** (`llm/prefetch.ts`): questions that clearly need a look-up ("latest", "current",
@@ -33,7 +32,7 @@ applies migration `0005_search_cache.sql` (add-only).
 | Run | 0.9.4 | 0.9.5 |
 |---|---|---|
 | Gemini (`gemini-3.5-flash-lite`) | 87.3%, 13/18 fully right | **91.2%, 14/18** |
-| Groq (`openai/gpt-oss-120b`) | not measurable (search questions never finished) | **measurable now**: first 9 questions: Copilot 5/5, CodeCompose 3/3, Regression Oracle 3/3, PDF Java 2/3, HumanEval 4/4, no-answer 2/2, Python 2/2, Node.js 2/2 (better than Gemini), Linux kernel error (the model ran extra searches of its own, so it hit the per-minute limit again). Full Groq score: see below once the run ends. |
+| Groq (`openai/gpt-oss-120b`) | not measurable (search questions never finished) | **measurable now, first 8 questions only: 95.8% (23/24 checks), 7/8 fully right** (Gemini on the same 8: 87.5%, 5/8). Copilot 5/5, CodeCompose 3/3, Regression Oracle 3/3, PDF Java 2/3, HumanEval 4/4, no-answer 2/2, Python 2/2, Node.js 2/2. Questions 9–18 not scored: Groq's **daily** allowance (200,000 tokens/day, shared with the live site) ran out after question 8, so the run was stopped. |
 - Copilot/Java is now right with Gemini too: 46% and **61% from GitHub's own blog** (found by the organisation-site
   search), the PDF's 62% as a correctly attributed note.
 - Still imprecise with Gemini: Linux kernel ("7.3" though it cited kernel.org) and Node.js (called Node 22 the main
@@ -179,13 +178,15 @@ Problems", 23 pages). Upload, folder, space meter, search, re-ranker and page ci
   always (`citedSources` in `web/lib/format.ts`). (C) 【 】 citations are shown as ( ) (`tidyCitations`).
 
 **First thing to do next session (in this order):**
-1. Health check → `0.9.5` (if still `0.9.4`, he hasn't pushed yet: give him the push commands). Ask whether he
+1. Health check → `0.9.5` (live since 2026-11-19), and ask him to push this docs update if not done. Ask whether he
    **replaced the GitHub token** (pasted into a chat on 2026-11-17, expires 2026-12-09, see section 8), and check
    that the **`.dev.vars` key lines are empty** (he re-added Groq/Gemini/Tavily keys for the 0.9.5 runs on 2026-11-19
    and was to empty them after the Groq run).
 2. After the 0.9.5 deploy: re-ask on the live site (new chat, model Auto) the Copilot question, "What is the latest
    stable version of Python?" and "What was Pakistan's population in the 2023 census?". Expect Groq (not Gemini) to
-   answer most of them now, 61% for Java from GitHub's own blog, 3.15.2 from python.org, 241.49 million.
+   answer most of them now, 61% for Java from GitHub's own blog, 3.15.2 from python.org, 241.49 million. (Don't
+   re-test on the same day as a local Groq accuracy run: they share Groq's daily allowance.)
+   Optional: finish the Groq score for questions 9–18 on a fresh day (the 8 done are in the table above).
 3. Then build **v0.9.6 (images + voice)**, steps above; send the numbered steps again for a quick OK.
 4. Older re-test reference (knowledge-base questions; pages checked against the PDF):
    | Question | Correct answer | Page |
@@ -337,7 +338,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Search both + source rules (v0.9.2)**: paired knowledge search on web look-ups, 4 conflict rules, cited-only page chips, 【 】 → ( ) | ✅ live (v0.9.2, commit `a665288`, deployed 2026-11-19; 158 tests); live re-test: both searches run, cited-only chips work; conflict wording still weak with Flash-Lite |
 | **Trusted sources (v0.9.3)**: source labels + ranking, trusted/blocked sites, R1–R7, admin-only number check, accuracy test set | ✅ live (v0.9.3, commit `f2a676b`, deployed 2026-11-19; 175 tests); live re-test: Python and census right, Copilot Java figures reversed |
 | **Source fixes (v0.9.4)**: server reads official pages, "quoting X" labels + R3b, plain document citations, Note only for disagreements, Groq ≤10 s wait | ✅ live (v0.9.4, commit `4758a66`, deployed 2026-11-19; 184 tests); Gemini accuracy 87.3% (section 0); live re-test pending |
-| **Fewer tokens (v0.9.5)**: search first / one request, trimmed passages, relevant-only document passages, search cache, dates in text, fewer weak results, quoting warning, organisation-site search; welcome cards removed | ⏳ handed to the owner to push (201 tests); Gemini 91.2%, Groq measurable (section 0) |
+| **Fewer tokens (v0.9.5)**: search first / one request, trimmed passages, relevant-only document passages, search cache, dates in text, fewer weak results, quoting warning, organisation-site search; welcome cards removed | ✅ live (v0.9.5, commit `208b3a8`, deployed 2026-11-19; 201 tests); Gemini 91.2%, Groq 95.8% on the first 8 questions (section 0); live re-test pending |
 | **Next: images + voice (v0.9.6)** | ⏳ agreed, not started |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
@@ -407,6 +408,9 @@ Apply new migrations locally first: `npx wrangler d1 migrations apply DB --local
 - **Gemini rejects tool history it didn't create** (thought signatures in `extra_content`). Tool calls carry `origin`, and
   foreign history is flattened into a neutral note (`flattenToolMessages`). Never use a `[Used tool …]` format; models copy it.
 - **Groq free tier is 8K tokens/min**, so two-step tool tasks can hit 429 and fall back. That's expected.
+  It also has a **200,000 tokens/day** limit (gpt-oss-120b; rolling, shared by every use of the same Groq account,
+  about 70 search questions a day). A full 18-question Groq accuracy run plus retries can use it up; then the live
+  site falls back to Gemini until it frees up.
 - **CSP is strict** (`public/_headers`: no inline styles, fonts 'self' only). That's why KaTeX outputs MathML with no KaTeX CSS.
 - **Full test run on the office PC: a random test sometimes fails with "Test timed out in 5000ms"** (2026-11-19; a
   different test each run, e.g. in admin.test.ts / api.test.ts). They pass when their file is run alone
