@@ -55,6 +55,9 @@ export const appSettingsSchema = z.object({
   researchRunsPerDay: z.number().int().min(0).max(100),
   researchSearchReserve: z.number().int().min(0).max(1_000),
   localModelsForUsers: z.boolean(),
+  answerCheckEnabled: z.boolean(),
+  answerChecksPerDay: z.number().int().min(0).max(100),
+  researchAutoCheck: z.boolean(),
 });
 
 type Key = keyof AppSettingsDto;
@@ -83,6 +86,10 @@ export function defaultAppSettings(config: AppConfig): AppSettingsDto {
     researchSearchReserve: 10,
     // Local models need Ollama installed and configured on the user's own computer: hidden from users unless allowed.
     localModelsForUsers: false,
+    // Answer checks: one extra model request each (other providers before Groq, so its minute budget stays free).
+    answerCheckEnabled: true,
+    answerChecksPerDay: 10,
+    researchAutoCheck: true,
   };
 }
 

@@ -39,6 +39,7 @@ export function featuresFor(env: Env, settings: AppSettingsDto, admin: boolean):
       runsPerDay: settings.researchRunsPerDay,
     },
     localModels: admin || settings.localModelsForUsers,
+    answerCheck: { enabled: settings.answerCheckEnabled, perDay: settings.answerChecksPerDay },
   };
 }
 

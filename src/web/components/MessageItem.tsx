@@ -1,6 +1,29 @@
-import { AlertTriangle, Brain, ChevronDown, Info, Pencil, RotateCcw, Square, ThumbsDown, ThumbsUp, Volume2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Brain,
+  ChevronDown,
+  CircleCheck,
+  CircleQuestionMark,
+  CircleX,
+  FileText,
+  Info,
+  Loader2,
+  Pencil,
+  RotateCcw,
+  ShieldCheck,
+  Square,
+  ThumbsDown,
+  ThumbsUp,
+  Volume2,
+} from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
-import { FEEDBACK_REASONS, type FeedbackReason, type MessageFeedbackDto } from "../../shared/types";
+import {
+  FEEDBACK_REASONS,
+  type ClaimVerdict,
+  type FeedbackReason,
+  type MessageFeedbackDto,
+  type VerificationDto,
+} from "../../shared/types";
 import { api, ApiError } from "../api/client";
 import type { UiMessage } from "../hooks/useChat";
 import { citedSources, FEEDBACK_LABELS, plainDocumentLinks, providerLabel, tidyCitations } from "../lib/format";
@@ -20,6 +43,8 @@ interface Props {
   onEdit?: (text: string) => Promise<boolean>;
   /** Show "Read aloud" on answers (the admin's Voice switch). */
   readAloud?: boolean;
+  /** Offer "Check this answer" on answers that used sources (the admin's switch, v0.11.0). */
+  answerCheck?: boolean;
 }
 
 const actionButton =
@@ -31,8 +56,9 @@ export const MessageItem = memo(function MessageItem(props: Props) {
   return <AssistantMessage {...props} />;
 });
 
-function AssistantMessage({ message, isLast, canRetry, onRetry, isAdmin = false, readAloud = false }: Props) {
+function AssistantMessage({ message, isLast, canRetry, onRetry, isAdmin = false, readAloud = false, answerCheck = false }: Props) {
   const feedback = useFeedback(message);
+  const check = useAnswerCheck(message, answerCheck);
   const working = message.streaming && !message.content;
   const runningTool = message.tools?.some((t) => t.status === "running");
   const failed = message.status === "error" || message.status === "partial";
@@ -71,6 +97,8 @@ function AssistantMessage({ message, isLast, canRetry, onRetry, isAdmin = false,
         ) : null}
 
         <SourceList sources={sources} />
+
+        {check.value ? <VerificationCard verification={check.value} defaultOpen={check.justChecked} isAdmin={isAdmin} /> : null}
 
         {failed && message.error ? (
           <div className="flex flex-col gap-2 rounded-xl border border-[var(--danger)]/30 bg-[var(--danger)]/5 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between">
@@ -122,6 +150,18 @@ function AssistantMessage({ message, isLast, canRetry, onRetry, isAdmin = false,
                 </button>
               </>
             ) : null}
+            {check.available ? (
+              <button
+                type="button"
+                onClick={() => void check.run()}
+                disabled={check.running}
+                className={`${actionButton} disabled:opacity-60`}
+                title="Check this answer against the sources it used"
+              >
+                {check.running ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                <span className="sr-only sm:not-sr-only">{check.running ? "Checking…" : "Check"}</span>
+              </button>
+            ) : null}
             {canRetry && isLast && !failed ? (
               <button type="button" onClick={onRetry} className={actionButton} title="Regenerate">
                 <RotateCcw size={14} />
@@ -138,11 +178,153 @@ function AssistantMessage({ message, isLast, canRetry, onRetry, isAdmin = false,
                 {feedback.notice}
               </span>
             ) : null}
+            {check.notice ? (
+              <span className="ml-1 text-xs text-[var(--danger)]" role="status">
+                {check.notice}
+              </span>
+            ) : null}
           </div>
         ) : null}
 
         {feedback.panelOpen ? <FeedbackPanel onSend={feedback.sendDetails} onSkip={feedback.closePanel} /> : null}
       </div>
+    </div>
+  );
+}
+
+/** "Check this answer": one request; the result is saved with the answer, so it shows again when the chat is reopened. */
+function useAnswerCheck(message: UiMessage, enabled: boolean) {
+  const [value, setValue] = useState<VerificationDto | null>(message.verification ?? null);
+  const [running, setRunning] = useState(false);
+  const [justChecked, setJustChecked] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => setValue(message.verification ?? null), [message.verification]);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  return {
+    available:
+      enabled &&
+      !value &&
+      Boolean(message.checkable) &&
+      !message.streaming &&
+      message.status === "complete" &&
+      !message.id.startsWith("local-"),
+    value,
+    running,
+    justChecked,
+    notice,
+    run: async () => {
+      setRunning(true);
+      setNotice(null);
+      try {
+        const { verification } = await api.checkAnswer(message.id);
+        setValue(verification);
+        setJustChecked(true);
+      } catch (e) {
+        setNotice(e instanceof ApiError ? e.message : "Couldn't check the answer.");
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => setNotice(null), 8000);
+      } finally {
+        setRunning(false);
+      }
+    },
+  };
+}
+
+const VERDICT: Record<ClaimVerdict, { label: string; Icon: typeof CircleCheck; tone: string }> = {
+  supported: { label: "Supported", Icon: CircleCheck, tone: "text-emerald-600 dark:text-emerald-400" },
+  contradicted: { label: "Contradicted", Icon: CircleX, tone: "text-[var(--danger)]" },
+  not_found: { label: "Not in the sources", Icon: CircleQuestionMark, tone: "text-amber-600 dark:text-amber-400" },
+};
+
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+};
+
+/** "4 of 5 claims supported · 1 not in the sources" */
+function checkSummary(v: VerificationDto): string {
+  if (v.claims.length === 0) return "No specific facts to check in this answer";
+  const count = (verdict: ClaimVerdict) => v.claims.filter((c) => c.verdict === verdict).length;
+  const parts = [`${count("supported")} of ${v.claims.length} claim${v.claims.length === 1 ? "" : "s"} supported`];
+  if (count("contradicted")) parts.push(`${count("contradicted")} contradicted`);
+  if (count("not_found")) parts.push(`${count("not_found")} not in the sources`);
+  return parts.join(" · ");
+}
+
+/** The answer's key claims, each rated against the sources it used (open right after "Check"; otherwise folded). */
+function VerificationCard({ verification, defaultOpen, isAdmin }: { verification: VerificationDto; defaultOpen: boolean; isAdmin: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const flagged = verification.claims.some((c) => c.verdict !== "supported");
+  return (
+    <div className="rise-in rounded-xl border border-[var(--border)] bg-[var(--bg-soft)] text-sm">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+        aria-expanded={open}
+      >
+        <ShieldCheck size={15} className={`shrink-0 ${flagged ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`} />
+        <span className="shrink-0 font-medium">Fact check</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-[var(--text-soft)]">{checkSummary(verification)}</span>
+        <ChevronDown size={14} className={`shrink-0 text-[var(--text-soft)] transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open ? (
+        <div className="border-t border-[var(--border)] px-3 py-2">
+          {verification.claims.length ? (
+            <ul className="flex flex-col gap-2">
+              {verification.claims.map((c, i) => {
+                const { label, Icon, tone } = VERDICT[c.verdict];
+                return (
+                  <li key={i} className="flex gap-2">
+                    <Icon size={15} className={`mt-0.5 shrink-0 ${tone}`} aria-hidden="true" />
+                    <div className="min-w-0 flex-1">
+                      <p className="break-words leading-snug">{c.claim}</p>
+                      <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-[var(--text-soft)]">
+                        <span className={`font-medium ${tone}`}>{label}</span>
+                        {c.source?.url ? (
+                          <a
+                            href={c.source.url}
+                            target="_blank"
+                            rel="noopener noreferrer nofollow"
+                            title={`${c.source.title}\n${c.source.url}`}
+                            className="inline-flex max-w-[14rem] items-center rounded-full border border-[var(--border)] px-2 py-px hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+                          >
+                            <span className="truncate">{hostOf(c.source.url)}</span>
+                          </a>
+                        ) : c.source ? (
+                          <span
+                            title={c.source.location ? `${c.source.title}, ${c.source.location}` : c.source.title}
+                            className="inline-flex max-w-[16rem] items-center gap-1 rounded-full border border-[var(--border)] px-2 py-px"
+                          >
+                            <FileText size={11} className="shrink-0" />
+                            <span className="truncate">{c.source.location ? `${c.source.title} · ${c.source.location}` : c.source.title}</span>
+                          </span>
+                        ) : null}
+                      </p>
+                      {c.note ? <p className="mt-0.5 break-words text-xs text-[var(--text-soft)]">{c.note}</p> : null}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="text-[var(--text-soft)]">The answer makes no specific factual claims to check.</p>
+          )}
+          <p className="mt-2 text-xs text-[var(--text-faint)]">
+            Checked automatically against the sources this answer used{verification.trigger === "auto" ? ", right after it was written" : ""}. The
+            check can make mistakes too: open a source to be sure.
+            {isAdmin && verification.by ? ` · ${verification.by}` : ""}
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }

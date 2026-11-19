@@ -19,6 +19,7 @@ import type { AgentTool, ToolContext } from "../tools/registry";
 import type { AgentEvents, AgentResult } from "./agent";
 import { numberCheckEvent } from "./number-check";
 import { executeRoute, type RouteTarget } from "./router";
+import { packEvidence } from "./verify";
 import type { ProviderHealth, ProviderStateStore } from "../db/provider-state";
 import type { ChatMessage, Provider } from "./types";
 import type { ProviderId } from "../../shared/types";
@@ -353,7 +354,21 @@ export async function runResearch(input: ResearchInput): Promise<ResearchResult>
     result.tools[planIndex] = { ...result.tools[planIndex]!, sources: used.map((s) => ({ title: s.title, url: s.url })) };
     await input.events.tool(result.tools[planIndex]!);
   }
-  const check = numberCheckEvent(result.text, [material, knowledge?.evidence ?? "", knowledge?.content ?? "", input.question]);
+  // Kept with the report so it can be checked (each source a block of its own, so none is pushed out).
+  result.evidence = packEvidence([
+    ...sources.map((s) =>
+      JSON.stringify({
+        title: s.title,
+        url: s.url,
+        published: s.published ?? "date unknown",
+        snippet: s.snippet,
+        ...(s.passages?.length ? { page_passages: s.passages } : {}),
+      }),
+    ),
+    knowledge ? `[Knowledge base]\n${knowledge.content}` : "",
+  ]);
+  const collected = [material, knowledge?.evidence ?? "", knowledge?.content ?? ""];
+  const check = numberCheckEvent(result.text, [...collected, input.question], collected);
   if (check) {
     result.tools.push(check);
     await input.events.tool(check);

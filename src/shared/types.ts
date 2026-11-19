@@ -34,6 +34,8 @@ export interface AdminUserDto extends UserDto {
   todaySpeechSeconds: number;
   /** Deep-research runs that finished today (failed or stopped runs aren't counted). */
   todayResearch: number;
+  /** "Check this answer" checks that finished today. */
+  todayAnswerChecks: number;
   conversations: number;
   github: boolean;
   google: boolean;
@@ -77,6 +79,12 @@ export interface AppSettingsDto {
   researchSearchReserve: number;
   /** Let regular users run local models through Ollama on their own computer (admins always can). */
   localModelsForUsers: boolean;
+  /** "Check this answer" under answers that used sources: one extra model request rates the key claims. */
+  answerCheckEnabled: boolean;
+  /** Checks each user may run per UTC day (admins unlimited). */
+  answerChecksPerDay: number;
+  /** Deep-research reports are checked against their sources automatically (one extra model request per run). */
+  researchAutoCheck: boolean;
 }
 
 /** What the chat screen may offer right now (admin switches + whether a capable service is set up). */
@@ -91,6 +99,8 @@ export interface FeaturesDto {
   research: { enabled: boolean; runsPerDay: number };
   /** Settings → Local models (Ollama): always for admins; for users only when the admin allows it. */
   localModels: boolean;
+  /** "Check this answer" under answers that used sources (v0.11.0). */
+  answerCheck: { enabled: boolean; perDay: number };
 }
 
 export interface TranscriptionDto {
@@ -253,7 +263,37 @@ export interface MessageDto {
   images?: string[] | null;
   /** The user's 👍/👎 on this answer (assistant messages only). */
   feedback?: MessageFeedbackDto | null;
+  /** The answer used sources that were kept, so it can be checked against them ("Check this answer", v0.11.0). */
+  checkable?: boolean;
+  /** The result of checking the answer against its sources (null = not checked). */
+  verification?: VerificationDto | null;
   createdAt: number;
+}
+
+// ------------------------------------------------------------------ Answer verification (v0.11.0)
+
+/** supported: a source states it; contradicted: a source says something different; not_found: no source says it. */
+export type ClaimVerdict = "supported" | "contradicted" | "not_found";
+export const CLAIM_VERDICTS: readonly ClaimVerdict[] = ["supported", "contradicted", "not_found"];
+
+export interface VerifiedClaimDto {
+  /** The claim, in short, as the answer states it. */
+  claim: string;
+  verdict: ClaimVerdict;
+  /** The source that supports or contradicts it (only sources the answer really used). */
+  source: SourceDto | null;
+  /** For a contradicted claim: what the source says instead. */
+  note: string | null;
+}
+
+export interface VerificationDto {
+  /** The key claims, in the order the answer makes them (empty: nothing specific to check). */
+  claims: VerifiedClaimDto[];
+  /** "user": Check this answer; "auto": a deep-research report checked automatically. */
+  trigger: "user" | "auto";
+  checkedAt: number;
+  /** Which model checked it, e.g. "gemini:gemini-2.5-flash-lite" (admins only; removed for users). */
+  by?: string | null;
 }
 
 // ------------------------------------------------------------------ Answer feedback (👍/👎, v0.9.7)

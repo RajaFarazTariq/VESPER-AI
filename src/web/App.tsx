@@ -551,6 +551,7 @@ function ChatApp({
                       canEdit={i === lastUserIndex && !chat.streaming && Boolean(chat.conversationId)}
                       onEdit={(text) => chat.edit(text, selection)}
                       readAloud={voiceOn}
+                      answerCheck={Boolean(features?.answerCheck?.enabled)}
                     />
                   ))}
                 </div>

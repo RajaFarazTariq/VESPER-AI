@@ -7,7 +7,7 @@
  * the full reply stays in the database; this only filters what is sent to the browser.
  * Local (Ollama) replies come from the user's own computer, so they are shown as they are.
  */
-import type { AppSettingsDto, ChatStreamEvent, MessageDto, ToolEventDto } from "../../shared/types";
+import type { AppSettingsDto, ChatStreamEvent, MessageDto, ToolEventDto, VerificationDto } from "../../shared/types";
 import type { SessionUser } from "../db/users";
 import { ANSWER_CHECK } from "../llm/number-check";
 
@@ -25,6 +25,13 @@ export function presentTool(tool: ToolEventDto, viewer: Viewer): ToolEventDto {
   return viewer.admin ? tool : { ...tool, args: {}, summary: null };
 }
 
+/** An answer check: users see the claims and sources, not which model did the checking. */
+export function presentVerification(verification: VerificationDto, viewer: Viewer): VerificationDto {
+  if (viewer.admin) return verification;
+  const { by: _by, ...shown } = verification;
+  return shown;
+}
+
 export function presentMessage(message: MessageDto, viewer: Viewer): MessageDto {
   if (viewer.admin || message.role === "user" || message.provider === "ollama") return message;
   return {
@@ -34,6 +41,7 @@ export function presentMessage(message: MessageDto, viewer: Viewer): MessageDto 
     model: null,
     // The number check is a note for the admin, never shown to users.
     tools: message.tools ? message.tools.filter((t) => t.name !== ANSWER_CHECK).map((t) => presentTool(t, viewer)) : null,
+    ...(message.verification ? { verification: presentVerification(message.verification, viewer) } : {}),
   };
 }
 

@@ -26,6 +26,7 @@ import type {
   TranscriptionDto,
   UserDto,
   UserSettings,
+  VerificationDto,
 } from "../../shared/types";
 
 export type ChatRequestBody = {
@@ -120,6 +121,9 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  /** "Check this answer" (v0.11.0): the answer's key claims rated against its sources (saved; asking again is free). */
+  checkAnswer: (messageId: string) =>
+    request<{ verification: VerificationDto }>(`/api/answer-check/${encodeURIComponent(messageId)}`, { method: "POST", body: "{}" }),
   transcribe: (body: { audio: string; mimeType: string; seconds: number; language?: SpeechLanguage }) =>
     request<TranscriptionDto>("/api/media/transcribe", { method: "POST", body: JSON.stringify(body) }),
   listMemories: () => request<{ memories: MemoryDto[] }>("/api/memories"),

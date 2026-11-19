@@ -11,6 +11,12 @@
  * Simple calculations count too (v0.9.9): a figure that is the difference, sum, percentage change or share of two
  * other figures **stated in the same answer and found in the sources** ("207.7 million to 241.5 million, up 33.8
  * million, about 16%"). Only pairs the answer itself states are tried, so a made-up number can't pass by chance.
+ *
+ * General-knowledge numbers aren't flagged (v0.11.0): a figure no source has is listed only when its sentence (or
+ * list item, or table cell) is about what the sources say: it shares enough words with them, cites a source, or has
+ * another figure the sources support. So "Sunscreen (SPF 30+)" or "Pakistan uses 230 V" in a packing list built from a
+ * weather look-up is left alone, while a wrong figure in a sentence about the census is still caught. The words are
+ * compared with what the tools returned only (not the chat or the prompt, which would match almost anything).
  */
 import type { ToolEventDto } from "../../shared/types";
 
@@ -74,6 +80,44 @@ function claimText(answer: string): string {
     .replace(/^\s*\d+[.)]\s/gm, " ");
 }
 
+/** Where a sentence, list item, table cell or line ends: each part is judged on its own. */
+const PART_BREAK = /\n|\||•|<[bB][rR]\s*\/?>|(?<=[.!?])\s+(?=[*_"'(\[]*[A-Z])/;
+/** Common words that say nothing about the topic (only words of 4+ letters are compared). */
+const STOP = new Set(
+  (
+    "about above after again also although among another around away back because been before being below between both " +
+    "came come could does doing done down during each either else even ever every from gets give given goes going good " +
+    "great have having here into just keep know last least less like likely made make many more most much must near need " +
+    "never next only other over same should since some such sure take than that their them then there these they thing " +
+    "things this those though through very want well were what when where which while will with within without would " +
+    "your yours usually often always still today yesterday tomorrow note answer source sources according roughly " +
+    "approximately nearly almost total thousand million billion trillion lakh lakhs crore crores percent"
+  ).split(" "),
+);
+/** Topic words: 4+ letters, lower case, a plural "s" dropped, common words left out. */
+function topicWords(text: string): string[] {
+  const out = new Set<string>();
+  for (const raw of text.toLowerCase().match(/\p{L}[\p{L}'’]{3,}/gu) ?? []) {
+    const word = raw.replace(/['’]s?$/, "");
+    if (word.length < 4 || STOP.has(word)) continue;
+    out.add(word.length > 4 && word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word);
+  }
+  return [...out];
+}
+
+/**
+ * Is this part of the answer about what the sources say? Yes when it cites a source ([S1]) or enough of its topic
+ * words appear in the sources: 1 for a part of up to 3 words, otherwise at least 2. A part with no words
+ * at all (a bare figure) is checked.
+ */
+function aboutSources(part: string, sourceWords: Set<string>): boolean {
+  if (/\[S\d{1,2}\]/.test(part)) return true;
+  const words = topicWords(part);
+  if (words.length === 0) return true;
+  const shared = words.filter((w) => sourceWords.has(w)).length;
+  return shared >= (words.length <= 3 ? 1 : 2);
+}
+
 const isYear = (f: Figure) => f.plain && f.value >= 1900 && f.value <= 2100;
 const isSmallCount = (f: Figure) => f.plain && f.value < 10;
 const same = (a: number, b: number) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
@@ -121,9 +165,16 @@ export interface NumberCheck {
   checked: number;
   /** The ones no source contains, as written in the answer. */
   missing: string[];
+  /** Numbers left out because their sentence isn't about the sources (general knowledge, e.g. "SPF 30"). */
+  general: number;
 }
 
-export function checkNumbers(answer: string, evidenceText: string): NumberCheck {
+/**
+ * `evidenceText`: everything a figure may come from (what the tools returned, the question, the chat).
+ * `sourceText`: what the tools returned only, to tell which sentences are about the sources. Without it, every
+ * figure is checked.
+ */
+export function checkNumbers(answer: string, evidenceText: string, sourceText?: string): NumberCheck {
   const evidence = evidenceText.replace(/[    ]/g, " ");
   let text = claimText(answer);
   const missing: string[] = [];
@@ -134,30 +185,51 @@ export function checkNumbers(answer: string, evidenceText: string): NumberCheck 
   }
   text = text.replace(VERSION, " ");
   const known = figures(evidence);
-  const unsupported: Figure[] = [];
+  const parts = text.split(PART_BREAK);
+  const unsupported: { claim: Figure; part: number }[] = [];
+  const backed = new Set<number>(); // parts with a figure the sources support: they state facts from the sources
   const stated: number[] = []; // figures in the answer that the sources support: the inputs for calculations
-  for (const claim of figures(text)) {
-    if (isYear(claim) || isSmallCount(claim)) continue;
-    checked++;
-    if (supported(claim, known)) {
-      if (!stated.some((v) => same(v, claim.value))) stated.push(claim.value);
-    } else unsupported.push(claim);
+  parts.forEach((part, i) => {
+    for (const claim of figures(part)) {
+      if (isYear(claim) || isSmallCount(claim)) continue;
+      if (supported(claim, known)) {
+        checked++;
+        backed.add(i);
+        if (!stated.some((v) => same(v, claim.value))) stated.push(claim.value);
+      } else unsupported.push({ claim, part: i });
+    }
+  });
+  const sourceWords = sourceText === undefined ? null : new Set(topicWords(sourceText));
+  let general = 0;
+  for (const { claim, part } of unsupported) {
+    if (derived(claim, stated.slice(0, 40))) {
+      checked++;
+    } else if (sourceWords && !backed.has(part) && !aboutSources(parts[part]!, sourceWords)) {
+      general++;
+    } else {
+      checked++;
+      missing.push(claim.text);
+    }
   }
-  for (const claim of unsupported) if (!derived(claim, stated.slice(0, 40))) missing.push(claim.text);
-  return { checked, missing: [...new Set(missing)] };
+  return { checked, missing: [...new Set(missing)], general };
 }
 
-/** The admin-only step shown under the answer, or null when there was nothing to check. */
-export function numberCheckEvent(answer: string, evidence: string[]): ToolEventDto | null {
-  const { checked, missing } = checkNumbers(answer, evidence.join("\n"));
+/**
+ * The admin-only step shown under the answer, or null when there was nothing to check.
+ * `evidence`: everything a figure may come from; `sources`: what the tools returned (see checkNumbers).
+ */
+export function numberCheckEvent(answer: string, evidence: string[], sources?: string[]): ToolEventDto | null {
+  const { checked, missing, general } = checkNumbers(answer, evidence.join("\n"), sources?.join("\n"));
   if (checked === 0) return null;
   const listed = missing.slice(0, 6).join(", ") + (missing.length > 6 ? ` and ${missing.length - 6} more` : "");
+  const skipped = general ? ` (${general} general number${general === 1 ? "" : "s"} not checked)` : "";
   return {
     id: "answer-check",
     name: ANSWER_CHECK,
     label: "Number check",
     args: {},
     status: missing.length ? "error" : "done",
-    summary: missing.length ? `Not found in any source: ${listed}` : `All ${checked} number${checked === 1 ? "" : "s"} found in the sources`,
+    summary:
+      (missing.length ? `Not found in any source: ${listed}` : `All ${checked} number${checked === 1 ? "" : "s"} found in the sources`) + skipped,
   };
 }

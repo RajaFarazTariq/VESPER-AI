@@ -5,6 +5,7 @@ import { numberCheckEvent } from "./number-check";
 import { prefetchNote } from "./prefetch";
 import { executeRoute, type RouteError, type RouteTarget, type RouterEvents } from "./router";
 import type { ChatMessage, Provider, ToolCall, ToolSpec } from "./types";
+import { packEvidence } from "./verify";
 
 /** Model ↔ tool rounds per user message. Every round is one request against a free quota. */
 export const MAX_TOOL_ROUNDS = 5;
@@ -21,6 +22,8 @@ const PAIRED_KNOWLEDGE_RESULTS = 3;
  * (The calculator alone doesn't trigger it, but its results count as evidence.)
  */
 const CHECKED_TOOLS = new Set(["web_search", "read_page", "wikipedia", "search_knowledge", "weather", "currency"]);
+/** Tools whose results are kept with the answer for "Check this answer" (v0.11.0), when a look-up tool was used. */
+const KEPT_TOOLS = new Set([...CHECKED_TOOLS, "calculator", "current_datetime"]);
 
 /** The knowledge-base search to run alongside a web look-up, or null when it isn't needed. */
 function pairedKnowledgeCall(call: ToolCall, tools: Map<string, AgentTool>): ToolCall | null {
@@ -51,6 +54,8 @@ export interface AgentResult {
   usage: { inputTokens: number | null; outputTokens: number | null };
   tools: ToolEventDto[];
   error: RouteError | null;
+  /** What the sources said (for "Check this answer"): set when the answer used a look-up tool. */
+  evidence?: string;
 }
 
 export const toToolSpecs = (tools: AgentTool[]): ToolSpec[] =>
@@ -138,6 +143,7 @@ export async function runAgent(input: {
   let plan = input.plan;
   let knowledgeChecked = false; // has the knowledge base been searched in this reply?
   const evidence: string[] = []; // everything the tools returned in this reply, for the number check
+  const kept: string[] = []; // what the look-up tools returned, kept with the answer so it can be checked later
   const result: AgentResult = {
     status: "error",
     target: null,
@@ -176,6 +182,7 @@ export async function runAgent(input: {
     result.tools.push(main.event);
     await input.events.tool(main.event);
     evidence.push(main.content, main.evidence ?? "");
+    if (main.event.status === "done" && KEPT_TOOLS.has(call.name)) kept.push(`[${main.event.label}]\n${main.content}`);
     let content = main.content;
     if (extra) {
       result.tools.push(extra.event);
@@ -183,6 +190,7 @@ export async function runAgent(input: {
       // Only passages that are about the question come back (relevantOnly); none means nothing is added.
       if (extra.evidence) {
         evidence.push(extra.content, extra.evidence);
+        kept.push(`[${extra.event.label}]\n${extra.content}`);
         // One tool result per call id (providers require it), so the documents ride along with the web results.
         content =
           `${main.content}\n\n` +
@@ -250,9 +258,12 @@ export async function runAgent(input: {
 
     if (route.toolCalls.length === 0) {
       result.status = "complete";
-      // Admin-only: are the answer's numbers in what the tools returned, the passages, the question or the chat?
       if (result.tools.some((t) => CHECKED_TOOLS.has(t.name) && t.status === "done")) {
-        const check = numberCheckEvent(result.text, [...evidence, ...messages.map((m) => (typeof m.content === "string" ? m.content : ""))]);
+        result.evidence = packEvidence(kept);
+        // Admin-only: are the answer's numbers in what the tools returned, the passages, the question or the chat?
+        // (Only sentences about what the tools returned are checked: general-knowledge numbers are left alone.)
+        const chat = messages.map((m) => (typeof m.content === "string" ? m.content : ""));
+        const check = numberCheckEvent(result.text, [...evidence, ...chat], evidence);
         if (check) {
           result.tools.push(check);
           await input.events.tool(check);
