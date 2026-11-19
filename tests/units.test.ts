@@ -16,6 +16,9 @@ import { citedSources, plainDocumentLinks, tidyCitations } from "../src/web/lib/
 import { classifyHttpError as classifyError, retryAfterFromMessage } from "../src/worker/llm/types";
 import { planPrefetch } from "../src/worker/llm/prefetch";
 import { attributedOrganisation, dateInText, organisationDomains } from "../src/worker/tools/web";
+import { sensitiveReason } from "../src/worker/lib/sensitive";
+import { selectMemories } from "../src/worker/db/memories";
+import type { MemoryDto } from "../src/shared/types";
 
 describe("document citations are never links", () => {
   const docs = ["AI in Software Engineering.pdf"];
@@ -390,5 +393,61 @@ describe("knowledge chunking", () => {
     expect(units.every((u) => u.text.startsWith("name,city\n"))).toBe(true);
     expect(units[0]!.location).toMatch(/^rows 2–\d+$/);
     expect(units[units.length - 1]!.location).toMatch(/–101$/);
+  });
+});
+
+describe("v0.10.0: memory never stores sensitive data", () => {
+  it("refuses passwords, card and bank numbers, ID card numbers and phone numbers", () => {
+    expect(sensitiveReason("My password is hunter2")).toMatch(/password/);
+    expect(sensitiveReason("Card 4111 1111 1111 1111 expires soon")).toMatch(/card number/);
+    expect(sensitiveReason("IBAN PK36SCBL0000001123456702")).toMatch(/bank account/);
+    expect(sensitiveReason("My account number is 0123456789012")).toMatch(/bank account/);
+    expect(sensitiveReason("CNIC 35202-1234567-1")).toMatch(/ID card/);
+    expect(sensitiveReason("Call me on +92 300 1234567")).toMatch(/phone/);
+    expect(sensitiveReason("My mobile is 0300-1234567")).toMatch(/phone/);
+    expect(sensitiveReason("WhatsApp 3001234567")).toMatch(/phone/);
+  });
+
+  it("keeps ordinary facts with numbers", () => {
+    for (const fine of [
+      "Born in 1990, moved to Lahore in 2015.",
+      "Budget is Rs 250,000 for the trip on 2026-11-20.",
+      "On 2026-11-20 10 people joined the team.",
+      "Prefers answers under 200 words and works 9 to 5.",
+      "Office is at 12 Main Street, floor 3.",
+    ]) {
+      expect(sensitiveReason(fine)).toBeNull();
+    }
+  });
+});
+
+describe("v0.10.0: which memories go with a message", () => {
+  const memory = (id: string, content: string, pinned = false, createdAt = 1): MemoryDto => ({ id, content, source: "user", createdAt, pinned });
+  const long = (text: string) => `${text} ${"(more detail about this) ".repeat(8)}`.trim();
+  const saved = [
+    memory("a", long("Is planning a trip to Skardu in June with two friends."), false, 1),
+    memory("b", long("Works as an accountant in Lahore and uses Excel daily."), false, 2),
+    memory("c", long("Prefers Python for data analysis scripts."), false, 3),
+    memory("d", "Prefers short, direct answers.", true, 4),
+    memory("e", long("Has a cat named Biscuit who is three years old."), false, 5),
+    memory("f", long("Is learning Urdu poetry, especially Faiz."), false, 6),
+  ];
+
+  it("sends everything when the list is short", () => {
+    const few = [memory("x", "Likes tea."), memory("y", "Lives in Karachi.")];
+    expect(selectMemories(few, "Anything about Mars?").selected).toHaveLength(2);
+  });
+
+  it("sends pinned memories plus the related ones only", () => {
+    const { selected, total } = selectMemories(saved, "What should I pack for my Skardu trip?");
+    expect(total).toBe(6);
+    expect(selected.map((m) => m.id)).toEqual(["a", "d"]);
+    expect(selectMemories(saved, "Write a Python script to read a CSV").selected.map((m) => m.id)).toEqual(["c", "d"]);
+    expect(selectMemories(saved, "What's the weather like?").selected.map((m) => m.id)).toEqual(["d"]);
+  });
+
+  it("sends everything when the user asks about memory itself", () => {
+    expect(selectMemories(saved, "What do you remember about me?").selected).toHaveLength(6);
+    expect(selectMemories(saved, "Please forget the thing about my cat").selected).toHaveLength(6);
   });
 });

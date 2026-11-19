@@ -4,18 +4,42 @@ Read this first when resuming work. Last updated: **2026-11-19**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-20)
 
-**State:** **v0.9.10 (Tools menu fix + local models hidden for users) is built and checked locally, not pushed yet**
-(to go on branch `release/v0.9.10-menu-local-models` + PR #3). Live is **v0.9.9** (research sources tidy-up):
-`release/v0.9.9-research-sources` (commit `ae0b387`) → **PR #2** → merge commit `65ab220` → `/api/health` → `0.9.9`.
-v0.9.8 (deep research + dark default) went the same way via PR #1 (merge `7131695`). The owner added a **branch
-protection rule for `main`** (exact ticks not confirmed yet; see section 2), so **`main` can't be pushed to
-directly**: every change, docs included, goes on a branch + PR. No migrations in v0.9.9 or v0.9.10. The owner
-replaced the GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-19.
-**Agreed order (owner, 2026-11-20): v0.9.9 ✔️ → v0.9.10 (added on his request) → then v0.10.0 Smarter memory**
-(plan in "Next" below).
-**Pending owner checks:** v0.9.9 live research test, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
+**State:** **v0.10.0 (smarter memory + long chats keep context) is built and checked locally, not pushed yet** (to
+go on branch `release/v0.10.0-smarter-memory` + PR #4). Live is **v0.9.10** (Tools menu fix + local models hidden for
+users): `release/v0.9.10-menu-local-models` (commit `e0704f9`) → **PR #3** → merge commit `ba2b34a` → `/api/health`
+→ `0.9.10`. Earlier: v0.9.9 via PR #2 (merge `65ab220`), v0.9.8 via PR #1 (merge `7131695`). The owner added a
+**branch protection rule for `main`** (exact ticks not confirmed yet; see section 2), so **`main` can't be pushed to
+directly**: every change, docs included, goes on a branch + PR. The deploy will apply migration
+`0009_smarter_memory.sql` (add-only, revert-safe). The owner replaced the GitHub token (confirmed 2026-11-19).
+`.dev.vars` key lines were empty on 2026-11-19.
+**Pending owner checks:** v0.9.9 live research test, v0.9.10 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6),
+branch-protection ticks.
 
-**v0.9.10 (built 2026-11-20, owner approved), from his regular-user screenshots:**
+**v0.10.0 "smarter memory" (built 2026-11-20; owner approved the 6 steps):**
+1. **Only relevant memories** go with each message (`selectMemories` in `db/memories.ts`, word matching, no model
+   call): pinned ones always + up to 8 that share words with the message and the last 3 user messages (2,000
+   characters max). Everything is sent when all memories together are ≤ 800 characters, or when the message is
+   about memory itself ("remember", "forget", "what do you know about me"). The prompt says "(Showing N of M saved
+   notes…)" so the model knows more exist.
+2. Settings → Memory: **pin** ("always use"), **edit** the text, **export** (a .txt made in the browser),
+   pinned first. API `PATCH /api/memories/:id` (`content`, `pinned`).
+3. **Sensitive data refused** (`lib/sensitive.ts`, used by the remember tool, POST and PATCH): passwords/PINs/keys,
+   card numbers (Luhn check), IBAN/account numbers, CNIC/ID numbers, phone numbers (+/0/bracket-shaped 10–15
+   digits, or 7+ digits next to "phone/mobile/WhatsApp"). Message: "Not saved: it looks like a phone number…";
+   dates, years and prices pass.
+4. **Long chats keep context** (`llm/summary.ts`): when the unsummarised messages outgrow the history room
+   (MAX_CONTEXT_CHARS 16,000 minus the system prompt minus 1,600), everything but the newest ~60% is summarised
+   into ≤ 12 bullet points (≤ 1,600 chars, **1 model request**, Gemini/others before Groq so Groq's minute budget
+   is left for the answer), saved on the conversation (`conversations.summary`, `summary_until`) and put in the
+   system prompt from then on. Shown as a step "Summarised the earlier conversation". Next summary only after
+   several more turns. If it fails, the turn goes ahead the old way (older messages dropped). Not for local models.
+5. Memories and summaries are labelled data, not instructions, in the prompt; memories stay per user.
+6. 224 tests (8 new: 5 unit + 3 API, plus the automatic migration check), typecheck, build. **Still to do: branch + PR + merge, then the live test.**
+- Live test for v0.10.0: Settings → Memory: add "I'm planning a trip to Skardu in June" and "My phone is 0300 1234567"
+  (refused with the reason); pin one, edit one, Export; then ask "What should I pack for my trip?" (uses the Skardu
+  memory) and "What do you remember about me?" (lists all).
+
+**v0.9.10 (built and merged 2026-11-20 via PR #3, live), from his regular-user screenshots:**
 1. **Tools menu cut off** at the top on the welcome screen (it opened upward with no height limit inside the scroll
    area). Now it fits the room on screen, scrolls inside, opens downward when there's more room, and keeps "Manage
    tools" visible. The model menu's measuring code moved into `web/hooks/useMenuLayout.ts`, used by both menus.
@@ -26,8 +50,8 @@ replaced the GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were emp
    (`FeaturesDto.localModels`), users' `ollamaEnabled` is treated as off (`effectiveSettings`, also in the save
    response), `ollama:` models aren't allowed for users (`userMayUseModel`), and `/api/chat/local/prepare` refuses
    (`local_models_off`). Admins can always use them. Revert-safe (a settings key; older code ignores it).
-3. Tests: 1 new in `tests/api.test.ts`. **Still to do: branch + PR + merge, then a quick live look** (Tools menu on
-   the welcome screen; a regular user has no "Local models" tab).
+3. Tests: 1 new in `tests/api.test.ts`. Quick live look by the owner still pending (Tools menu on the welcome
+   screen; a regular user has no "Local models" tab).
 
 **v0.9.8 live research test (owner, 2026-11-19), census question:** ✔️ worked end to end, answered by **Groq**
 (gpt-oss-120b); 3 searches, 3 pages read (GHDx, PBS ×2), knowledge base "nothing relevant"; figures right
@@ -288,18 +312,15 @@ Problems", 23 pages). Upload, folder, space meter, search, re-ranker and page ci
   always (`citedSources` in `web/lib/format.ts`). (C) 【 】 citations are shown as ( ) (`tidyCitations`).
 
 **First thing to do next session (in this order):**
-1. Health check. `0.9.9` means v0.9.10 isn't merged yet: give him the branch + PR commands (section 0 "How the owner
-   wants each task run"). After the merge, watch `/api/health` until `0.9.10`, then the quick live look. Ask for the
-   v0.9.9 live research test result (census question). Ask him to confirm the branch protection rule's ticks
-   (section 2), especially that "Require approvals" is **off**. Check the **`.dev.vars` key lines are still empty**.
-2. Ask whether he tested 🎤 voice input and 👍/👎 on the live site.
-3. **Then build v0.10.0 Smarter memory** (approved 2026-11-20, steps): (1) only relevant memories per message (word
-   matching, no model call) + **pinned** "always use" memories; (2) pin, **edit** and **export** in Settings →
-   Memory; (3) refuse to save sensitive data (passwords, card/bank numbers, CNIC/ID numbers, phone numbers) and say
-   why; (4) long chats keep context: the older part is summarised once (1 model request) and kept instead of being
-   dropped; (5) memories stay "notes about the user", never instructions, private per user; (6) tests, version, docs,
-   branch + PR commands, live test. Database changes add-only and revert-safe. After that: answer verification,
-   then GitHub integration.
+1. Health check. `0.9.10` means v0.10.0 isn't merged yet: give him the branch + PR commands (section 0 "How the
+   owner wants each task run"). After the merge, watch `/api/health` until `0.10.0`, then the live test (above).
+   Ask for the pending checks (v0.9.9 research, v0.9.10 quick look, 👍/👎, 🎤). Ask him to confirm the branch
+   protection rule's ticks (section 2), especially that "Require approvals" is **off**. Check the **`.dev.vars` key
+   lines are still empty**.
+2. Next per the roadmap (propose numbered steps first, as always): **answer verification** (a second look at
+   important claims before/after answering), then **GitHub integration** (read repos/issues/PRs; write behind an
+   approval gate), then Gmail/Calendar/Telegram.
+3. (Done: v0.10.0 Smarter memory, see the top of this section.)
 4. Owner said he'll do these later: re-ask on the live site (new chat, model Auto) the Copilot question, "What is the
    latest stable version of Python?" and "What was Pakistan's population in the 2023 census?". Expect Groq (not
    Gemini) to answer most of them, 61% for Java from GitHub's own blog, 3.15.2 from python.org, 241.49 million.
@@ -484,8 +505,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Answer feedback (v0.9.7)**: 👍/👎 + optional reason/note under answers; Admin → Feedback (per-model counts, list with question/answer/sources); migration 0007 | ✅ live (v0.9.7, pushed 2026-11-19, commit `f01ec7e`; 207 tests); owner's live check pending |
 | **Deep research (v0.9.8)** + dark theme default: Research button → plan (1 model request) → 2–4 searches set aside/given back, last 10 kept for chat → ≤ 3 pages (no model calls) → brief written with no tools + app-made Sources list with exact dates; per-user daily runs (failed runs don't count); migration 0008 | ✅ live (v0.9.8, PR #1, merge commit `7131695`, deployed 2026-11-19; 212 tests); live research test ✔️ (2026-11-19, problems fixed in v0.9.9) |
 | **Research sources (v0.9.9)**: [S1] citations become links (renumbered in reading order); Sources list + chips show only cited sources; number check accepts simple calculations from stated, supported figures | ✅ live (v0.9.9, PR #2, merge commit `65ab220`, deployed 2026-11-20; 214 tests); live research test pending |
-| **Menu fix + local models for users (v0.9.10)**: Tools menu fits the screen (shared `useMenuLayout`); admin switch "Local models (Ollama) for users" (off) hides and refuses local models for users | ✅ built and checked locally 2026-11-20 (215 tests); **branch + PR not done yet** |
-| **Next: Smarter memory (v0.10.0)** | ⏳ approved 2026-11-20, starts after v0.9.10 is merged |
+| **Menu fix + local models for users (v0.9.10)**: Tools menu fits the screen (shared `useMenuLayout`); admin switch "Local models (Ollama) for users" (off) hides and refuses local models for users | ✅ live (v0.9.10, PR #3, merge commit `ba2b34a`, deployed 2026-11-20; 215 tests) |
+| **Smarter memory (v0.10.0)**: relevant + pinned memories per message; pin/edit/export; sensitive data refused; long chats summarised once into kept notes; migration 0009 | ✅ built and checked locally 2026-11-20; **branch + PR not done yet**; live test pending |
+| **Next: answer verification, then GitHub integration** | ⏳ to propose after v0.10.0 is merged |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -523,7 +545,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 215 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 224 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

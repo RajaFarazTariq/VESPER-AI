@@ -225,6 +225,10 @@ export interface MemoryDto {
   content: string;
   source: "assistant" | "user";
   createdAt: number;
+  /** Always given to the assistant; unpinned memories are given only when related to the message (v0.10.0). */
+  pinned?: boolean;
+  /** When the text was last edited (null = never). */
+  updatedAt?: number | null;
 }
 
 export interface ConversationDto {

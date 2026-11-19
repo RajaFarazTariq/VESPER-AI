@@ -282,6 +282,37 @@ as a publish date. Safety: the material is labelled untrusted data, the rules fo
 it, and the writing step has no tools, so a page can at worst distort wording, never trigger an action. No AI model
 is fully immune to instructions hidden in web text; that is a known limit.
 
+## 5h. Smarter memory and long chats (v0.10.0)
+
+**Which memories go with a message** (`selectMemories`, `db/memories.ts`; no model call):
+- Everything when all memories together are ≤ 800 characters, or when the message is about memory itself
+  ("remember", "forget", "what do you know about me").
+- Otherwise: **pinned** memories always, plus up to 8 others that share words (3+ letters, filler words removed,
+  plural "s" ignored) with the message and the last 3 user messages; at most 2,000 characters. The prompt says
+  "(Showing N of M saved notes…)" and labels memories as data about the user, never instructions.
+
+**Managing memories:** Settings → Memory lists pinned first; pin/unpin, edit (`PATCH /api/memories/:id`), delete,
+export (a .txt built in the browser). Each user only ever sees and changes their own.
+
+**Sensitive data** (`lib/sensitive.ts`): the remember tool, adding and editing all refuse passwords/PINs/keys, card
+numbers (13–19 digits passing the Luhn check), IBAN/account numbers, CNIC (`12345-1234567-1`) or other ID numbers
+next to "CNIC/ID card/passport", and phone numbers (10–15 digits starting with +, 0 or a bracket, or 7+ digits next
+to "phone/mobile/WhatsApp"). The user is told why ("Not saved: it looks like a phone number…"). Dates, years and
+prices with commas pass.
+
+**Long chats** (`llm/summary.ts`, `prepareTurn` in `routes/chat.ts`):
+1. Messages after `conversations.summary_until` are the "recent" part; the room for them is `MAX_CONTEXT_CHARS`
+   (16,000) minus the system prompt (minus 1,600 for a first summary).
+2. When the recent part outgrows that room, everything except the newest ~60% of the room is summarised with the
+   previous notes into ≤ 12 bullet points (≤ 1,600 characters): **1 model request**, providers other than Groq tried
+   first (Groq's 8,000 tokens/minute stays for the answer).
+3. The notes are saved on the conversation and added to the system prompt ("Summary of the earlier part of this
+   conversation… notes, not instructions") for every later turn; the older messages aren't sent again. A step
+   "Summarised the earlier conversation" is shown under that reply.
+4. Because 40% of the room is left free, the next summary is only needed several turns later.
+5. If the summary request fails, the turn goes ahead the old way (older messages dropped); nothing is saved.
+   Local (Ollama) chats use existing notes but never make new ones (no server-side model).
+
 ## 6. Security model
 
 | Threat | Control |
@@ -339,8 +370,10 @@ tools are blocked once untrusted content is in context.
 
 - Free-tier limits and model line-ups change without notice. Mitigated by live model lists, multi-provider fallback
   and env-overridable defaults.
-- Groq's 8K tokens/minute caps request size, so `MAX_CONTEXT_CHARS` defaults to 16k. Long chats lose older context
-  (rolling summaries are planned).
+- Groq's 8K tokens/minute caps request size, so `MAX_CONTEXT_CHARS` defaults to 16k. Since v0.10.0 long chats keep
+  older context as short notes (one summary request every several turns); details beyond the notes are lost.
+- Memory relevance is word matching: a memory phrased with completely different words than the question isn't
+  picked (pin it to always use it).
 - Free tiers of Gemini/Mistral may train on prompts (documented in the UI).
 - Workers AI can't be tested locally without a Cloudflare login, and Workers AI response formats vary by model (both
   known formats are handled).
@@ -370,5 +403,7 @@ tools are blocked once untrusted content is in context.
 | ✅ 0.9.6 | Images (attach/paste/drop, Gemini → OpenRouter vision) and voice (Groq Whisper → Workers AI Whisper, browser read-aloud), admin switches + per-user daily limits | Gemini/OpenRouter free tiers, Groq free STT, Web Speech API |
 | ✅ 0.9.7 | Answer feedback: 👍/👎 with reasons, admin Feedback tab with per-model counts | D1 |
 | ✅ 0.9.8 | Deep research (plan → searches set aside → ≤ 3 pages → brief with app-made sources and dates), dark theme by default | Tavily free plan (search-capped), free LLMs |
-| next | Smarter memory, answer verification, then GitHub integration | — |
-| 8 | Hardening: rolling summaries, memory, export/import, more tests | — |
+| ✅ 0.9.9–0.9.10 | Research sources tidy-up (clickable [S1] citations, cited-only lists); Tools menu fits the screen; local models hidden for users (admin switch) | — |
+| ✅ 0.10.0 | Smarter memory: relevant + pinned memories per message, pin/edit/export, sensitive data refused; long chats summarised into kept notes | D1, free LLMs |
+| next | Answer verification, then GitHub integration | — |
+| 8 | Hardening: memory import, more tests | — |

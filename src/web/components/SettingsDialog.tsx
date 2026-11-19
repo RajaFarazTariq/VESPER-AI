@@ -1,4 +1,4 @@
-import { Monitor, Moon, Plus, Sun, Trash2, X } from "lucide-react";
+import { Check, Download, Monitor, Moon, Pencil, Pin, PinOff, Plus, Sun, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { FeaturesDto, MemoryDto, ModelsResponse, SpeechLanguage, ToolInfoDto, UserSettings } from "../../shared/types";
 import { api, ApiError } from "../api/client";
@@ -228,7 +228,7 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
                 checked={draft.memoryEnabled}
                 onChange={(memoryEnabled) => setDraft({ ...draft, memoryEnabled })}
                 label="Use long-term memory"
-                hint="Saved facts are included in every conversation, and the assistant can save new ones when you ask it to remember something. Never store passwords or sensitive data."
+                hint="Pinned memories go with every message; the others only when they relate to what you ask. The assistant saves new ones when you ask it to remember something. Passwords, card or bank numbers, ID card numbers and phone numbers are never saved."
               />
               <div>
                 <div className="mb-1.5 text-sm font-medium">Add a memory</div>
@@ -266,20 +266,29 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
               </div>
               {memoryError ? <p className="text-sm text-[var(--danger)]">{memoryError}</p> : null}
               <div>
-                <div className="mb-1.5 flex items-center justify-between text-sm font-medium">
+                <div className="mb-1.5 flex items-center justify-between gap-3 text-sm font-medium">
                   <span>Saved memories {memories ? `(${memories.length})` : ""}</span>
                   {memories && memories.length > 0 ? (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (!window.confirm("Delete ALL saved memories? This cannot be undone.")) return;
-                        await api.deleteAllMemories().catch(() => {});
-                        setMemories([]);
-                      }}
-                      className="text-xs font-normal text-[var(--danger)] hover:underline"
-                    >
-                      Delete all
-                    </button>
+                    <span className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => exportMemories(memories)}
+                        className="inline-flex items-center gap-1 text-xs font-normal text-[var(--text-soft)] hover:text-[var(--text)] hover:underline"
+                      >
+                        <Download size={12} /> Export
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!window.confirm("Delete ALL saved memories? This cannot be undone.")) return;
+                          await api.deleteAllMemories().catch(() => {});
+                          setMemories([]);
+                        }}
+                        className="text-xs font-normal text-[var(--danger)] hover:underline"
+                      >
+                        Delete all
+                      </button>
+                    </span>
                   ) : null}
                 </div>
                 {memories === null ? (
@@ -290,23 +299,17 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
                   </p>
                 ) : (
                   <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)]">
-                    {[...memories].reverse().map((m) => (
-                      <li key={m.id} className="flex items-start gap-2 px-3 py-2 text-sm">
-                        <span className="min-w-0 flex-1">{m.content}</span>
-                        <span className="shrink-0 text-[11px] text-[var(--text-soft)]">{m.source === "user" ? "added by you" : "saved in chat"}</span>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            await api.deleteMemory(m.id).catch(() => {});
-                            setMemories((list) => (list ?? []).filter((x) => x.id !== m.id));
-                          }}
-                          className="shrink-0 rounded p-1 text-[var(--text-soft)] hover:text-[var(--danger)]"
-                          aria-label={`Delete memory: ${m.content}`}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </li>
-                    ))}
+                    {/* Pinned first, then newest first. */}
+                    {[...memories]
+                      .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.createdAt - a.createdAt)
+                      .map((m) => (
+                        <MemoryRow
+                          key={m.id}
+                          memory={m}
+                          onChanged={(saved) => setMemories((list) => (list ?? []).map((x) => (x.id === saved.id ? saved : x)))}
+                          onDeleted={() => setMemories((list) => (list ?? []).filter((x) => x.id !== m.id))}
+                        />
+                      ))}
                   </ul>
                 )}
               </div>
@@ -442,6 +445,133 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** Download all memories as a readable text file (made in the browser; nothing extra is sent anywhere). */
+function exportMemories(memories: MemoryDto[]): void {
+  // The user's own calendar date (not UTC), e.g. "2026-11-20".
+  const day = (t: number) => {
+    const d = new Date(t);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const lines = [
+    `Memories exported ${day(Date.now())} (${memories.length} saved; * = pinned, always used)`,
+    "",
+    ...[...memories]
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((m) => `${m.pinned ? "*" : "-"} ${m.content} (${m.source === "user" ? "added by you" : "saved in chat"}, ${day(m.createdAt)})`),
+  ];
+  const url = URL.createObjectURL(new Blob([lines.join("\n") + "\n"], { type: "text/plain;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `memories-${day(Date.now())}.txt`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
+/** One memory: pin ("always use"), edit the text, or delete it. */
+function MemoryRow({ memory, onChanged, onDeleted }: { memory: MemoryDto; onChanged: (m: MemoryDto) => void; onDeleted: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(memory.content);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const save = async (patch: { content?: string; pinned?: boolean }) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { memory: saved } = await api.updateMemory(memory.id, patch);
+      onChanged(saved);
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Could not save.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const iconButton = "shrink-0 rounded p-1 text-[var(--text-soft)] hover:text-[var(--text)] disabled:opacity-40";
+
+  return (
+    <li className="px-3 py-2 text-sm">
+      {editing ? (
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const content = text.trim();
+            if (!content || content === memory.content) return setEditing(false);
+            void save({ content });
+          }}
+        >
+          <input
+            value={text}
+            maxLength={500}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                setText(memory.content);
+                setEditing(false);
+              }
+            }}
+            aria-label="Edit memory"
+            autoFocus
+            className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-sm"
+          />
+          <button type="submit" disabled={busy || !text.trim()} className={iconButton} aria-label="Save memory" title="Save">
+            <Check size={15} />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setText(memory.content);
+              setEditing(false);
+              setError(null);
+            }}
+            className={iconButton}
+            aria-label="Cancel editing"
+            title="Cancel"
+          >
+            <X size={15} />
+          </button>
+        </form>
+      ) : (
+        <div className="flex items-start gap-2">
+          {memory.pinned ? <Pin size={13} className="mt-0.5 shrink-0 text-[var(--accent)]" aria-label="Pinned" /> : null}
+          <span className="min-w-0 flex-1">{memory.content}</span>
+          <span className="shrink-0 text-[11px] text-[var(--text-soft)]">{memory.source === "user" ? "added by you" : "saved in chat"}</span>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void save({ pinned: !memory.pinned })}
+            className={iconButton}
+            aria-label={memory.pinned ? `Unpin: ${memory.content}` : `Pin (always use): ${memory.content}`}
+            title={memory.pinned ? "Unpin" : "Pin: always use this memory"}
+          >
+            {memory.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+          </button>
+          <button type="button" onClick={() => setEditing(true)} className={iconButton} aria-label={`Edit memory: ${memory.content}`} title="Edit">
+            <Pencil size={13} />
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              await api.deleteMemory(memory.id).catch(() => {});
+              onDeleted();
+            }}
+            className="shrink-0 rounded p-1 text-[var(--text-soft)] hover:text-[var(--danger)]"
+            aria-label={`Delete memory: ${memory.content}`}
+            title="Delete"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      )}
+      {error ? <p className="mt-1 text-xs text-[var(--danger)]">{error}</p> : null}
+    </li>
   );
 }
 

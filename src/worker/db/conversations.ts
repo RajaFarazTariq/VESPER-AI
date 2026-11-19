@@ -271,3 +271,21 @@ export async function deleteTrailingAssistantMessages(db: D1Database, conversati
     .bind(conversationId)
     .run();
 }
+
+// --- Long chats (v0.10.0): running notes of the older part --------------------------
+
+/** The notes summarising the older part of a conversation, and the time of the newest message they cover. */
+export async function getConversationSummary(db: D1Database, conversationId: string): Promise<{ summary: string; until: number } | null> {
+  const row = await db
+    .prepare("SELECT summary, summary_until FROM conversations WHERE id = ?1")
+    .bind(conversationId)
+    .first<{ summary: string | null; summary_until: number | null }>();
+  return row?.summary && row.summary_until ? { summary: row.summary, until: row.summary_until } : null;
+}
+
+export async function saveConversationSummary(db: D1Database, conversationId: string, summary: string, until: number): Promise<void> {
+  await db
+    .prepare("UPDATE conversations SET summary = ?1, summary_until = ?2 WHERE id = ?3")
+    .bind(summary, until, conversationId)
+    .run();
+}

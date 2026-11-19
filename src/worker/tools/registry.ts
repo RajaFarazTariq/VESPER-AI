@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AppSettingsDto, ToolInfoDto, UserSettings } from "../../shared/types";
 import { VERSION } from "../version";
 import { addMemory, deleteMemory, MemoryLimitError } from "../db/memories";
+import { sensitiveMessage, sensitiveReason } from "../lib/sensitive";
 import { CalcError, evaluate } from "./calculator";
 import { searchKnowledge } from "./knowledge";
 import { define, ToolInputError, type AgentTool, type ToolServerState, type WebToolContext } from "./types";
@@ -84,7 +85,8 @@ const remember = define({
   description:
     "Save a lasting fact or preference about the user so you remember it in future conversations. " +
     "Only use when the user asks you to remember something, or clearly shares a stable personal preference. " +
-    "Never store passwords, API keys, financial or other sensitive data. Write it as a short third-person sentence.",
+    "Never store passwords, card or bank numbers, ID card numbers, phone numbers or other sensitive data (they are refused). " +
+    "Write it as a short third-person sentence.",
   risk: "write",
   requiresMemory: true,
   parameters: {
@@ -94,9 +96,9 @@ const remember = define({
   },
   schema: z.object({ fact: z.string().trim().min(3).max(500) }),
   async run({ fact }, ctx) {
-    if (/(api[_ -]?key|password|passwd|\bsecret\b|github_pat_|\bgsk_\w|\bAIza\w{10}|\bsk-[A-Za-z0-9]{8})/i.test(fact)) {
-      throw new ToolInputError("Refusing to store something that looks like a credential.");
-    }
+    // Passwords, card/bank numbers, ID card numbers and phone numbers are never stored; the model tells the user why.
+    const reason = sensitiveReason(fact);
+    if (reason) throw new ToolInputError(`${sensitiveMessage(reason)} Tell the user this was not saved and why.`);
     try {
       const memory = await addMemory(ctx.db, ctx.userId, fact, "assistant");
       return { content: JSON.stringify({ saved: true, id: memory.id }), summary: `Remembered: ${memory.content}` };
