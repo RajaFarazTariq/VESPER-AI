@@ -41,10 +41,10 @@ const AUTH_ERRORS: Record<string, string> = {
 
 
 // ---------------------------------------------------------------------------
-// Brand panel (wide screens only): the logo inside fine orbit lines, one headline, one line of text.
+// Brand panel (wide screens only): the logo inside fine orbit lines, the wordmark, one headline, one line of text.
 // ---------------------------------------------------------------------------
 
-function BrandPanel() {
+function BrandPanel({ appName }: { appName: string }) {
   return (
     <aside className="auth-showcase relative hidden flex-1 items-center justify-center overflow-hidden lg:flex">
       <div className="relative flex flex-col items-center px-12 text-center">
@@ -58,9 +58,17 @@ function BrandPanel() {
             <circle className="auth-planet auth-planet-faint" cx="94.8" cy="142.6" r="2.5" />
           </svg>
           <div className="auth-halo absolute h-[220px] w-[220px] rounded-full" />
-          <img src="/favicon.svg" alt="" className="relative h-[88px] w-[88px] rounded-[22px] shadow-[0_18px_40px_-12px_rgb(0_0_0/0.7)]" />
+          <img src="/logo.svg" alt="" className="relative h-[120px] w-[120px] rounded-[28px] shadow-[0_18px_40px_-12px_rgb(0_0_0/0.7)]" />
         </div>
-        <h2 className="mt-8 font-[family-name:var(--font-display)] text-[32px] font-semibold leading-tight tracking-[-0.025em]">
+        <div className="mt-4 flex flex-col items-center gap-3">
+          <span className="auth-wordmark">{appName}</span>
+          <span className="auth-tagline">
+            <span className="auth-tagline-ring" />
+            <span className="auth-tagline-rule" />
+            AI AGENT
+          </span>
+        </div>
+        <h2 className="mt-9 font-[family-name:var(--font-display)] text-[28px] font-semibold leading-tight tracking-[-0.02em]">
           Clear answers. Trusted sources.
         </h2>
         <p className="mt-3 max-w-[400px] text-balance text-[15px] leading-relaxed text-[var(--sc-soft)]">
@@ -84,7 +92,7 @@ export function LoginPage({ config, onSignedIn }: { config: PublicConfigDto; onS
       <main className="flex min-h-full w-full flex-col px-6 py-6 sm:px-10 lg:w-[540px] lg:shrink-0 lg:border-r lg:border-[var(--border)] lg:px-14 xl:w-[600px]">
         <header className="flex items-center gap-2.5">
           <img src="/favicon.svg" alt="" className="h-7 w-7 rounded-lg" />
-          <span className="text-[15px] font-semibold tracking-tight">{config.appName}</span>
+          <span className="text-[15px] font-semibold tracking-[0.16em]">{config.appName}</span>
         </header>
 
         <div className="flex flex-1 items-center py-12">
@@ -178,7 +186,7 @@ export function LoginPage({ config, onSignedIn }: { config: PublicConfigDto; onS
         </footer>
       </main>
 
-      <BrandPanel />
+      <BrandPanel appName={config.appName} />
     </div>
   );
 }
