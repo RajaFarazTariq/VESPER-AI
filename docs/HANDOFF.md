@@ -1,18 +1,19 @@
 # VESPER: handoff notes for a new working session
 
-Read this first when resuming work. Last updated: **2026-11-19**. No secrets are stored here.
+Read this first when resuming work. Last updated: **2026-11-20**. No secrets are stored here.
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-20)
 
-**State:** **v0.10.1 (display fix: `<br>` in tables, no mid-word breaks) is built and checked locally, not pushed
-yet** (to go on branch `release/v0.10.1-table-display` + PR #5). Live is **v0.10.0** (smarter memory; merged via
-PR #4, `/api/health` → `0.10.0`, migration 0009 applied). Earlier: v0.9.10 via PR #3 (merge `ba2b34a`), v0.9.9 via
-PR #2, v0.9.8 via PR #1. The owner added a **branch protection rule for `main`** (exact ticks not confirmed yet; see
+**State:** **v0.11.0 (answer verification) is built and checked locally, not pushed yet** (to go on branch
+`release/v0.11.0-answer-verification` + PR #6; adds **migration 0010**, applied by the deploy). Live is **v0.10.1**
+(table display fix; merged via PR #5, merge `e752cb9`, `/api/health` → `0.10.1`). Earlier: v0.10.0 via PR #4
+(migration 0009), v0.9.10 via PR #3 (merge `ba2b34a`), v0.9.9 via PR #2, v0.9.8 via PR #1. The owner added a **branch protection rule for `main`** (exact ticks not confirmed yet; see
 section 2), so **`main` can't be pushed to directly**: every change, docs included, goes on a branch + PR. The owner
 replaced the GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-19.
-**Agreed order (owner, 2026-11-20): v0.10.1 display fix → v0.11.0 Answer verification** (plan below).
-**Pending owner checks:** v0.9.9 live research test, v0.9.10 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6),
-branch-protection ticks.
+**Agreed order (owner, 2026-11-20): v0.10.1 display fix (✅ merged) → v0.11.0 Answer verification** (below). Next after
+v0.11.0: propose the following phase (roadmap: GitHub integration).
+**Pending owner checks:** v0.11.0 live test (below), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
+quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
 
 **v0.10.0 live test (owner, 2026-11-20):** ✔️ phone number refused with the reason; memories "planning a trip to
 Skardu in Dec or Jan" (edited) and "favourite colour is Black" (saved in chat); "What should I pack for my trip?" →
@@ -25,14 +26,37 @@ a winter packing list for Skardu Dec/Jan using the weather tool (−0.2 °C, low
 renderers) turns only `<br>`/`<br/>` into real line breaks (other raw HTML still shows as text); table cells use
 `overflow-wrap: break-word` + `min-width: 6.5rem` (`.md th/td` in `styles.css`) so words wrap at spaces and wide
 tables scroll inside their box. Checked in headless Edge (desktop + phone, no sideways page scroll). 225 tests.
-**Still to do: branch + PR + merge, then a quick look at any answer with a table.**
+Merged via PR #5 (2026-11-20, live). Owner's quick look at a table answer still pending.
 
-**v0.11.0 Answer verification (approved 2026-11-20, build after v0.10.1 is merged):** (1) "Check this answer" button
-under answers that used sources (web, documents, research): 1 extra model request (Gemini/non-Groq first) that rates
-each key claim Supported / Contradicted / Not in the sources, with the source; (2) deep-research briefs checked
-automatically (admin switch, default on; +1 request per run); (3) smarter number check: only figures in sentences
-that state facts from sources; no flags for general-knowledge numbers like "SPF 30"; (4) admin settings: both switches
-+ "answer checks per user per day" (default 10, admins unlimited); (5) tests, version, docs, branch + PR, live test.
+**v0.11.0 Answer verification (approved and built 2026-11-20):**
+1. **Sources kept with the answer:** an answer that used a look-up tool (web search, read page, Wikipedia, knowledge
+   base, weather, currency; plus the calculator/date results of that turn) or deep research keeps what those sources
+   returned in `messages.evidence` (≤ 20,000 chars, each source a fair share, `packEvidence` in `llm/verify.ts`).
+   Never sent to the browser; the browser only gets `checkable: true`.
+2. **"Check" button** under such answers (action row, shield icon) → `POST /api/answer-check/:messageId`: 1 model
+   request (Auto chain, **non-Groq first**, no tools, answer + sources as data, ≤ 14,000 chars of sources) lists the key
+   claims (≤ 8) as JSON; each is **Supported / Contradicted (with what the source says) / Not in the sources**, with
+   its source. A named source is shown only if the answer really used it (or its address is in the kept sources):
+   no made-up links. The result is saved (`messages.verification`); asking again returns it free. Shown as a
+   "Fact check" card under the sources (open right after checking, folded when the chat is reopened). Users don't
+   see which model checked (`by`, admins only). Only your own, finished answers; 400 `no_sources` when nothing to check.
+3. **Deep-research reports checked automatically** (step "Fact check"; +1 model request per run; doesn't use the
+   user's daily checks). If the check fails, the report is still saved (step shows it couldn't check).
+4. **Smarter number check** (admin-only): a figure no source has is flagged only when its sentence/list item/table
+   cell is about the sources (≥ 2 topic words shared with what the tools returned, 1 for a part of ≤ 3 words), cites
+   [S1], or has another supported figure. "SPF 30" / "230 V" in a weather-based packing list are skipped and
+   counted as "(N general numbers not checked)".
+5. **Admin settings** (App settings): **Check this answer** (on), **Answer checks per user per day** (10; admins
+   unlimited; counted before the check, given back if it fails), **Check research reports automatically** (on).
+   Users tab shows "N answer checks" today. **Migration `0010_answer_verification.sql`** (add-only, revert-safe:
+   `messages.evidence`, `messages.verification` NULL-able; `user_usage_daily.answer_checks` DEFAULT 0).
+6. 234 tests (9 new + the automatic migration check), typecheck, build. Checked in headless Edge with a local fake
+   model (knowledge-base answer → Check → card with 3 verdicts; reopened chat; phone width; admin settings).
+- **Live test for v0.11.0:** (a) ask something that searches the web (e.g. "What was Pakistan's population in the 2023
+  census?"), press **Check** under the answer, read the Fact check card and open a source chip; (b) a deep-research
+  question: the report should end with a "Fact check" card without pressing anything; (c) a plain question ("hello")
+  shows no Check button; (d) as admin, the packing-list question no longer flags "SPF 30"-type numbers.
+- Answers written before v0.11.0 kept no sources, so they show no Check button (by design).
 
 **v0.10.0 "smarter memory" (built 2026-11-20; owner approved the 6 steps):**
 1. **Only relevant memories** go with each message (`selectMemories` in `db/memories.ts`, word matching, no model
@@ -526,7 +550,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Research sources (v0.9.9)**: [S1] citations become links (renumbered in reading order); Sources list + chips show only cited sources; number check accepts simple calculations from stated, supported figures | ✅ live (v0.9.9, PR #2, merge commit `65ab220`, deployed 2026-11-20; 214 tests); live research test pending |
 | **Menu fix + local models for users (v0.9.10)**: Tools menu fits the screen (shared `useMenuLayout`); admin switch "Local models (Ollama) for users" (off) hides and refuses local models for users | ✅ live (v0.9.10, PR #3, merge commit `ba2b34a`, deployed 2026-11-20; 215 tests) |
 | **Smarter memory (v0.10.0)**: relevant + pinned memories per message; pin/edit/export; sensitive data refused; long chats summarised once into kept notes; migration 0009 | ✅ live (v0.10.0, PR #4, deployed 2026-11-20; 224 tests); live test ✔️ (2026-11-20) |
-| **Next: answer verification, then GitHub integration** | ⏳ to propose after v0.10.0 is merged |
+| **Table display fix (v0.10.1)**: `<br>` in tables becomes a line break; no mid-word breaks in table columns | ✅ live (v0.10.1, PR #5, merge `e752cb9`, deployed 2026-11-20; 225 tests) |
+| **Answer verification (v0.11.0)**: "Check" under answers that used sources → claims rated Supported / Contradicted / Not in the sources with the source; research reports checked automatically; number check skips general-knowledge numbers; admin switches + daily checks; migration 0010 | 🔨 built 2026-11-20 (234 tests), not pushed yet (PR #6) |
+| **Next: GitHub integration** | ⏳ to propose after v0.11.0 is merged |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -564,7 +590,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 225 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 234 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

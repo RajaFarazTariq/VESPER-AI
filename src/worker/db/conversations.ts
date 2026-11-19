@@ -1,4 +1,12 @@
-import type { ConversationDto, FeedbackReason, MessageDto, MessageRole, MessageStatus, ToolEventDto } from "../../shared/types";
+import type {
+  ConversationDto,
+  FeedbackReason,
+  MessageDto,
+  MessageRole,
+  MessageStatus,
+  ToolEventDto,
+  VerificationDto,
+} from "../../shared/types";
 import { newId } from "../lib/crypto";
 
 interface ConversationRow {
@@ -20,6 +28,10 @@ interface MessageRow {
   error: string | null;
   tools: string | null;
   images: string | null;
+  /** JSON of the answer check (v0.11.0); null = not checked. */
+  verification?: string | null;
+  /** 1 when the answer's sources were kept (evidence IS NOT NULL), so it can be checked. */
+  checkable?: number | null;
   created_at: number;
   /** From message_feedback (null when not rated). */
   fb_rating?: number | null;
@@ -42,6 +54,17 @@ function parseTools(raw: string | null): ToolEventDto[] | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
     return Array.isArray(parsed) && parsed.length > 0 ? (parsed as ToolEventDto[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A stored answer check, or null when missing or unreadable. */
+export function parseVerification(raw: string | null | undefined): VerificationDto | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as VerificationDto;
+    return parsed && Array.isArray(parsed.claims) ? parsed : null;
   } catch {
     return null;
   }
@@ -70,6 +93,7 @@ const toMessage = (r: MessageRow): MessageDto => ({
     r.fb_rating === 1 || r.fb_rating === -1
       ? { rating: r.fb_rating, reason: (r.fb_reason as FeedbackReason | null) ?? null, note: r.fb_note ?? null }
       : null,
+  ...(r.role === "assistant" ? { checkable: r.checkable === 1, verification: parseVerification(r.verification) } : {}),
   createdAt: r.created_at,
 });
 
@@ -170,6 +194,7 @@ export async function listMessages(db: D1Database, conversationId: string, limit
     .prepare(
       `SELECT * FROM (
          SELECT m.id, m.role, m.content, m.reasoning, m.provider, m.model, m.status, m.error, m.tools, m.images,
+                m.verification, (m.evidence IS NOT NULL) AS checkable,
                 m.created_at, m.rowid AS rid, f.rating AS fb_rating, f.reason AS fb_reason, f.note AS fb_note
          FROM messages m LEFT JOIN message_feedback f ON f.message_id = m.id
          WHERE m.conversation_id = ?1
@@ -194,6 +219,10 @@ export interface NewMessage {
   tools?: ToolEventDto[] | null;
   /** Small previews of attached images (user messages). */
   images?: string[] | null;
+  /** The source text the answer was based on, kept for "Check this answer" (never sent to the browser). */
+  evidence?: string | null;
+  /** The answer's check, when it was checked as it was written (deep research). */
+  verification?: VerificationDto | null;
   /** Ensures the message sorts after an earlier one created in the same millisecond. */
   notBefore?: number;
 }
@@ -211,14 +240,15 @@ export async function insertMessage(db: D1Database, conversationId: string, m: N
     error: m.error ?? null,
     tools: m.tools && m.tools.length > 0 ? m.tools : null,
     images: m.images && m.images.length > 0 ? m.images : null,
+    ...(m.role === "assistant" ? { checkable: Boolean(m.evidence), verification: m.verification ?? null } : {}),
     createdAt,
   };
   await db.batch([
     db
       .prepare(
         `INSERT INTO messages (id, conversation_id, role, content, reasoning, provider, model, status, error,
-                               tokens_in, tokens_out, created_at, tools, images)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`,
+                               tokens_in, tokens_out, created_at, tools, images, evidence, verification)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)`,
       )
       .bind(
         message.id,
@@ -235,6 +265,8 @@ export async function insertMessage(db: D1Database, conversationId: string, m: N
         createdAt,
         message.tools ? JSON.stringify(message.tools) : null,
         message.images ? JSON.stringify(message.images) : null,
+        m.evidence || null,
+        m.verification ? JSON.stringify(m.verification) : null,
       ),
     db.prepare("UPDATE conversations SET updated_at = ?1 WHERE id = ?2").bind(createdAt, conversationId),
   ]);
@@ -288,4 +320,57 @@ export async function saveConversationSummary(db: D1Database, conversationId: st
     .prepare("UPDATE conversations SET summary = ?1, summary_until = ?2 WHERE id = ?3")
     .bind(summary, until, conversationId)
     .run();
+}
+
+// --- Answer verification (v0.11.0) -------------------------------------------------
+
+export interface AnswerForCheck {
+  id: string;
+  role: MessageRole;
+  status: MessageStatus;
+  content: string;
+  evidence: string | null;
+  verification: VerificationDto | null;
+  tools: ToolEventDto[] | null;
+  /** The question the answer replied to (the user message just before it). */
+  question: string;
+}
+
+/** One of the user's own answers with its kept sources, for "Check this answer"; null when it isn't theirs. */
+export async function getAnswerForCheck(db: D1Database, userId: string, messageId: string): Promise<AnswerForCheck | null> {
+  const row = await db
+    .prepare(
+      `SELECT m.id, m.role, m.status, m.content, m.evidence, m.verification, m.tools,
+              (SELECT q.content FROM messages q
+                WHERE q.conversation_id = m.conversation_id AND q.role = 'user' AND q.created_at <= m.created_at
+                ORDER BY q.created_at DESC, q.rowid DESC LIMIT 1) AS question
+       FROM messages m JOIN conversations c ON c.id = m.conversation_id
+       WHERE m.id = ?1 AND c.user_id = ?2`,
+    )
+    .bind(messageId, userId)
+    .first<{
+      id: string;
+      role: MessageRole;
+      status: MessageStatus;
+      content: string;
+      evidence: string | null;
+      verification: string | null;
+      tools: string | null;
+      question: string | null;
+    }>();
+  if (!row) return null;
+  return {
+    id: row.id,
+    role: row.role,
+    status: row.status,
+    content: row.content,
+    evidence: row.evidence,
+    verification: parseVerification(row.verification),
+    tools: parseTools(row.tools),
+    question: row.question ?? "",
+  };
+}
+
+export async function saveVerification(db: D1Database, messageId: string, verification: VerificationDto): Promise<void> {
+  await db.prepare("UPDATE messages SET verification = ?1 WHERE id = ?2").bind(JSON.stringify(verification), messageId).run();
 }

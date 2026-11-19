@@ -213,11 +213,19 @@ type AdminUserRow = UserRow & {
   today_images: number;
   today_speech: number;
   today_research: number;
+  today_answer_checks: number;
   conversations: number;
 };
 
 export function toAdminUserDto(
-  row: UserRow & { today_messages?: number; today_images?: number; today_speech?: number; today_research?: number; conversations?: number },
+  row: UserRow & {
+    today_messages?: number;
+    today_images?: number;
+    today_speech?: number;
+    today_research?: number;
+    today_answer_checks?: number;
+    conversations?: number;
+  },
   config: AppConfig,
 ): AdminUserDto {
   return {
@@ -228,6 +236,7 @@ export function toAdminUserDto(
     todayImages: row.today_images ?? 0,
     todaySpeechSeconds: row.today_speech ?? 0,
     todayResearch: row.today_research ?? 0,
+    todayAnswerChecks: row.today_answer_checks ?? 0,
     conversations: row.conversations ?? 0,
     github: row.github_login !== null,
     google: row.google_sub !== null,
@@ -240,6 +249,7 @@ const ADMIN_LIST_SQL = `SELECT ${USER_COLUMNS.split(", ")
   .map((c) => `u.${c}`)
   .join(", ")}, COALESCE(d.messages, 0) AS today_messages, COALESCE(d.images, 0) AS today_images,
     COALESCE(d.speech_seconds, 0) AS today_speech, COALESCE(d.research_runs, 0) AS today_research,
+    COALESCE(d.answer_checks, 0) AS today_answer_checks,
     (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.id) AS conversations
   FROM users u LEFT JOIN user_usage_daily d ON d.user_id = u.id AND d.day = ?1`;
 
@@ -324,6 +334,30 @@ export async function consumeDailyResearch(db: D1Database, userId: string, limit
 export async function refundDailyResearch(db: D1Database, userId: string, day: string): Promise<void> {
   await db
     .prepare("UPDATE user_usage_daily SET research_runs = MAX(0, research_runs - 1) WHERE user_id = ?1 AND day = ?2")
+    .bind(userId, day)
+    .run();
+}
+
+/**
+ * "Check this answer" (v0.11.0): counts one check if it fits today's limit. Counted before the check runs, so two
+ * clicks at once can't both slip through; refundDailyAnswerCheck gives it back when the check fails.
+ */
+export async function consumeDailyAnswerCheck(db: D1Database, userId: string, limit: number): Promise<boolean> {
+  if (limit <= 0) return false;
+  const row = await db
+    .prepare(
+      `INSERT INTO user_usage_daily (user_id, day, messages, answer_checks) VALUES (?1, ?2, 0, 1)
+       ON CONFLICT(user_id, day) DO UPDATE SET answer_checks = answer_checks + 1 WHERE answer_checks < ?3
+       RETURNING answer_checks`,
+    )
+    .bind(userId, utcDay(), limit)
+    .first<{ answer_checks: number }>();
+  return row !== null;
+}
+
+export async function refundDailyAnswerCheck(db: D1Database, userId: string, day: string): Promise<void> {
+  await db
+    .prepare("UPDATE user_usage_daily SET answer_checks = MAX(0, answer_checks - 1) WHERE user_id = ?1 AND day = ?2")
     .bind(userId, day)
     .run();
 }

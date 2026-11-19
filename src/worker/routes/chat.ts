@@ -9,6 +9,7 @@ import type {
   MessageDto,
   ProviderId,
   ToolEventDto,
+  VerificationDto,
 } from "../../shared/types";
 import type { AppEnv } from "../app-env";
 import {
@@ -49,6 +50,7 @@ import { runAgent, type AgentResult } from "../llm/agent";
 import { planPrefetch } from "../llm/prefetch";
 import { MAX_RESEARCH_SEARCHES, MIN_RESEARCH_SEARCHES, runResearch, type ResearchResult } from "../llm/research";
 import { planRoute } from "../llm/router";
+import { factCheckEvent, sourcesOfTools, verifyAnswer } from "../llm/verify";
 import { enabledTools, webToolContext, type AgentTool } from "../tools/registry";
 import { requireUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/security";
@@ -488,6 +490,31 @@ export const chatRoutes = new Hono<AppEnv>()
         }
 
         if (result.status === "aborted") return; // stopped before any output: nothing to save
+
+        // Deep research: the finished report is checked against its sources (1 more model request; admin switch).
+        let verification: VerificationDto | null = null;
+        const laterTools: ToolEventDto[] = [];
+        if (researchResult && result.status === "complete" && result.evidence && appSettings.researchAutoCheck && !abort.signal.aborted) {
+          await events.tool(factCheckEvent("running", null));
+          verification = await verifyAnswer({
+            appName: config.appName,
+            question: turn.userMessage.content,
+            answer: result.text,
+            evidence: result.evidence,
+            sources: sourcesOfTools(result.tools),
+            trigger: "auto",
+            plan: planned.plan,
+            providers,
+            signal: abort.signal,
+            store,
+            health,
+            events,
+          }).catch(() => null);
+          const step = factCheckEvent(verification ? "done" : "error", verification);
+          laterTools.push(step);
+          await events.tool(step);
+        }
+
         const saved = await insertMessage(c.env.DB, turn.conversation.id, {
           role: "assistant",
           content: result.text,
@@ -498,7 +525,10 @@ export const chatRoutes = new Hono<AppEnv>()
           error: result.error?.message ?? null,
           tokensIn: result.usage.inputTokens,
           tokensOut: result.usage.outputTokens,
-          tools: [...extraTools, ...result.tools],
+          tools: [...extraTools, ...result.tools, ...laterTools],
+          // What the sources said, so the answer can be checked later ("Check this answer").
+          evidence: result.evidence ?? null,
+          verification,
           notBefore: turn.userMessage.createdAt,
         });
         if (result.status === "complete") {

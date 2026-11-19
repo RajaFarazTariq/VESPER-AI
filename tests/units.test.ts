@@ -119,6 +119,7 @@ describe("number check", () => {
     expect(checkNumbers("46 percent of code, 4.5 million suggestions, $1.2B revenue, 250,000 users, Rs 12,500.", evidence)).toEqual({
       checked: 5,
       missing: [],
+      general: 0,
     });
   });
 
@@ -134,7 +135,7 @@ describe("number check", () => {
       "2. On 14 February 2023 at 10:30 AM, 3 teams met; see [the blog](https://example.com/2023/62).",
       "As of Nov 19, 2026 (2026-11-19, 19/11/2026), in the 21st century. Run `npm i x@99`.",
     ].join("\n");
-    expect(checkNumbers(answer, "")).toEqual({ checked: 0, missing: [] });
+    expect(checkNumbers(answer, "")).toEqual({ checked: 0, missing: [], general: 0 });
   });
 
   it("accepts simple calculations from two figures the answer states and the sources support, nothing else", () => {
@@ -168,6 +169,106 @@ describe("number check", () => {
     const message = { role: "assistant", provider: "groq", tools: [search, check] } as never;
     expect((presentMessage(message, user).tools ?? []).map((t) => t.name)).toEqual(["web_search"]);
     expect((presentMessage(message, admin).tools ?? []).map((t) => t.name)).toEqual(["web_search", "answer_check"]);
+  });
+});
+
+describe("v0.11.0: number check leaves general-knowledge numbers alone", () => {
+  // The live v0.10.0 case: a packing list built from a weather look-up flagged "SPF 30" and "230 V".
+  const weather = JSON.stringify({
+    location: "Skardu, Gilgit-Baltistan, Pakistan",
+    current: { temperature: -0.2, wind_speed: 6 },
+    daily: [{ date: "2026-12-20", temperature_max: 4.1, temperature_min: -3.6, precipitation: 0 }],
+    attribution: "Weather data by Open-Meteo.com (CC BY 4.0)",
+  });
+  const question = "What should I pack for my trip?";
+
+  it("checks only sentences about the sources: a wrong temperature is flagged, SPF 30 and 230 V aren't", () => {
+    const answer = [
+      "| Category | Items |",
+      "|---|---|",
+      "| **Base layers** | • Thermal tops – nights in Skardu drop to around −3.6 °C. <br>• Fleece mid-layer |",
+      "| **Sun protection** | • Sunscreen (SPF 30+) – high-altitude glare is strong. |",
+      "| **Electronics** | • Universal adapter – plugs use 230 V with type C/D sockets. |",
+      "",
+      "Daytime highs reach about 7.5 °C in Skardu, so pack a warm temperature-rated jacket.",
+    ].join("\n");
+    const result = checkNumbers(answer, [weather, question].join("\n"), weather);
+    expect(result.missing).toEqual(["7.5"]); // the made-up high (the forecast says 4.1)
+    expect(result.general).toBe(2); // SPF 30, 230 V
+    const step = numberCheckEvent(answer, [weather, question], [weather])!;
+    expect(step.summary).toBe("Not found in any source: 7.5 (2 general numbers not checked)");
+  });
+
+  it("still flags a figure in a sentence that cites a source or states another sourced figure", () => {
+    const census = "The 2023 census counted 241.49 million people; the 2017 census counted 207.68 million.";
+    expect(checkNumbers("Karachi has 20.3 million residents [S1].", census, census).missing).toEqual(["20.3 million"]);
+    expect(checkNumbers("The count was 241.49 million, with 64 million in Punjab alone.", census, census).missing).toEqual(["64 million"]);
+    // Without the sources' text (older callers), every figure is checked as before.
+    expect(checkNumbers("Sunscreen (SPF 30+) for strong sun.", weather).missing).toEqual(["30"]);
+  });
+});
+
+import { MAX_CLAIMS, packEvidence, parseClaims, verificationSummary } from "../src/worker/llm/verify";
+import { presentVerification } from "../src/worker/lib/present";
+
+describe("v0.11.0: answer verification (parsing and safety)", () => {
+  const sources = [
+    { title: "Pakistan Bureau of Statistics", url: "https://www.pbs.gov.pk/census-2023" },
+    { title: "Handbook.pdf", location: "page 4" },
+  ];
+  const evidence = 'pages: "https://www.pbs.gov.pk/census-2023" and "https://data.example.org/table" ...';
+
+  it("keeps known verdicts, names only sources the answer used, and keeps notes for contradicted claims only", () => {
+    const reply = '```json\n' + JSON.stringify({
+      claims: [
+        { claim: "Population 241.49 million in 2023", verdict: "supported", source: "https://pbs.gov.pk/census-2023/", note: "ignored" },
+        { claim: "Growth rate 2.4%", verdict: "Contradicted", source: "https://data.example.org/table", note: "The table says 2.55%." },
+        { claim: "Leave is 20 days", verdict: "supported", source: "handbook.pdf" },
+        { claim: "Karachi has 30 million people", verdict: "not in the sources", source: "https://www.pbs.gov.pk/census-2023" },
+        { claim: "Invented link", verdict: "supported", source: "https://evil.example.com/x" },
+        { claim: "Bad verdict", verdict: "maybe", source: "" },
+        { claim: "Population 241.49 million in 2023", verdict: "supported", source: "" },
+      ],
+    }) + "\n```";
+    expect(parseClaims(reply, sources, evidence)).toEqual([
+      { claim: "Population 241.49 million in 2023", verdict: "supported", source: sources[0], note: null },
+      { claim: "Growth rate 2.4%", verdict: "contradicted", source: { title: "data.example.org", url: "https://data.example.org/table" }, note: "The table says 2.55%." },
+      { claim: "Leave is 20 days", verdict: "supported", source: sources[1], note: null },
+      { claim: "Karachi has 30 million people", verdict: "not_found", source: null, note: null },
+      { claim: "Invented link", verdict: "supported", source: null, note: null },
+    ]);
+  });
+
+  it("returns null for a reply that isn't the JSON asked for, an empty list for 'nothing to check', at most 8 claims", () => {
+    expect(parseClaims("Sorry, I can't help.", sources, evidence)).toBeNull();
+    expect(parseClaims('{"result": []}', sources, evidence)).toBeNull();
+    expect(parseClaims('{"claims": []}', sources, evidence)).toEqual([]);
+    const many = { claims: Array.from({ length: 12 }, (_, i) => ({ claim: `Claim ${i}`, verdict: "supported", source: "" })) };
+    expect(parseClaims(JSON.stringify(many), sources, evidence)).toHaveLength(MAX_CLAIMS);
+  });
+
+  it("packs source blocks fairly: short ones whole, long ones cut, never over the limit", () => {
+    const packed = packEvidence(["short block", "x".repeat(5_000), "y".repeat(5_000)], 4_000);
+    expect(packed.length).toBeLessThanOrEqual(4_000);
+    expect(packed).toContain("short block");
+    expect(packed.split("=====")).toHaveLength(3);
+    expect(packEvidence(["", "  "])).toBe("");
+  });
+
+  it("summarises the result and hides the checking model from users", () => {
+    const v = {
+      claims: [
+        { claim: "a", verdict: "supported" as const, source: null, note: null },
+        { claim: "b", verdict: "contradicted" as const, source: null, note: "x" },
+        { claim: "c", verdict: "not_found" as const, source: null, note: null },
+      ],
+      trigger: "user" as const,
+      checkedAt: 1,
+      by: "gemini:gemini-3.5-flash-lite",
+    };
+    expect(verificationSummary(v)).toBe("1 of 3 claims supported by the sources · 1 contradicted · 1 not in the sources");
+    expect(presentVerification(v, { admin: false, showReasoning: false })).not.toHaveProperty("by");
+    expect(presentVerification(v, { admin: true, showReasoning: true }).by).toBe("gemini:gemini-3.5-flash-lite");
   });
 });
 

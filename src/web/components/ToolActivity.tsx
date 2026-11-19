@@ -1,4 +1,23 @@
-import { BookOpen, Bookmark, BookmarkMinus, Calculator, ChevronRight, CircleAlert, Clock, CloudSun, Coins, FileText, Library, Loader2, ScrollText, Search, ShieldCheck, Telescope, Wrench } from "lucide-react";
+import {
+  BookOpen,
+  Bookmark,
+  BookmarkMinus,
+  Calculator,
+  ChevronRight,
+  CircleAlert,
+  Clock,
+  CloudSun,
+  Coins,
+  FileText,
+  Library,
+  ListChecks,
+  Loader2,
+  ScrollText,
+  Search,
+  ShieldCheck,
+  Telescope,
+  Wrench,
+} from "lucide-react";
 import { useState } from "react";
 import type { SourceDto, ToolEventDto } from "../../shared/types";
 
@@ -16,6 +35,7 @@ export const TOOL_ICONS: Record<string, typeof Wrench> = {
   answer_check: ShieldCheck, // admin-only number check
   research_plan: Telescope, // deep research: planning the searches
   context_summary: ScrollText, // a long chat's older part kept as short notes
+  fact_check: ListChecks, // a research report checked against its sources (v0.11.0)
 };
 
 /** Every source used for a reply, once each, in the order the tools found them. */
@@ -121,6 +141,7 @@ const PLAIN: Record<string, [running: string, done: string]> = {
   wikipedia: ["Looking it up on Wikipedia…", "Looked it up on Wikipedia"],
   currency: ["Checking exchange rates…", "Checked exchange rates"],
   search_knowledge: ["Searching the knowledge base…", "Searched the knowledge base"],
+  fact_check: ["Checking the facts against the sources…", "Checked the facts against the sources"],
 };
 
 function PlainToolLine({ tool }: { tool: ToolEventDto }) {

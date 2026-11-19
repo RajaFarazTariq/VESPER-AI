@@ -218,7 +218,8 @@ function UserRow({
             {isAdmin ? " messages (unlimited)" : effectiveLimit !== null ? ` / ${effectiveLimit} messages` : " messages"}
             {user.todayImages > 0 ? ` · ${user.todayImages} image${user.todayImages === 1 ? "" : "s"}` : ""}
             {user.todaySpeechSeconds > 0 ? ` · ${Math.ceil(user.todaySpeechSeconds / 60)} min voice` : ""}
-            {user.todayResearch > 0 ? ` · ${user.todayResearch} research run${user.todayResearch === 1 ? "" : "s"}` : ""} · {user.conversations} chat
+            {user.todayResearch > 0 ? ` · ${user.todayResearch} research run${user.todayResearch === 1 ? "" : "s"}` : ""}
+            {user.todayAnswerChecks > 0 ? ` · ${user.todayAnswerChecks} answer check${user.todayAnswerChecks === 1 ? "" : "s"}` : ""} · {user.conversations} chat
             {user.conversations === 1 ? "" : "s"} · last sign-in {formatDate(user.lastLoginAt)} · joined {formatDate(user.createdAt)}
           </p>
         </div>
@@ -307,6 +308,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const [speechText, setSpeechText] = useState("");
   const [researchRunsText, setResearchRunsText] = useState("");
   const [researchKeepText, setResearchKeepText] = useState("");
+  const [checksText, setChecksText] = useState("");
   const [webSearch, setWebSearch] = useState<{ keyConfigured: boolean; usedToday: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -324,6 +326,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         setSpeechText(String(r.settings.speechMinutesPerDay));
         setResearchRunsText(String(r.settings.researchRunsPerDay));
         setResearchKeepText(String(r.settings.researchSearchReserve));
+        setChecksText(String(r.settings.answerChecksPerDay));
         setTools(r.tools);
         setWebSearch(r.webSearch);
       },
@@ -345,6 +348,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const researchRunsValid = researchRunsText.trim() !== "" && Number.isInteger(researchRuns) && researchRuns >= 0 && researchRuns <= 100;
   const researchKeep = Number(researchKeepText);
   const researchKeepValid = researchKeepText.trim() !== "" && Number.isInteger(researchKeep) && researchKeep >= 0 && researchKeep <= 1_000;
+  const checksPerDay = Number(checksText);
+  const checksValid = checksText.trim() !== "" && Number.isInteger(checksPerDay) && checksPerDay >= 0 && checksPerDay <= 100;
   const next: AppSettingsDto = {
     ...draft,
     defaultDailyLimit: limitValid ? limit : draft.defaultDailyLimit,
@@ -355,6 +360,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
     speechMinutesPerDay: speechValid ? speechMinutes : draft.speechMinutesPerDay,
     researchRunsPerDay: researchRunsValid ? researchRuns : draft.researchRunsPerDay,
     researchSearchReserve: researchKeepValid ? researchKeep : draft.researchSearchReserve,
+    answerChecksPerDay: checksValid ? checksPerDay : draft.answerChecksPerDay,
   };
   // Research can use the day's searches above the ones kept for normal chat.
   const researchSearches = next.webSearchDailyLimit - next.researchSearchReserve;
@@ -377,6 +383,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       setSpeechText(String(settings.speechMinutesPerDay));
       setResearchRunsText(String(settings.researchRunsPerDay));
       setResearchKeepText(String(settings.researchSearchReserve));
+      setChecksText(String(settings.answerChecksPerDay));
       onNotice("App settings saved.", "info");
     } catch (e) {
       setError(errorText(e, "Could not save settings."));
@@ -512,6 +519,31 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       </div>
       <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
         <Toggle
+          checked={draft.answerCheckEnabled}
+          onChange={(answerCheckEnabled) => setDraft({ ...draft, answerCheckEnabled })}
+          label="Check this answer"
+          hint="A button under answers that used sources (web, documents, weather, research): one more model request lists the answer's key claims and rates each as supported, contradicted or not in the sources, with the source. Other providers are tried before Groq. Each answer is checked once; the result is saved with it."
+        />
+        <label className="ml-12 flex flex-wrap items-center gap-2 text-xs text-[var(--text-soft)]">
+          Answer checks per user per day
+          <input
+            value={checksText}
+            onChange={(e) => setChecksText(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            aria-label="Answer checks per user per day"
+            className={`w-20 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)] ${checksValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+          />
+          <span>(admins unlimited; failed checks don't count)</span>
+        </label>
+        <Toggle
+          checked={draft.researchAutoCheck}
+          onChange={(researchAutoCheck) => setDraft({ ...draft, researchAutoCheck })}
+          label="Check research reports automatically"
+          hint="Every finished deep-research report is checked against its sources the same way, right after it's written: 1 more model request per run. It doesn't use the user's answer checks."
+        />
+      </div>
+      <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
+        <Toggle
           checked={draft.imagesEnabled}
           onChange={(imagesEnabled) => setDraft({ ...draft, imagesEnabled })}
           label="Image attachments"
@@ -577,7 +609,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         <button
           type="button"
           onClick={() => void save()}
-          disabled={!dirty || !limitValid || !searchValid || !imagesValid || !speechValid || !researchRunsValid || !researchKeepValid || saving}
+          disabled={!dirty || !limitValid || !searchValid || !imagesValid || !speechValid || !researchRunsValid || !researchKeepValid || !checksValid || saving}
           className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-text)] disabled:opacity-40"
         >
           {saving ? "Saving…" : "Save"}
