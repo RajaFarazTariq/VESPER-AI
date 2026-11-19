@@ -286,6 +286,10 @@ body {
   border-bottom: 1px solid var(--border);
   padding: 0.55em 0.9em;
   text-align: left;
+  /* Words wrap only at spaces inside tables (".md" lets long words break anywhere, which squeezed columns down to
+     "Catego ry"); a table wider than the answer scrolls sideways instead. Very long words/links still break. */
+  overflow-wrap: break-word;
+  min-width: 6.5rem;
 }
 .md tr:last-child td {
   border-bottom: 0;
