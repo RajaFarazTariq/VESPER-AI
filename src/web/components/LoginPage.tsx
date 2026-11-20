@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { PublicConfigDto } from "../../shared/types";
 import { api, ApiError } from "../api/client";
+import { VesperMark } from "./VesperMark";
 
 function GitHubMark() {
   return (
@@ -58,7 +59,7 @@ function BrandPanel({ appName }: { appName: string }) {
             <circle className="auth-planet auth-planet-faint" cx="94.8" cy="142.6" r="2.5" />
           </svg>
           <div className="auth-halo absolute h-[220px] w-[220px] rounded-full" />
-          <img src="/logo.svg" alt="" className="relative h-[120px] w-[120px] rounded-[28px] shadow-[0_18px_40px_-12px_rgb(0_0_0/0.7)]" />
+          <VesperMark full className="relative h-[120px] w-[120px] rounded-[28px] shadow-[0_18px_40px_-12px_rgb(0_0_0/0.7)]" />
         </div>
         <div className="mt-4 flex flex-col items-center gap-3">
           <span className="auth-wordmark">{appName}</span>
@@ -91,7 +92,7 @@ export function LoginPage({ config, onSignedIn }: { config: PublicConfigDto; onS
     <div className="flex min-h-full bg-[var(--bg)] text-[var(--text)]">
       <main className="flex min-h-full w-full flex-col px-6 py-6 sm:px-10 lg:w-[540px] lg:shrink-0 lg:border-r lg:border-[var(--border)] lg:px-14 xl:w-[600px]">
         <header className="flex items-center gap-2.5">
-          <img src="/favicon.svg" alt="" className="h-7 w-7 rounded-lg" />
+          <VesperMark className="h-7 w-7 rounded-lg" />
           <span className="text-[15px] font-semibold tracking-[0.16em]">{config.appName}</span>
         </header>
 

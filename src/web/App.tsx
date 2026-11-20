@@ -15,6 +15,7 @@ import { useChat } from "./hooks/useChat";
 import { ImageError, prepareImage, type PendingImage } from "./lib/images";
 import { explainOllamaError, listOllamaModels } from "./lib/ollama";
 import { canSpeak, speak, stopSpeaking } from "./lib/voice";
+import { VesperMark } from "./components/VesperMark";
 
 type Session = { user: UserDto; settings: UserSettings };
 
@@ -480,7 +481,7 @@ function ChatApp({
               </h2>
             ) : (
               <span className="flex items-center gap-2 md:hidden">
-                <img src="/favicon.svg" alt="" className="h-6 w-6" />
+                <VesperMark className="h-6 w-6" />
                 <span className="font-[family-name:var(--font-display)] font-semibold tracking-[0.16em]">{appName}</span>
               </span>
             )}
@@ -502,7 +503,7 @@ function ChatApp({
             <div className="dusk-glow pointer-events-none absolute inset-x-0 top-0 h-[520px]" aria-hidden />
             <div className="relative mx-auto flex min-h-full w-full max-w-[720px] flex-col justify-center px-4 pb-10 pt-6 sm:pt-0">
               <div className="rise-in flex flex-col items-center text-center">
-                <img src="/logo.svg" alt="" className="h-14 w-14 rounded-2xl shadow-[var(--shadow-md)]" />
+                <VesperMark full className="h-14 w-14 rounded-2xl shadow-[var(--shadow-md)]" />
                 <h1 className="mt-5 font-[family-name:var(--font-display)] text-[30px] font-semibold leading-tight tracking-tight sm:text-[38px]">
                   <span className="dusk-text">{greeting()}</span>
                   {firstName ? `, ${firstName}` : ""}

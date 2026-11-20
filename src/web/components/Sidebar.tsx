@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ConversationDto, UserDto } from "../../shared/types";
 import { groupConversations } from "../lib/format";
 import { getThemePreference, setThemePreference, type ThemePreference } from "../lib/theme";
+import { VesperMark } from "./VesperMark";
 
 interface Props {
   appName: string;
@@ -114,7 +115,7 @@ export function Sidebar(props: Props) {
         aria-label="Conversations"
       >
         <div className="flex items-center gap-2.5 px-4 pb-2 pt-4">
-          <img src="/favicon.svg" alt="" className="h-8 w-8" />
+          <VesperMark className="h-8 w-8" />
           <span className="flex-1 truncate font-[family-name:var(--font-display)] text-[17px] font-semibold tracking-[0.16em]">{props.appName}</span>
           <button type="button" onClick={props.onClose} className={`${iconButton} md:hidden`} aria-label="Close sidebar">
             <X size={18} />
