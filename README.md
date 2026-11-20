@@ -9,7 +9,7 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.13.0**.
+Current version: **0.13.0 (approval test)**.
 
 - [What VESPER does](#what-vesper-does)
 - [How VESPER is different](#how-vesper-is-different)
