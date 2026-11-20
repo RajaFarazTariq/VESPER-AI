@@ -30,6 +30,7 @@ import { citedSources, FEEDBACK_LABELS, plainDocumentLinks, providerLabel, tidyC
 import { canSpeak, speak, stopSpeaking, useSpeakingId } from "../lib/voice";
 import { CopyButton, Markdown } from "./Markdown";
 import { collectSources, SourceList, ToolActivity } from "./ToolActivity";
+import { VesperMark } from "./VesperMark";
 
 interface Props {
   message: UiMessage;
@@ -69,7 +70,7 @@ function AssistantMessage({ message, isLast, canRetry, onRetry, isAdmin = false,
 
   return (
     <div className="rise-in group flex gap-3 sm:gap-4">
-      <img src="/favicon.svg" alt="" className="mt-0.5 h-7 w-7 shrink-0 rounded-lg shadow-[var(--shadow-sm)]" />
+      <VesperMark className="mt-0.5 h-7 w-7 shrink-0 rounded-lg shadow-[var(--shadow-sm)]" />
       <div className="flex min-w-0 flex-1 flex-col gap-2.5">
         {message.notices?.map((notice, i) => (
           <div key={i} className="flex items-start gap-2 rounded-xl bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">

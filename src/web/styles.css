@@ -198,6 +198,40 @@ body {
 .auth-planet-faint {
   fill-opacity: 0.45;
 }
+/* ---------- The VESPER mark (components/VesperMark.tsx, v0.12.2) ----------
+ * Light mode: a bright tile, dark-ink and violet blades, deeper cyan so it shows on white.
+ * Dark mode (and the always-dark sign-in brand panel): the dark tile, white and violet blades, bright cyan. */
+.vmark {
+  --vm-tile-a: #ffffff;
+  --vm-tile-b: #e9e7f7;
+  --vm-edge: rgb(30 27 75 / 0.16);
+  --vm-dot: rgb(30 27 75 / 0.28);
+  --vm-blade-l1: #262046;
+  --vm-blade-l2: #4a4384;
+  --vm-blade-r1: #8b6cff;
+  --vm-blade-r2: #5b2fe0;
+  --vm-cyan: #0a9ab8;
+  --vm-cyan-soft: #22b5d3;
+  --vm-node: #ffffff;
+  --vm-spark: #6a3df0;
+  display: block;
+}
+.dark .vmark,
+.auth-showcase .vmark {
+  --vm-tile-a: #1d1c33;
+  --vm-tile-b: #0a0a13;
+  --vm-edge: rgb(255 255 255 / 0.2);
+  --vm-dot: rgb(255 255 255 / 0.35);
+  --vm-blade-l1: #ffffff;
+  --vm-blade-l2: #d9d0ff;
+  --vm-blade-r1: #9b7bff;
+  --vm-blade-r2: #6a3df0;
+  --vm-cyan: #22d3ee;
+  --vm-cyan-soft: #67e8f9;
+  --vm-node: #0d0d18;
+  --vm-spark: #ffffff;
+}
+
 .auth-wordmark {
   font-family: var(--font-display);
   font-size: 40px;
