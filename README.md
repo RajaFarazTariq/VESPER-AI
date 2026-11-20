@@ -1,229 +1,384 @@
-# AI Assistant (free-tier, multi-provider)
+# VESPER
 
-A ChatGPT-style AI assistant for many users, managed by an administrator, that runs entirely on **free tiers**: Cloudflare Workers + D1 for hosting
-and storage, and free AI APIs (Groq, Google Gemini, OpenRouter `:free` models, Mistral, Cloudflare Workers AI) with
-**automatic fallback** when a free limit is reached. Optional **local models** through Ollama.
+**A private, multi-user AI assistant that runs entirely on free tiers, answers from evidence, and shows you where
+every answer came from.**
 
-- 💬 Streaming chat with Markdown, code highlighting and tables; a **clean, ChatGPT-like view for users** (model
-  reasoning, tool details and model names are shown to the admin only)
-- 🛠️ Tool-using agent: exact calculator, date/time in **each user's own time zone**, long-term memory
-- 🌐 **Live information** with source links: web search (Tavily, free plan, daily-capped), reading web pages,
-  weather (Open-Meteo), Wikipedia, and currency rates (Frankfurter); web content is treated as untrusted data
-- ✅ **Trusted sources first**: results are labelled (official / university / other) with dates, government sites
-  and the organisation's own site rank first, the admin keeps trusted and blocked website lists, and the assistant
-  follows clear rules (newest reliable source wins, differing figures are never blended). An admin-only number check
-  flags any figure in an answer that no source contains
-- 📚 **Knowledge base**: the admin uploads PDF, Word (.docx), text, Markdown and CSV files (or adds web pages) into
-  folders; everyone's assistant answers from them and cites "document, page X". Files are read in the admin's
-  browser and only their text is stored (about 15,000 pages fit in the free database). Search = full-text (FTS5)
-  plus Workers AI's free re-ranker
-- 🖼️ **Images**: attach, paste or drag in up to 3 images per message; they are shrunk in the browser and sent only to
-  models that can see them (Gemini, then a free OpenRouter vision model); only a small preview is kept
-- 🎤 **Voice**: speak your message (Groq's free Whisper, Cloudflare's as backup; English and Urdu) and check the text
-  before sending; 🔊 "Read aloud" on answers with the device's own voices. Both have admin switches and daily limits
-- 🔭 **Deep research**: the Research button turns a question into 2–4 planned searches, up to 3 pages read and a
-  written brief (short answer, key findings, disagreements, what's uncertain) with a sources list showing publish and
-  checked dates. Two model requests per run; searches are set aside up front and the last 10 of the day stay for
-  normal chat
-- 👍 **Answer feedback**: 👍/👎 under every answer with an optional reason and note; the admin sees the list and the
-  counts per model in Admin → Feedback
-- 🧠 Long-term memory you control: each message gets only your pinned and related memories; view, add, pin, edit,
-  export and delete them in Settings → Memory. Passwords, card/bank numbers, ID card numbers and phone numbers are
-  never saved. Long chats keep their context: the older part is summarised once into short notes instead of being
-  dropped
-- 🔁 Automatic free-provider fallback with cooldowns, retries and clear error messages
-- 🎛️ Model picker: users choose Auto or models the admin picked (with friendly names); the admin sees every live model
-- 🗂️ Conversation history stored in a cloud database (rename, delete, deep links, regenerate, stop)
-- 👥 Anyone can create an account with **Google sign-in**; no passwords stored
-- 🛡️ **Admin panel** for the owner: users (block, delete, personal daily limits), sign-ups open/closed, default
-  daily message limit, instructions for the assistant, tools on/off for everyone, which models users may pick,
-  whether users see the model's thinking notes, provider status
-- 🔑 GitHub sign-in kept as a backup login for administrators only
-- 🖥️ Optional local models (Ollama) called directly from your browser
-- 🌗 A polished, original interface: light/dark/system themes, chat search, collapsible sidebar, edit your last
-  message, source links under answers, and a responsive mobile layout
-- 💸 **No paid services, no credit card, no automatic billing**
+VESPER is a ChatGPT-style assistant you host yourself: a web app where people sign in, chat, search the live web,
+ask about documents and their own GitHub code, and get answers with sources they can check. It runs on Cloudflare's
+free plan (Workers + D1 database) and switches automatically between free AI providers (Groq, Google Gemini,
+OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
+An administrator manages users, limits, tools and models from a built-in admin panel.
 
-> Status: **Smarter memory (v0.10.0)**, **deep research (v0.9.8)**, **answer feedback (v0.9.7)** and **images +
-> voice (v0.9.6)**: relevant and pinned memories with sensitive data refused, long chats that keep their context,
-> research briefs with dated sources, 👍/👎 on answers with an admin review tab, image attachments and voice
-> input/read-aloud (dark theme by default), on top of accurate, current
-> answers with the live web as the main source (source labels and ranking, official pages read automatically,
-> trusted/blocked sites, answer rules, admin-only number check, search-first answers, a search cache, an accuracy test
-> set), the knowledge base, live information, multi-user accounts and the admin panel.
-> Next (per the roadmap): answer verification, then integrations (GitHub, Gmail,
-> Calendar, Telegram). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Current version: **0.12.2**.
+
+- [What VESPER does](#what-vesper-does)
+- [How VESPER is different](#how-vesper-is-different)
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Install and set up](#install-and-set-up)
+- [Using VESPER](#using-vesper)
+- [Development](#development)
+- [Security and privacy](#security-and-privacy)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
-## How it stays free
+## What VESPER does
+
+You ask a question; VESPER answers in a streaming, ChatGPT-like chat. Behind the scenes it decides whether the
+question needs a look-up, fetches what it needs and cites it:
+
+- **Everyday questions and writing**: explanations, drafts, code, maths (with an exact calculator), in Markdown with
+  tables, code highlighting and formulas.
+- **Current information**: it searches the web, reads pages, checks the weather, Wikipedia and exchange rates, and
+  links every source under the answer.
+- **Research**: the Research button turns a question into several planned searches and a written brief with a dated
+  sources list.
+- **Your documents**: the administrator adds PDFs, Word files, text or web pages to a knowledge base; answers cite
+  "document, page X".
+- **Your code**: each user can connect their own GitHub (read-only) and ask about files, issues and pull requests.
+- **Checking answers**: one click rates an answer's key claims against the sources it used.
+- **Remembering you**: notes you ask it to keep (preferences, projects), which you can see, pin, edit and delete.
+- **Images and voice**: attach screenshots or photos, speak your question, or have answers read aloud.
+
+## How VESPER is different
+
+Most AI assistants are a single company's model behind a subscription. VESPER is built around a few different
+choices:
+
+1. **Free to run, with no way to be billed.** Hosting, database and AI all use free tiers. The code only ever calls
+   free models (it refuses any OpenRouter model that isn't `:free`), and when one provider hits its limit it moves to
+   the next free one instead of a paid fallback.
+2. **Not tied to one AI company.** Five providers sit behind one router with automatic fallback, plus optional local
+   models (Ollama) that run on your own computer.
+3. **Evidence first, and checkable.** Sources are ranked (official and government sites first) and labelled with
+   dates; the assistant follows written rules (newest reliable source wins, differing figures are shown side by
+   side, never blended). Any answer that used sources can be checked claim by claim, and deep-research reports are
+   checked automatically.
+4. **You own it.** The code is in your GitHub repository and the data is in your own Cloudflare database. There's no
+   third-party account system: users sign in with Google, and you decide who can sign up and how much they can use.
+5. **Safe with outside content.** Web pages, documents and repository text are treated as untrusted data, never as
+   instructions. GitHub access is read-only and encrypted, and once private code is in an answer the assistant can't
+   open other web pages (so planted text can't send your code elsewhere).
+6. **A clean view for users, full detail for the admin.** Users see answers and sources; the administrator can also
+   see which model answered, every tool step and an automatic number check.
+
+## Features
+
+**Chat and models**
+- Streaming answers with Markdown, tables, code highlighting and maths; stop, regenerate, edit your last message,
+  copy, read aloud.
+- Conversation history in the cloud: search, rename, delete, links to any chat.
+- Model menu: **Auto** (best free provider available) or models the admin makes available, with friendly names.
+- Automatic fallback across free providers with cooldowns and clear error messages; long chats keep their context
+  (the older part is summarised once into short notes instead of being dropped).
+- Optional local models through [Ollama](https://ollama.com), called directly from your browser.
+
+**Live information and sources**
+- Web search (Tavily, free plan, capped per day by the admin), reading web pages, weather (Open-Meteo), Wikipedia
+  and currency rates (Frankfurter).
+- Results labelled *official / university / other website* with dates; trusted and blocked website lists in the
+  admin panel; questions that clearly need a look-up are searched before the model answers.
+- Numbered source chips under every answer that used sources.
+
+**Answer quality**
+- **Check this answer**: one extra model request lists the answer's key claims (up to 8) and marks each one
+  *Supported*, *Contradicted* (with what the source says) or *Not in the sources*, naming the source. The result is
+  saved with the answer.
+- Deep-research reports are checked automatically.
+- An admin-only number check flags figures in an answer that no source contains (general-knowledge numbers like
+  "SPF 30" are left alone).
+- 👍/👎 feedback with an optional reason; the admin sees ratings per model.
+
+**Deep research**
+- Plans 2–4 searches, reads up to 3 pages, then writes a brief: short answer, key findings, disagreements and what's
+  uncertain, with a sources list showing published and checked dates (never guessed by the model).
+
+**Knowledge base**
+- The admin uploads PDF, Word (.docx), text, Markdown and CSV files or adds web pages, in folders. Files are read in
+  the admin's browser; only their text is stored (roughly 15,000 pages fit in the free database).
+- Full-text search plus Cloudflare's free re-ranker; answers cite "document, page X".
+
+**Your GitHub (read-only)**
+- Each user connects their own GitHub in **Settings → Connections** and picks which repositories VESPER may read.
+- Ask VESPER to explain a repository, read a file (with line numbers), search the code, list or open issues and pull
+  requests, or review a pull request's changes. Big pull requests are reviewed in parts, code first.
+- Answers link to the exact commit and lines on GitHub. Nothing on GitHub can be changed.
+
+**Memory**
+- Each message gets your pinned memories plus the ones related to it; view, add, pin, edit, export and delete them in
+  **Settings → Memory**.
+- Passwords, card and bank numbers, ID card numbers and phone numbers are refused.
+
+**Images and voice**
+- Attach, paste or drag in up to 3 images per message; they're resized in your browser and sent only to models that
+  can see them. Only a small preview is kept.
+- Speak your message (Groq's free Whisper, Cloudflare's as backup; English and Urdu) and check the text before
+  sending; "Read aloud" uses your device's own voices.
+
+**Accounts and administration**
+- Google sign-in for everyone (no passwords stored); GitHub sign-in as a backup for administrators.
+- Admin panel: users (block, delete, personal daily limits), sign-ups open or closed, daily limits for messages,
+  images, voice, research and answer checks, instructions for the assistant, tools on or off for everyone, which
+  models users may pick, the knowledge base, feedback, provider status.
+- Light, dark and system themes (dark by default), a responsive mobile layout and a logo that follows the theme.
+
+## How it works
+
+```mermaid
+flowchart LR
+  B["Browser<br/>(React web app)"] -- "HTTPS, streamed answers" --> W["Cloudflare Worker<br/>(API)"]
+  W --> D[("D1 database<br/>chats, memories, knowledge base")]
+  W --> P["Free AI providers<br/>Groq · Gemini · OpenRouter · Mistral · Workers AI"]
+  W --> T["Tools<br/>web search · pages · weather · Wikipedia · currency · GitHub"]
+  B -. "optional" .-> O["Ollama on your own computer"]
+```
+
+What happens when you send a message:
+
+1. The Worker checks your sign-in, your daily limit and the request.
+2. It builds the prompt: VESPER's answer rules, the administrator's instructions, your relevant memories, short
+   notes on the older part of a long chat, and the recent messages.
+3. If the question clearly needs a look-up (latest news, "according to…", your documents), the search runs first, so
+   the model can answer in a single request.
+4. The router sends the request to the first free provider that's available. On a rate limit or error it moves to
+   the next one and remembers the cooldown.
+5. The model may call tools (up to 5 rounds). Every tool result is passed as untrusted data, with its source.
+6. The answer streams back to your browser word by word, with the source chips underneath.
+7. The answer is saved with its tool steps and a copy of what its sources said (for GitHub, only references to the
+   exact files), so it can be checked later with **Check**.
+
+| Part | Technology |
+|---|---|
+| Web app | React, Vite, Tailwind CSS |
+| API | Cloudflare Workers, Hono, zod validation, Server-Sent Events for streaming |
+| Database | Cloudflare D1 (SQLite) with add-only migrations |
+| AI | Groq, Google Gemini, OpenRouter (`:free` only), Mistral, Cloudflare Workers AI; Ollama optional |
+| Tests | Vitest running inside the Workers runtime with a real local D1 (243 tests) |
+| Delivery | GitHub Actions: checks on every pull request, deploy on merge to `main` |
+
+More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### How it stays free
 
 | Piece | Service | Free allowance | What happens at the limit |
 |---|---|---|---|
-| Hosting + API | Cloudflare Workers (Free plan) | 100,000 requests/day, 10 ms CPU per request | Requests fail with error 1027 until 00:00 UTC. **No billing.** |
+| Hosting + API | Cloudflare Workers (Free plan) | 100,000 requests/day, 10 ms CPU per request | Requests fail until 00:00 UTC. **No billing.** |
 | Web app files | Workers static assets | Unlimited requests | n/a |
 | Database | Cloudflare D1 | 5 GB storage, 5M rows read/day, 100k rows written/day | Queries fail until 00:00 UTC. **No billing.** |
-| AI | Groq free plan | ~30 req/min, ~1,000 req/day, 8K tokens/min per model | 429 → app switches provider |
-| AI | Google Gemini free tier | Per-project limits (shown in AI Studio); Flash-Lite allows the most | 429 → app switches provider |
-| AI | OpenRouter `:free` models | 20 req/min, 50 req/day | 429 → app switches provider |
-| AI | Mistral "Experiment" plan | Conservative rate limits | 429 → app switches provider |
+| AI | Groq free plan | ~30 req/min, ~1,000 req/day, 8K tokens/min per model | VESPER switches provider |
+| AI | Google Gemini free tier | Per-project limits (Flash-Lite allows the most) | VESPER switches provider |
+| AI | OpenRouter `:free` models | 20 req/min, 50 req/day | VESPER switches provider |
+| AI | Mistral "Experiment" plan | Conservative rate limits | VESPER switches provider |
 | AI | Cloudflare Workers AI | 10,000 neurons/day | Fails until 00:00 UTC. **No billing.** |
-| CI/CD | GitHub Actions | Unlimited for public repos; 2,000 min/month for private | Workflow waits until next month |
+| Web search | Tavily free plan | 1,000 searches/month (VESPER caps it per day) | Web search pauses until the next day |
+| GitHub | GitHub API | 5,000 requests/hour per user | VESPER says so and tries again later |
+| CI/CD | GitHub Actions | Unlimited for public repositories | Waits until next month (private repos) |
 
-Guarantees built into the code:
-- The app **refuses any OpenRouter model whose id doesn't end in `:free`**, so it can't spend credits.
-- There is **no paid provider** in the code, so fallback only ever moves between free providers.
-- Cloudflare's Free plan can't bill you. Stay on it (don't upgrade to Workers Paid).
+Keep it free on your side: don't add a card to Groq, use a Gemini key from a Google Cloud project **without billing
+enabled**, stay on Mistral's free Experiment plan and Cloudflare's Free plan. Free-tier numbers were checked in
+November 2026 and change often; VESPER reads live model lists and handles limits as they come.
 
-Things **you** must keep free: don't add a card to Groq, use a Gemini key from a Google Cloud project **without
-billing enabled**, and stay on Mistral's free Experiment plan. Free-tier numbers above were checked in November 2026
-and change often. The app reads live model lists and handles limits dynamically.
-
-**Privacy:** Gemini's and Mistral's free tiers may use your prompts to improve their models. Don't send sensitive data
-to them, or use only Groq or local models for private work.
+**Privacy note:** the free tiers of some providers (for example Gemini and Mistral) may use prompts to improve their
+models. Don't send confidential data through them; use Groq or local models for private work.
 
 ---
 
-## Quick start (local development)
+## Install and set up
 
-Requirements: Node.js 22.12+ and Git. No Cloudflare account is needed for local development.
+### 1. Try it on your computer
+
+Requirements: Node.js 22.12+ and Git. No Cloudflare account or API keys are needed for a local try-out.
 
 ```bash
-git clone https://github.com/<you>/<repo>.git
-cd <repo>
+git clone https://github.com/RajaFarazTariq/VESPER-AI.git
+cd VESPER-AI
 npm install
 cp .env.example .env        # then edit .env (see below)
 npm run dev                 # API on :8787, web app with hot reload on http://localhost:5173
 ```
 
-Minimum `.env` for local use **without any API keys** (uses the bundled mock LLM server):
+Minimum `.env` to run **without any API keys**, using the bundled offline mock of the AI APIs:
 
 ```ini
-ADMIN_GITHUB_USERS=your-github-username
+APP_NAME=VESPER
+ADMIN_GITHUB_USERS=your-name
 DEV_LOGIN=true
 WORKERS_AI_ENABLED=false
 GROQ_API_KEY=mock
 GROQ_BASE_URL=http://127.0.0.1:8790/groq
 ```
 
-Then in a second terminal run `npm run mock:llm` and sign in with the "local development login" form: your admin
-username gives you the admin panel, and any other name is a regular user. To use real
-models locally, put real keys in `.env` instead (and remove the `*_BASE_URL` lines).
+In a second terminal run `npm run mock:llm`, open http://localhost:5173 and use the *local development login*: the
+name you put in `ADMIN_GITHUB_USERS` opens the admin panel; any other name is a regular user. To use real models
+locally, put real keys in `.env` and remove the `*_BASE_URL` line. Local data lives in `.wrangler/` (git-ignored).
 
-Local data (the SQLite file behind D1) lives in `.wrangler/` inside the project and is git-ignored.
+### 2. Deploy your own copy (free)
 
-## Deploying (free, from your own GitHub account)
+Step-by-step guide: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Every setting, secret and account a deployment uses
+(names and where they live, never the values) is listed in **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**. In
+short:
 
-Follow **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Every setting, secret and account this deployment uses (names
-and where they live, never the values) is listed in **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**, along with a
-setup log for each stage. In short:
-
-1. Push this project to your GitHub repository.
+1. Put this project in your own GitHub repository.
 2. Create a free Cloudflare account, a D1 database and an API token.
-3. Add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets and a `D1_DATABASE_ID` variable to the GitHub repo.
-4. Push to `main`. GitHub Actions tests, migrates the database and deploys.
-5. Create a Google OAuth client (sign-in for everyone) and a GitHub OAuth app (admin backup login), and add your
-   keys and admin email as Cloudflare secrets.
+3. In the GitHub repository add the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets and the
+   `D1_DATABASE_ID` variable.
+4. Merge to `main`: GitHub Actions runs the checks, applies database migrations and deploys.
+5. Create a Google OAuth client (sign-in for everyone), optionally a GitHub OAuth app (admin backup sign-in), and add
+   your keys and admin email in Cloudflare (next section).
 
-After that, the app runs entirely in Cloudflare. You can delete the project from your computer.
+After that everything runs in Cloudflare; the copy on your computer isn't needed any more.
 
-## Configuration
+### 3. Configuration
 
-All configuration is environment variables. In production, set them in **Cloudflare → Workers & Pages → your Worker →
-Settings → Variables and Secrets** (type *Secret* for anything sensitive). Locally, set them in `.env`.
+In production, set these in **Cloudflare → Workers & Pages → your Worker → Settings → Variables and Secrets** (type
+*Secret* for anything sensitive). Locally, set them in `.env`. Settings that change day to day (limits, switches,
+models, website lists) are in the admin panel instead.
 
-| Variable | Required | Description |
+| Variable | Required | What it's for |
 |---|---|---|
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | yes | Google OAuth client: sign-in and sign-up for everyone |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | yes | Google sign-in and sign-up for everyone |
 | `ADMIN_EMAILS` | yes | Comma-separated administrator emails (verified Google email) |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | recommended | GitHub OAuth app: backup sign-in for administrators only |
-| `ADMIN_GITHUB_USERS` | with GitHub | Comma-separated administrator GitHub usernames (the older name `ALLOWED_GITHUB_USERS` still works) |
-| `DEFAULT_DAILY_LIMIT` | no | Messages per user per day (default 30; also editable in the admin panel). Admins are unlimited. |
-| `GROQ_API_KEY` | one AI key | [console.groq.com/keys](https://console.groq.com/keys) |
-| `GEMINI_API_KEY` | recommended | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| `ADMIN_GITHUB_USERS` | with GitHub sign-in | Comma-separated administrator GitHub usernames |
+| `GROQ_API_KEY` | at least one AI key | [console.groq.com/keys](https://console.groq.com/keys) |
+| `GEMINI_API_KEY` | recommended | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (also the first choice for images) |
 | `OPENROUTER_API_KEY` | optional | [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
 | `MISTRAL_API_KEY` | optional | [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys) |
-| `TAVILY_API_KEY` | optional | Turns on web search: [app.tavily.com](https://app.tavily.com) (free 1,000 searches/month; capped per day in the admin panel) |
+| `TAVILY_API_KEY` | optional | Turns on web search and deep research: [app.tavily.com](https://app.tavily.com) |
+| `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_SLUG`, `GITHUB_TOKEN_KEY` | optional | Lets users connect their own GitHub, read-only (see step 4) |
 | `APP_NAME` | no | Display name (default `Assistant`) |
+| `DEFAULT_DAILY_LIMIT` | no | Messages per user per day (default 30; also in the admin panel). Admins are unlimited. |
 | `PROVIDER_ORDER` | no | Auto-fallback order (default `groq,gemini,openrouter,mistral,workers-ai`) |
 | `GROQ_MODEL`, `GEMINI_MODEL`, `OPENROUTER_MODEL`, `MISTRAL_MODEL`, `WORKERS_AI_MODEL` | no | Default model per provider used by Auto |
-| `WORKERS_AI_ENABLED` | no | `false` to disable the built-in Cloudflare models |
-| `WORKERS_AI_MODELS` | no | Comma-separated `@cf/...` ids to show instead of the built-in list |
-| `MAX_CONTEXT_CHARS` | no | Conversation history sent per request (default 16000, sized for Groq's 8K tokens/min) |
-| `MAX_OUTPUT_TOKENS` | no | Max reply length (default 2048) |
-| `CHAT_RATE_LIMIT_PER_MINUTE` | no | Per-user chat requests per minute (default 20) |
-| `SESSION_TTL_DAYS` | no | Sign-in lifetime with sliding renewal (default 30) |
-| `DEV_LOGIN` | dev only | Enables a username-only login, and only on `localhost` |
+| `WORKERS_AI_ENABLED`, `WORKERS_AI_MODELS` | no | Turn the built-in Cloudflare models off, or list other `@cf/...` models |
+| `MAX_CONTEXT_CHARS`, `MAX_OUTPUT_TOKENS` | no | History sent per request (default 16000) and reply length (default 2048) |
+| `CHAT_RATE_LIMIT_PER_MINUTE`, `SESSION_TTL_DAYS` | no | Chat requests per user per minute (20) and sign-in lifetime in days (30) |
+| `DEV_LOGIN` | local only | Username-only login, accepted only on `localhost` |
 
-## Using local models (optional)
+### 4. Optional: let users connect GitHub
 
-Install [Ollama](https://ollama.com/download) on your computer, `ollama pull llama3.2`, and start it with
-`OLLAMA_ORIGINS=https://<your-app>.workers.dev`. In the app go to **Settings → Local models**, enable them and press
-**Test**. Local models then appear in the model menu. Your browser calls Ollama directly; the cloud server never
-contacts your machine, and local chats still save to your history.
+1. On GitHub: **Settings → Developer settings → GitHub Apps → New GitHub App**.
+   - Callback URL: `https://<your-app>/api/connections/github/callback`
+   - Setup URL: `https://<your-app>/?github=installed`, with **Redirect on update** ticked
+   - Keep **Expire user authorization tokens** ticked; untick webhooks
+   - Repository permissions: **Contents, Issues, Pull requests: Read-only** (Metadata is added automatically)
+   - Installable by **Any account**
+2. On the app's page: copy the **Client ID**, generate a **client secret**, generate a private key (GitHub requires
+   one to exist; VESPER doesn't use it) and note the **slug** from the app's public link `github.com/apps/<slug>`.
+3. Make an encryption key (base64 of 32 random bytes), for example in PowerShell:
+   `$b = New-Object byte[] 32; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`
+4. Add `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_SLUG` and `GITHUB_TOKEN_KEY` in Cloudflare.
+   Keep the key unchanged afterwards: a new key means everyone reconnects.
+5. Admins can use it straight away (**Settings → Connections**); turn on **GitHub for users** in **Admin panel → App
+   settings** when you're ready.
 
-## Scripts
+Full details: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+
+### 5. Optional: local models
+
+Install [Ollama](https://ollama.com/download), run `ollama pull llama3.2`, and start Ollama with
+`OLLAMA_ORIGINS=https://<your-app>`. In VESPER open **Settings → Local models**, switch them on and press **Test**.
+Your browser talks to Ollama directly; the server never contacts your computer. For regular users this tab appears
+only when the admin turns on **Local models for users**.
+
+---
+
+## Using VESPER
+
+**Everyone**
+- **Sign in** with Google. Your account is created the first time.
+- **Ask anything** in the message box. Keep the model on **Auto** unless you have a reason to pick one.
+- **Tools**: the Tools menu shows what VESPER can use (web search, weather, calculator…); it picks the right one
+  itself.
+- **Research**: switch on **Research** in the message box for a planned, multi-source report.
+- **Images and voice**: use the paperclip (or paste/drag) to attach images, and the microphone to speak.
+- **Under each answer**: copy, read aloud, 👍/👎, **Check** (when the answer used sources) and regenerate.
+- **Settings**: General (default model, your own instructions), Tools, Memory, Voice, Connections (GitHub) and
+  Appearance (light, dark or system).
+
+**Administrators** (the accounts in `ADMIN_EMAILS` / `ADMIN_GITHUB_USERS`) also get the **Admin panel**:
+- **Users**: usage per day, personal limits, block or delete.
+- **App settings**: sign-ups, daily limits, instructions for the assistant, tools for everyone, web search cap,
+  trusted/blocked websites, images, voice, deep research, answer checks, local models and GitHub for users.
+- **Models**: which models users may pick, with friendly names.
+- **Knowledge**: folders, documents and web pages for the knowledge base.
+- **Feedback**: 👍/👎 ratings with the question, answer and sources.
+- **Providers**: which AI providers are set up, their models, cooldowns and today's usage.
+
+---
+
+## Development
 
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local D1 migrations + API (`wrangler dev`) + web app (`vite`) with hot reload |
 | `npm run mock:llm` | Offline mock of the AI APIs (`MOCK_FAIL=groq` makes Groq return 429 to test fallback) |
-| `npm run accuracy -- --provider groq --pdf <file> --out run.json` | Asks the 18 real questions in `tests/accuracy/questions.json` through a local server with real keys and scores the answers (uses free-tier quota; `--compare a.json b.json` prints runs side by side) |
 | `npm run typecheck` | TypeScript checks for the Worker and the web app |
-| `npm test` | Unit + integration tests inside the Workers runtime with a real local D1 |
+| `npm test` | Unit and integration tests inside the Workers runtime with a real local D1 |
 | `npm run build` | Builds the web app into `dist/` |
-| `npm run check` | typecheck + test + build |
-| `npm run deploy` | Build, apply remote migrations and deploy (needs `npx wrangler login`) |
+| `npm run check` | typecheck + test + build (what CI runs) |
+| `npm run accuracy -- --provider groq --pdf <file> --out run.json` | Scores real answers to the questions in `tests/accuracy/questions.json` through a local server (needs real keys; uses free quota; `--compare a.json b.json` puts runs side by side) |
+| `npm run deploy` | Build, apply remote migrations and deploy from your computer (needs `npx wrangler login`) |
 
-## Project structure
+Database changes are **add-only** (new tables or nullable/defaulted columns), so any release can be reverted without
+losing data; a test applies every migration over existing data to check nothing is lost.
 
 ```
-├─ .github/workflows/      ci.yml (checks on every push/PR), deploy.yml (deploy on push to main)
-├─ migrations/             D1 (SQLite) schema migrations
-├─ public/                 static files copied as-is (_headers = security headers/CSP, favicon)
-├─ scripts/                dev launcher, mock LLM server
+├─ .github/workflows/   ci.yml (checks on every push and pull request), deploy.yml (deploy on merge to main)
+├─ migrations/          D1 (SQLite) migrations, add-only
+├─ public/              static files: _headers (security headers), favicon.svg, logo.svg
+├─ scripts/             dev launcher, offline mock of the AI APIs, accuracy runner
 ├─ src/
-│  ├─ shared/              types and the SSE parser used by both server and browser
-│  ├─ worker/              Cloudflare Worker (Hono)
-│  │  ├─ index.ts          entry: fetch + daily cron cleanup
-│  │  ├─ app.ts            routes, error handling
-│  │  ├─ routes/           auth, chat (SSE), conversations, models, settings
-│  │  ├─ middleware/       session auth, CSRF/origin guard, rate limiting, request logging
-│  │  ├─ db/               D1 queries
-│  │  ├─ llm/              providers, fallback router, agent loop, prompt/context builder, model catalogue
-│  │  └─ tools/            tool registry + tools (calculator, date/time, memory)
-│  └─ web/                 React app (Vite + Tailwind)
-├─ tests/                  Vitest suites (run inside workerd)
-├─ docs/                   ARCHITECTURE.md, DEPLOYMENT.md
-├─ wrangler.jsonc          Worker configuration
-└─ .env.example            every supported variable, documented
+│  ├─ shared/           types and the streaming parser shared by server and browser
+│  ├─ worker/           Cloudflare Worker (Hono)
+│  │  ├─ routes/        auth, chat (streaming), conversations, models, settings, memories, media,
+│  │  │                 feedback, knowledge, admin, answer-check, connections
+│  │  ├─ llm/           providers, fallback router, agent loop, prompts, research, answer checks
+│  │  ├─ tools/         calculator, date/time, memory, web tools, knowledge base, GitHub
+│  │  ├─ db/            D1 queries
+│  │  ├─ lib/           security helpers (encryption, sensitive-data check, presentation)
+│  │  └─ middleware/    sign-in, origin checks, rate limits
+│  └─ web/              React app (Vite + Tailwind)
+├─ tests/               Vitest suites, run inside the Workers runtime
+├─ docs/                ARCHITECTURE, DEPLOYMENT, CONFIGURATION
+├─ wrangler.jsonc       Worker configuration
+└─ .env.example         every supported variable, documented
 ```
 
-## Security
+## Security and privacy
 
-- Sign-in is Google OAuth (basic scopes only: id, name, photo, verified email). GitHub sign-in is accepted only for
-  administrators. The admin role comes from `ADMIN_EMAILS` / `ADMIN_GITHUB_USERS` and is re-checked on every request.
-  Blocking a user signs them out everywhere immediately.
-- Each user can only see their own conversations and memories; the admin panel shows accounts and usage counts, not chats.
-- Per-user daily message limits (admins unlimited) protect the shared free quotas.
-- Sessions are random 256-bit tokens in `HttpOnly`, `Secure`, `SameSite=Lax` cookies (`__Host-` prefix). Only their SHA-256 hash is stored.
-- CSRF protection: state-changing requests must be same-origin JSON. A strict Content-Security-Policy is applied to the web app.
-- Input validation (zod) on every endpoint, request size limits, and per-user and per-IP rate limits.
-- API keys exist only as Cloudflare secrets. They are never sent to the browser or committed.
-- Model output is rendered without raw HTML. Remote images are shown as links, so injected content can't leak data via image URLs.
-- Conversations are scoped to their owner in every query.
+- **Sign-in**: Google OAuth with basic scopes only (id, name, photo, verified email). GitHub sign-in is accepted only
+  for administrators. The admin role is re-checked on every request; blocking a user signs them out everywhere.
+- **Sessions**: random 256-bit tokens in `HttpOnly`, `Secure`, `SameSite=Lax` cookies; only a hash is stored.
+- **Isolation**: each user sees only their own chats, memories and GitHub connection; every query is scoped to its
+  owner. The admin panel shows accounts and usage counts, not chats.
+- **Requests**: state-changing requests must be same-origin JSON, every endpoint validates its input, and there are
+  per-user and per-IP rate limits and size limits. A strict Content-Security-Policy protects the web app.
+- **Secrets**: API keys exist only as Cloudflare secrets, never in the browser or the repository. Users' GitHub
+  tokens are encrypted (AES-256-GCM) and never logged or shown to a model.
+- **Outside content**: web pages, documents and repository text are passed to the model as untrusted data. Answers
+  are rendered without raw HTML and remote images are shown as links, so injected content can't leak data through
+  image addresses. After private repository content, opening other web pages is blocked for that answer.
+- **What leaves the server**: your messages (and any file text or code VESPER reads for an answer) go to the AI
+  provider that writes the answer. A 👍/👎 sends a copy of that question and answer to the administrator's feedback
+  list.
 
 ## Troubleshooting
 
-- **"Every available free provider failed"**: all configured providers are rate-limited or out of daily quota.
-  Rate limits clear in minutes; daily quotas reset the next day. Adding more free keys improves resilience.
-- **Error 1027 page**: the Cloudflare free daily request limit (100k) was reached. It resets at 00:00 UTC.
-- **"GitHub sign-in is only for the administrator"**: add the username to `ADMIN_GITHUB_USERS` in Cloudflare.
-  Everyone else signs in with Google.
-- **Google sign-in shows "Access blocked" / "app not verified"**: while the Google app is in *Testing* mode, only
-  emails listed under *Test users* in the Google console can sign in.
-- **Google or GitHub sign-in fails right after redirect**: the callback URL must be exactly
-  `https://<your-app>.workers.dev/api/auth/google/callback` (or `/github/callback`).
-- **"You've used all N messages for today"**: the daily limit. Raise it in Admin panel → App settings, or per user in
-  Admin panel → Users.
-- **Gemini 429 immediately**: newer/Pro models may have no free quota. Pick a Flash-Lite model or leave Auto on.
+- **"Every available free provider failed"**: all providers are rate-limited or out of daily quota. Rate limits clear
+  in minutes, daily quotas at midnight UTC; adding more free keys helps.
+- **Error 1027 page**: Cloudflare's free daily request limit was reached; it resets at 00:00 UTC.
+- **Google sign-in shows "Access blocked" or "app not verified"**: while the Google app is in *Testing* mode, only
+  emails listed under *Test users* can sign in.
+- **Sign-in fails right after the redirect**: the callback URL must be exactly
+  `https://<your-app>/api/auth/google/callback` (or `/api/auth/github/callback`).
+- **"You've used all N messages for today"**: raise the limit in Admin panel → App settings, or per user in Admin
+  panel → Users.
+- **Gemini 429 straight away**: newer or Pro models may have no free quota. Keep Auto, or pick a Flash-Lite model.
+- **No Connections tab**: one of the four `GITHUB_APP_*` / `GITHUB_TOKEN_KEY` settings is missing or misspelled
+  (Admin panel → App settings shows "Not set up yet"), or GitHub for users is off for regular users.
+- **GitHub says "redirect_uri is not associated with this application"**: the GitHub App's Callback URL doesn't match
+  `https://<your-app>/api/connections/github/callback` exactly.
+- **"VESPER can't read any of your repositories yet"**: choose repositories with **Choose repositories on GitHub** in
+  Settings → Connections. An organisation's repositories need approval from one of its owners.
