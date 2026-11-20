@@ -12,7 +12,7 @@ import { pickOpenRouterDefault } from "../src/worker/llm/registry";
 import { cooldownFor, parseSelection } from "../src/worker/llm/router";
 import { classifyHttpError, parseRetryAfter, ProviderError } from "../src/worker/llm/types";
 import * as entry from "../src/worker/index";
-import { citedSources, plainDocumentLinks, tidyCitations } from "../src/web/lib/format";
+import { answerSources, chipLabels, citedSources, githubLineLinks, plainDocumentLinks, tidyCitations } from "../src/web/lib/format";
 import { classifyHttpError as classifyError, retryAfterFromMessage } from "../src/worker/llm/types";
 import { planPrefetch } from "../src/worker/llm/prefetch";
 import { attributedOrganisation, dateInText, organisationDomains } from "../src/worker/tools/web";
@@ -302,6 +302,67 @@ describe("citations under answers", () => {
     expect(citedSources(two, "As stated (Pricing.pdf, page 3).")).toEqual([doc("page 3", "Pricing.pdf")]);
     expect(citedSources(two, "As stated (page 3).")).toEqual([]);
     expect(citedSources([doc("section “Annual leave”", "Handbook.docx")], "(Handbook.docx, section “Annual leave”)")).toHaveLength(1);
+  });
+});
+
+describe("v0.12.4: sources under answers", () => {
+  const tool = (name: string, sources: { title: string; url?: string; location?: string }[]) =>
+    ({ id: name, name, label: name, args: {}, status: "done" as const, summary: null, sources });
+  const pbs = { title: "Census 2023 | Pakistan Bureau of Statistics", url: "https://www.pbs.gov.pk/census-2023/" };
+  const pbs2 = { title: "Final results | Pakistan Bureau of Statistics", url: "https://pbs.gov.pk/final-results" };
+  const insta = { title: "Census reel", url: "https://www.instagram.com/p/abc" };
+  const wiki = { title: "Pakistan – Wikipedia", url: "https://en.wikipedia.org/wiki/Demographics_of_Pakistan" };
+  const search = tool("web_search", [pbs, pbs2, insta]);
+
+  it("shows the search results the answer links to, sets the others aside, and keeps pages it read", () => {
+    const answer = "241.49 million ([PBS](https://pbs.gov.pk/census-2023)), see also [results](https://pbs.gov.pk/final-results).";
+    expect(answerSources([search, tool("wikipedia", [wiki])], answer)).toEqual({ shown: [pbs, pbs2, wiki], unused: [insta] });
+    // A search result that was also opened with read_page counts as used.
+    const read = tool("read_page", [{ title: "Reel", url: "https://instagram.com/p/abc/" }]);
+    expect(answerSources([search, read], answer).unused).toEqual([]);
+  });
+
+  it("keeps every source when the answer links none, and lists the same page once", () => {
+    const twice = tool("web_search", [{ title: "Again", url: "https://pbs.gov.pk/census-2023?utm_source=x" }]);
+    expect(answerSources([search, twice], "About 241 million people.")).toEqual({ shown: [pbs, pbs2, insta], unused: [] });
+  });
+
+  it("still lists only the document pages the answer cites", () => {
+    const kb = tool("search_knowledge", [{ title: "AI in SE.pdf", location: "page 6" }, { title: "AI in SE.pdf", location: "page 9" }]);
+    expect(answerSources([kb], "22% (AI in SE.pdf, page 6)").shown).toEqual([{ title: "AI in SE.pdf", location: "page 6" }]);
+  });
+
+  it("labels chips by site, adding the page title when a site repeats", () => {
+    const gh = { title: "me/app · src/app.ts L10–24", url: "https://github.com/me/app/blob/abc1234/src/app.ts#L10-L24" };
+    expect(chipLabels([pbs, pbs2, insta, gh])).toEqual(["pbs.gov.pk · Census 2023", "pbs.gov.pk · Final results", "instagram.com", gh.title]);
+    const same = { title: pbs.title, url: "https://pbs.gov.pk/tables/district-wise-results.html" };
+    expect(chipLabels([pbs, same])).toEqual(["pbs.gov.pk · census 2023", "pbs.gov.pk · district wise results"]);
+  });
+});
+
+describe("v0.12.4: GitHub line links", () => {
+  const base = "https://github.com/me/app/blob/8781ec4/src/worker/llm/verify.ts";
+  const read = (url: string) => ({ id: "f", name: "github_file", label: "File", args: {}, status: "done" as const, summary: null, sources: [{ title: "f", url }] });
+  const tools = [read(`${base}#L1-L120`)];
+
+  it("repairs #L9-13 so GitHub highlights the lines", () => {
+    expect(githubLineLinks(`([verify.ts L9–13](${base}#L9-13))`, [])).toBe(`([verify.ts L9–13](${base}#L9-L13))`);
+    expect(githubLineLinks(`[a](${base}#L9-L13)`, [])).toBe(`[a](${base}#L9-L13)`);
+  });
+
+  it("turns a plain line reference next to a file it read into a link", () => {
+    expect(githubLineLinks("See src/worker/llm/verify.ts L9–13.", tools)).toBe(`See [src/worker/llm/verify.ts L9–13](${base}#L9-L13).`);
+    expect(githubLineLinks("In `verify.ts` (lines 20-31) it packs", tools)).toBe(`In [\`verify.ts\` (lines 20-31)](${base}#L20-L31) it packs`);
+    expect(githubLineLinks("verify.ts:42 does it", tools)).toBe(`[verify.ts:42](${base}#L42) does it`);
+    // Only one file was read, so a bare range or "(L7)" can only mean that file.
+    expect(githubLineLinks("The loop (L7) and L50–58 matter", tools)).toBe(`The loop ([L7](${base}#L7)) and [L50–58](${base}#L50-L58) matter`);
+  });
+
+  it("leaves code, existing links and files it didn't read alone", () => {
+    const text = `\`\`\`ts\nverify.ts L9–13\n\`\`\`\nAlso \`src/a.ts L3\`, other.ts L4–5, \`b.ts\` (L6) and [verify.ts L1](${base}#L1).`;
+    expect(githubLineLinks(text, tools)).toBe(text);
+    // With two files read, a bare range is ambiguous and stays text.
+    expect(githubLineLinks("L50–58", [...tools, read("https://github.com/me/app/blob/8781ec4/src/b.ts")])).toBe("L50–58");
   });
 });
 

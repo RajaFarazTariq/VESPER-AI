@@ -4,9 +4,32 @@ Read this first when resuming work. Last updated: **2026-11-20**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-20)
 
-**State:** Live is **v0.12.2** (logo follows the light/dark theme; PR #9, merge `8781ec4`, deployed 2026-11-20).
-**v0.12.3 sign-in orbit animation built 2026-11-20, not pushed yet** (branch `release/v0.12.3-sign-in-orbit`, see
-below). GitHub's `main` was at `3cbcfd1` that day (the README PR #10 looks merged; owner to confirm).
+**State:** Live is **v0.12.3** (sign-in orbit animation; PR #11, merge `f94ffa3`, deployed 2026-11-20; owner looked:
+"it's good"). The README rewrite PR #10 is merged (`3cbcfd1`).
+**v0.12.4 cleaner sources + GitHub line links: built 2026-11-20; the owner asked for the commands the same day**
+(branch `release/v0.12.4-cleaner-sources`, its own PR). The next phase (v0.13.0) comes later.
+**v0.12.4 (owner approved the 6 steps, 2026-11-20):**
+1. **Chips = pages the answer used** (`answerSources` in `web/lib/format.ts`, browser only, also for old answers):
+   search results (`web_search`, `github_search`) show only when the answer links to them; sources from tools that
+   fetch one thing (read_page, Wikipedia, weather, currency, GitHub file/issue/PR, the research plan's cited list)
+   always show; a search result that was also read counts as used. The rest fold behind **"+N other results
+   checked"** (click → shown fainter, "Show fewer"). An answer that links none of its sources keeps them all.
+   The same page found twice (www., trailing slash, `utm_*` differences) is listed once; GitHub line ranges stay
+   separate. Document pages still follow `citedSources`.
+2. **Same site twice** (`chipLabels`): "pbs.gov.pk · Census 2023" (page title without its site-name ending; the
+   address's last part when the titles are the same). Single sites still show just the site.
+3. **GitHub line links** (`githubLineLinks`, applied when an answer is shown): `#L9-13` → `#L9-L13`; a plain
+   reference next to a file the answer read ("path L9–13", "`file.ts` (lines 9-13)", "path:42"; a bare "L9–13" or
+   "(L7)" only when one file was read and not right after another file's name) becomes a link at the exact commit.
+   Code blocks, inline code and existing links are left alone. Prompt line in `llm/context.ts` now says to keep the
+   URL and change only the ending to `#L<first>-L<last>`, and to write every line reference as a link.
+4. The Check button / fact check and the stored data are unchanged (display only, plus the prompt line).
+5. Tests: 250 in all (8 new in `tests/units.test.ts`; one caught "other.ts L4–5" being linked to the wrong file; fixed). Checked
+   in headless Edge with a saved sample chat in the local D1 (removed afterwards): census answer → 3 chips
+   (pbs.gov.pk ×2 with titles, Wikipedia) + "+3 other results checked" (Instagram, Dawn, PBS home); GitHub answer →
+   `#L9-L13` repaired, "src/worker/llm/verify.ts L20–31" and "L125–140" linked; phone width fine; no errors.
+- **Live check for v0.12.4** (after it's pushed): ask the census question → only the linked pages as chips, the rest
+  behind "+N other results checked"; ask about a file in VESPER-AI → line links open GitHub with the lines highlighted.
 **README rewritten** (docs only, no version change; branch `docs/readme-rewrite` + PR #10): what VESPER is, how it
 differs, features, how it works (diagram), install/setup (incl. the GitHub App), using it, development, security,
 troubleshooting; `.env.example` lists the 4 GitHub App settings. **GitHub App set up by the owner (2026-11-20):**
@@ -15,7 +38,7 @@ be generated for installation, VESPER doesn't use it), 4 Cloudflare settings add
 variable, the others as secrets), the owner connected and chose only **VESPER-AI**. First live test ✔️: "What does
 src/worker/llm/verify.ts do?" answered correctly from commit `8781ec4` with line links (two links used `#L9-13`
 instead of `#L9-L13`, one line reference was plain text → small fix planned with the source-chip cleanup).
-Earlier: v0.12.1 via PR #8, v0.12.0 via PR #7 (migration 0011), v0.11.0 via PR #6 (migration 0010), v0.10.1 via PR #5,
+Earlier: v0.12.2 via PR #9, v0.12.1 via PR #8, v0.12.0 via PR #7 (migration 0011), v0.11.0 via PR #6 (migration 0010), v0.10.1 via PR #5,
 v0.10.0 via PR #4 (migration 0009), v0.9.10 via PR #3, v0.9.9 via PR #2, v0.9.8 via PR #1.
 **How the owner pushes (his preference, 2026-11-20):** git asks for the username and token; nothing is typed into the
 command: `git -c credential.helper= push -u origin <branch>` → Username `RajaFarazTariq`, Password = the token. If it
@@ -55,10 +78,11 @@ the logo's position is unchanged, no console or CSP errors; reduced motion keeps
 **`main` can't be pushed to directly**: every change, docs included, goes on a branch + PR. The owner replaced the
 GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-20.
 **Order (owner, 2026-11-20):** v0.10.1 ✅ → v0.11.0 ✅ → v0.12.0 GitHub read-only ✅ → v0.12.1 new logo ✅ → v0.12.2
-logo in light mode ✅ → README rewrite (docs PR) → v0.12.3 sign-in orbit animation (owner's request). Proposed next
-(owner to choose): v0.12.4 cleaner source chips + GitHub line-link fixes, then v0.13.0 GitHub write actions with
-approval cards, then data analysis / Gmail + Calendar.
-**Pending owner checks:** v0.12.3 quick look at the sign-in page (wide window); GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
+logo in light mode ✅ → README rewrite (PR #10) ✅ → v0.12.3 sign-in orbit animation (owner's request) ✅ → v0.12.4
+cleaner source chips + GitHub line links (own PR). Proposed next (owner to choose, later): v0.13.0 GitHub write
+actions with approval cards (open decision: separate opt-in "actions" app recommended over adding write permissions to
+"VESPER AI Reader"), then data analysis / Gmail + Calendar.
+**Pending owner checks:** v0.12.4 live check after the merge; GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
 
 **v0.10.0 live test (owner, 2026-11-20):** ✔️ phone number refused with the reason; memories "planning a trip to
@@ -510,6 +534,10 @@ free-tier terms for serving other users (not done yet; fine for a few testers).
   fix obvious issues, report what's left. No exhaustive or repeated suites.
 - **Document every stage**: update this file, docs/CONFIGURATION.md (every setting/secret/service + the stage log)
   and README/ARCHITECTURE as needed, and bump the version (`src/worker/version.ts`, package.json, package-lock.json).
+- **Git commands only for larger changes (his rule, 2026-11-20):** don't give git commands for minor tasks or quick
+  fixes. Those stay in the working folder (version bumped, docs updated, marked "built, not pushed" in this file) and
+  go out together with the next larger change, unless he asks for the commands. Then the release branch is named
+  after the larger change and the commit/PR description lists everything it carries.
 - He pushes himself. **Since 2026-11-19 (his rule): every release goes on its own branch** so any release can be
   reverted. Never give "commit straight to main" commands again. The commands, in the project folder (not
   `C:\Projects`):
@@ -657,8 +685,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **GitHub for each user, read-only (v0.12.0)**: Settings → Connections (GitHub App, encrypted tokens, one renewal at a time), 5 read-only tools, untrusted-content + leak guard, org/SSO messages, code-search fallback, 15-min cache with ETags, 10 requests per message, PR review in parts, Check via references; migration 0011 | ✅ live (v0.12.0, PR #7, merge `de648de`, deployed 2026-11-20; 243 tests); needs the GitHub App + 4 secrets before use |
 | **New logo (v0.12.1)**: "Mark V5 · faceted blades" as `public/logo.svg` (full) + `public/favicon.svg` (small sizes); sign-in wordmark (VESPER / AI AGENT); spaced brand name | ✅ live (v0.12.1, PR #8, merge `762917d`, deployed 2026-11-20) |
 | **Logo follows the theme (v0.12.2)**: inline `VesperMark` with `--vm-*` colours (bright tile in light mode); tab icon follows the browser's light/dark setting | ✅ live (v0.12.2, PR #9, merge `8781ec4`, deployed 2026-11-20) |
-| **README rewrite** (docs only): what/how-different/features/how it works/install/use/dev/security/troubleshooting | ✅ pushed as PR #10 (2026-11-20); `main` moved to `3cbcfd1`, so it looks merged (owner to confirm) |
-| **Sign-in orbit animation (v0.12.3)**: the small circles travel slowly along the orbit lines around the logo (32/50/76 s per turn), one violet circle added; logo still; still for reduced motion; CSS only | 🔨 built 2026-11-20, not pushed yet |
+| **README rewrite** (docs only): what/how-different/features/how it works/install/use/dev/security/troubleshooting | ✅ merged (PR #10, merge `3cbcfd1`, 2026-11-20) |
+| **Sign-in orbit animation (v0.12.3)**: the small circles travel slowly along the orbit lines around the logo (32/50/76 s per turn), one violet circle added; logo still; still for reduced motion; CSS only | ✅ live (v0.12.3, PR #11, merge `f94ffa3`, deployed 2026-11-20); owner checked ✔️ |
+| **Cleaner sources + GitHub line links (v0.12.4)**: chips = pages the answer used (other search results behind "+N other results checked"); site + page title when a site repeats; `#L9-13` → `#L9-L13`, plain line references linked; prompt line for line links | 🔨 built 2026-11-20 (250 tests, typecheck, build, headless check); branch `release/v0.12.4-cleaner-sources` + PR |
 | **Next: to propose** (v0.13.0 GitHub write actions with approval cards is planned) | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
@@ -699,7 +728,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 243 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 250 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

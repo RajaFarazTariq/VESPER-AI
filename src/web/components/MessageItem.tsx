@@ -26,10 +26,18 @@ import {
 } from "../../shared/types";
 import { api, ApiError } from "../api/client";
 import type { UiMessage } from "../hooks/useChat";
-import { citedSources, FEEDBACK_LABELS, plainDocumentLinks, providerLabel, tidyCitations } from "../lib/format";
+import {
+  answerSources,
+  FEEDBACK_LABELS,
+  githubLineLinks,
+  hostOf,
+  plainDocumentLinks,
+  providerLabel,
+  tidyCitations,
+} from "../lib/format";
 import { canSpeak, speak, stopSpeaking, useSpeakingId } from "../lib/voice";
 import { CopyButton, Markdown } from "./Markdown";
-import { collectSources, SourceList, ToolActivity } from "./ToolActivity";
+import { SourceList, ToolActivity } from "./ToolActivity";
 import { VesperMark } from "./VesperMark";
 
 interface Props {
@@ -63,10 +71,9 @@ function AssistantMessage({ message, isLast, canRetry, onRetry, isAdmin = false,
   const working = message.streaming && !message.content;
   const runningTool = message.tools?.some((t) => t.status === "running");
   const failed = message.status === "error" || message.status === "partial";
-  const allSources = collectSources(message.tools);
-  const documentTitles = allSources.filter((s) => !s.url).map((s) => s.title);
-  const content = plainDocumentLinks(tidyCitations(message.content), documentTitles);
-  const sources = message.streaming ? [] : citedSources(allSources, content);
+  const documentTitles = (message.tools ?? []).flatMap((t) => t.sources ?? []).filter((s) => !s.url).map((s) => s.title);
+  const content = githubLineLinks(plainDocumentLinks(tidyCitations(message.content), documentTitles), message.tools);
+  const sources = message.streaming ? { shown: [], unused: [] } : answerSources(message.tools, content);
 
   return (
     <div className="rise-in group flex gap-3 sm:gap-4">
@@ -97,7 +104,7 @@ function AssistantMessage({ message, isLast, canRetry, onRetry, isAdmin = false,
           </div>
         ) : null}
 
-        <SourceList sources={sources} />
+        <SourceList sources={sources.shown} more={sources.unused} />
 
         {check.value ? <VerificationCard verification={check.value} defaultOpen={check.justChecked} isAdmin={isAdmin} /> : null}
 
@@ -240,14 +247,6 @@ const VERDICT: Record<ClaimVerdict, { label: string; Icon: typeof CircleCheck; t
   supported: { label: "Supported", Icon: CircleCheck, tone: "text-emerald-600 dark:text-emerald-400" },
   contradicted: { label: "Contradicted", Icon: CircleX, tone: "text-[var(--danger)]" },
   not_found: { label: "Not in the sources", Icon: CircleQuestionMark, tone: "text-amber-600 dark:text-amber-400" },
-};
-
-const hostOf = (url: string) => {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
 };
 
 /** "4 of 5 claims supported · 1 not in the sources" */
