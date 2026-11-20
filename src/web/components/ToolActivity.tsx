@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import type { SourceDto, ToolEventDto } from "../../shared/types";
+import { chipLabels } from "../lib/format";
 
 export const TOOL_ICONS: Record<string, typeof Wrench> = {
   calculator: Calculator,
@@ -48,63 +49,55 @@ export const TOOL_ICONS: Record<string, typeof Wrench> = {
   github_pr_changes: GitPullRequest,
 };
 
-/** Every source used for a reply, once each, in the order the tools found them. */
-export function collectSources(tools: ToolEventDto[] | null | undefined): SourceDto[] {
-  const seen = new Set<string>();
-  const out: SourceDto[] = [];
-  for (const tool of tools ?? []) {
-    for (const source of tool.sources ?? []) {
-      // Web pages need an http(s) link; knowledge-base documents are identified by title + location.
-      if (source.url !== undefined && !/^https?:\/\//i.test(source.url)) continue;
-      const key = source.url ? `${source.url}|${source.location ?? ""}` : `doc:${source.title}|${source.location ?? ""}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(source);
-    }
-  }
-  return out;
-}
-
-const hostOf = (url: string) => {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-};
-
-/** Numbered source links under an answer (shown to everyone). */
-export function SourceList({ sources }: { sources: SourceDto[] }) {
-  if (sources.length === 0) return null;
+/**
+ * Numbered source links under an answer (shown to everyone). `more` are search results the answer didn't link to
+ * (v0.12.4): folded behind "+N other results checked", shown fainter when opened.
+ */
+export function SourceList({ sources, more = [] }: { sources: SourceDto[]; more?: SourceDto[] }) {
+  const [showMore, setShowMore] = useState(false);
+  if (sources.length === 0 && more.length === 0) return null;
+  const visible = showMore ? [...sources, ...more] : sources;
+  const labels = chipLabels(visible);
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-xs" aria-label="Sources">
       <span className="text-[var(--text-soft)]">Sources:</span>
-      {sources.map((s, i) =>
-        s.url ? (
+      {visible.map((s, i) => {
+        const faint = i >= sources.length ? "opacity-70" : "";
+        return s.url ? (
           <a
             key={`${s.url}|${s.location ?? ""}`}
             href={s.url}
             target="_blank"
             rel="noopener noreferrer nofollow"
             title={`${s.title}\n${s.url}`}
-            className="inline-flex max-w-[16rem] items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+            className={`inline-flex max-w-[20rem] items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)] ${faint}`}
           >
             <span className="shrink-0 font-medium">{i + 1}</span>
-            {/* GitHub sources are all on github.com: show which repo, file and lines instead. */}
-            <span className="truncate">{hostOf(s.url) === "github.com" ? s.title : hostOf(s.url)}</span>
+            <span className="truncate">{labels[i]}</span>
           </a>
         ) : (
           <span
             key={`doc:${s.title}|${s.location ?? ""}`}
             title={s.location ? `${s.title}, ${s.location}` : s.title}
-            className="inline-flex max-w-[18rem] items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--text-soft)]"
+            className={`inline-flex max-w-[18rem] items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--text-soft)] ${faint}`}
           >
             <span className="shrink-0 font-medium">{i + 1}</span>
             <FileText size={11} className="shrink-0" />
-            <span className="truncate">{s.location ? `${s.title} · ${s.location}` : s.title}</span>
+            <span className="truncate">{labels[i]}</span>
           </span>
-        ),
-      )}
+        );
+      })}
+      {more.length ? (
+        <button
+          type="button"
+          onClick={() => setShowMore((v) => !v)}
+          aria-expanded={showMore}
+          title={showMore ? undefined : "Search results that were checked but not used in this answer"}
+          className="inline-flex items-center rounded-full px-2 py-0.5 text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+        >
+          {showMore ? "Show fewer" : `+${more.length} other result${more.length === 1 ? "" : "s"} checked`}
+        </button>
+      ) : null}
     </div>
   );
 }

@@ -9,7 +9,7 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.12.3**.
+Current version: **0.12.4**.
 
 - [What VESPER does](#what-vesper-does)
 - [How VESPER is different](#how-vesper-is-different)
@@ -79,7 +79,8 @@ choices:
   and currency rates (Frankfurter).
 - Results labelled *official / university / other website* with dates; trusted and blocked website lists in the
   admin panel; questions that clearly need a look-up are searched before the model answers.
-- Numbered source chips under every answer that used sources.
+- Numbered source chips under every answer that used sources: the pages the answer actually used, with the other
+  search results one click away ("+N other results checked"). Links to code open GitHub on the exact lines.
 
 **Answer quality**
 - **Check this answer**: one extra model request lists the answer's key claims (up to 8) and marks each one
@@ -154,7 +155,7 @@ What happens when you send a message:
 | API | Cloudflare Workers, Hono, zod validation, Server-Sent Events for streaming |
 | Database | Cloudflare D1 (SQLite) with add-only migrations |
 | AI | Groq, Google Gemini, OpenRouter (`:free` only), Mistral, Cloudflare Workers AI; Ollama optional |
-| Tests | Vitest running inside the Workers runtime with a real local D1 (243 tests) |
+| Tests | Vitest running inside the Workers runtime with a real local D1 (250 tests) |
 | Delivery | GitHub Actions: checks on every pull request, deploy on merge to `main` |
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

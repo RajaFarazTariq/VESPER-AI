@@ -132,8 +132,12 @@ from Ollama directly, then `/api/chat/local/complete` stores the reply. The serv
   second-hand ones; for things that change, the newest reliable source wins ("as of <date>"); for what a document
   says and the admin's own rules, the documents win; disagreements are shown, never silently resolved.
 - **Chips under answers:** the browser lists a document page only when the answer cites it (`citedSources` in
-  `web/lib/format.ts`; one document → a bare "page 6" counts, several → the document must be named); web links are
-  always listed. `tidyCitations` shows gpt-oss's 【 】 citations as ( ).
+  `web/lib/format.ts`; one document → a bare "page 6" counts, several → the document must be named). Web chips
+  (v0.12.4, `answerSources`): search results (`web_search`, `github_search`) only when the answer links to them,
+  everything from single look-ups (read_page, Wikipedia, weather, currency, GitHub file/issue/PR, research's cited
+  list) always; unlinked results fold behind "+N other results checked"; an answer that links nothing keeps them
+  all. A site listed twice shows page titles (`chipLabels`). `githubLineLinks` repairs `#L9-13` → `#L9-L13` and links
+  plain line references next to a file the answer read. `tidyCitations` shows gpt-oss's 【 】 citations as ( ).
 - **Why not vectors (Vectorize)?** It needs an index created outside the app (a setup step) and caps the free tier at
   5M stored dimensions (~3,000 pages). Keyword recall + re-ranking + the model choosing search words works with zero
   setup and holds 5× more. Semantic recall can be added later if keyword recall proves too narrow.
