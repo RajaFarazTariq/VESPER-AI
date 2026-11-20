@@ -42,7 +42,8 @@ const AUTH_ERRORS: Record<string, string> = {
 
 
 // ---------------------------------------------------------------------------
-// Brand panel (wide screens only): the logo inside fine orbit lines, the wordmark, one headline, one line of text.
+// Brand panel (wide screens only): the logo inside fine orbit lines with small circles slowly travelling along
+// them, the wordmark, one headline, one line of text. The logo itself stays still.
 // ---------------------------------------------------------------------------
 
 function BrandPanel({ appName }: { appName: string }) {
@@ -54,9 +55,17 @@ function BrandPanel({ appName }: { appName: string }) {
             <circle className="auth-orbit auth-orbit-1" cx="170" cy="170" r="80" />
             <circle className="auth-orbit auth-orbit-2" cx="170" cy="170" r="124" />
             <circle className="auth-orbit auth-orbit-3" cx="170" cy="170" r="168" />
-            <circle className="auth-planet" cx="263.5" cy="90.3" r="3.5" />
-            <circle className="auth-planet auth-planet-faint" cx="25.7" cy="254" r="3" />
-            <circle className="auth-planet auth-planet-faint" cx="94.8" cy="142.6" r="2.5" />
+            {/* Small circles travelling slowly along the orbit lines; each group turns around the centre. */}
+            <g className="auth-orbiter auth-orbiter-1">
+              <circle className="auth-planet auth-planet-faint" cx="94.8" cy="142.6" r="2.5" />
+            </g>
+            <g className="auth-orbiter auth-orbiter-2">
+              <circle className="auth-planet" cx="263.5" cy="90.3" r="3.5" />
+              <circle className="auth-planet auth-planet-violet" cx="232" cy="277.4" r="2.5" />
+            </g>
+            <g className="auth-orbiter auth-orbiter-3">
+              <circle className="auth-planet auth-planet-faint" cx="25.7" cy="254" r="3" />
+            </g>
           </svg>
           <div className="auth-halo absolute h-[220px] w-[220px] rounded-full" />
           <VesperMark full className="relative h-[120px] w-[120px] rounded-[28px] shadow-[0_18px_40px_-12px_rgb(0_0_0/0.7)]" />
