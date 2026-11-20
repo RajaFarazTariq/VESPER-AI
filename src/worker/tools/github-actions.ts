@@ -220,6 +220,14 @@ interface WritableRepo {
   defaultBranch: string;
 }
 
+/** The user's own GitHub account may write to this repository (owner, collaborator with write, maintainer or admin). */
+const canWrite = (data: Record<string, any>) => data.permissions?.push === true || data.permissions?.maintain === true || data.permissions?.admin === true;
+
+/**
+ * The repository, if VESPER may prepare a change there. Every kind of change (issues and comments too) needs the
+ * user's own write access (v0.13.1): on someone else's public repo GitHub would let anyone open issues, but VESPER
+ * doesn't, so nobody can use VESPER to post in a repository they don't look after.
+ */
 async function writableRepo(gh: GithubWriter, input: string, need: "issues" | "push"): Promise<WritableRepo> {
   const repo = parseRepo(input);
   let data: Record<string, any>;
@@ -231,11 +239,12 @@ async function writableRepo(gh: GithubWriter, input: string, need: "issues" | "p
   }
   const fullName = String(data.full_name ?? repo);
   if (data.archived === true) throw new ToolInputError(`${fullName} is archived (read-only on GitHub), so nothing can be changed there.`);
-  if (need === "issues" && data.has_issues === false) throw new ToolInputError(`Issues are switched off in ${fullName}.`);
-  const canPush = data.permissions?.push === true || data.permissions?.maintain === true || data.permissions?.admin === true;
-  if (need === "push" && !canPush) {
-    throw new ToolInputError(`The user's GitHub account can't write to ${fullName}, so VESPER can't make a branch there (pull requests from forks aren't supported).`);
+  if (!canWrite(data)) {
+    throw new ToolInputError(
+      `The user's GitHub account can't write to ${fullName}. VESPER only prepares changes (issues, comments and pull requests) in repositories the user can write to.`,
+    );
   }
+  if (need === "issues" && data.has_issues === false) throw new ToolInputError(`Issues are switched off in ${fullName}.`);
   return {
     repo: fullName,
     publicRepo: !(data.private === true || data.visibility === "private" || data.visibility === "internal"),
@@ -549,6 +558,11 @@ function toBase64(text: string): string {
 /** Sends exactly what was approved; returns the link to the new issue, comment or pull request. */
 export async function executeGithubAction(gh: GithubWriter, kind: GithubActionKind, repo: string, raw: unknown): Promise<string> {
   try {
+    // Write access is checked again: it may have been taken away since the change was prepared.
+    const current = (await gh.request<Record<string, any>>("GET", `/repos/${repo}`)) ?? {};
+    if (!canWrite(current) || current.archived === true) {
+      throw new ActionFailed(`Your GitHub account can no longer write to ${repo}${current.archived === true ? " (it was archived)" : ""}. Nothing was sent.`);
+    }
     if (kind === "issue") {
       const p = issuePayload.parse(raw);
       const created = await gh.request<{ html_url?: unknown }>("POST", `/repos/${repo}/issues`, { title: p.title, body: p.body });

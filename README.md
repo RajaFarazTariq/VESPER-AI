@@ -9,7 +9,7 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.13.0**.
+Current version: **0.13.1**.
 
 - [What VESPER does](#what-vesper-does)
 - [How VESPER is different](#how-vesper-is-different)
@@ -112,6 +112,8 @@ choices:
 **GitHub changes, only with your approval**
 - A separate connection (**Settings → Connections → GitHub changes**) with its own repository choice, so reading never
   comes with write access.
+- Only in repositories **you can write to** (your own, or ones you're a collaborator on): VESPER won't post issues or
+  comments in other people's public repositories, and it checks your access again when you approve.
 - Ask VESPER to open an issue, comment on an issue or pull request, or make a pull request that changes files. It
   prepares the change and shows a card with the exact text, or every changed line; nothing is sent until you press
   **Approve**. **Reject** sends nothing; an undecided card expires after 24 hours.
@@ -170,7 +172,7 @@ What happens when you send a message:
 | API | Cloudflare Workers, Hono, zod validation, Server-Sent Events for streaming |
 | Database | Cloudflare D1 (SQLite) with add-only migrations |
 | AI | Groq, Google Gemini, OpenRouter (`:free` only), Mistral, Cloudflare Workers AI; Ollama optional |
-| Tests | Vitest running inside the Workers runtime with a real local D1 (255 tests) |
+| Tests | Vitest running inside the Workers runtime with a real local D1 (257 tests) |
 | Delivery | GitHub Actions: checks on every pull request, deploy on merge to `main` |
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -396,8 +398,9 @@ losing data; a test applies every migration over existing data to check nothing 
 - **Outside content**: web pages, documents and repository text are passed to the model as untrusted data. Answers
   are rendered without raw HTML and remote images are shown as links, so injected content can't leak data through
   image addresses. After private repository content, opening other web pages is blocked for that answer.
-- **GitHub changes**: a separate app with its own repository choice. The assistant can only prepare a change; it is
-  sent from the approval card, exactly as shown, once, by its owner only. Prepared text is kept only until you decide
+- **GitHub changes**: a separate app with its own repository choice, and only in repositories the user can write to
+  (checked when preparing and again when approving). The assistant can only prepare a change; it is sent from the
+  approval card, exactly as shown, once, by its owner only. Prepared text is kept only until you decide
   (at most 24 hours); afterwards only a log line stays (90 days).
 - **What leaves the server**: your messages (and any file text or code VESPER reads for an answer) go to the AI
   provider that writes the answer. A 👍/👎 sends a copy of that question and answer to the administrator's feedback
