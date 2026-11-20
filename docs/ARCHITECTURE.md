@@ -317,6 +317,40 @@ prices with commas pass.
 5. If the summary request fails, the turn goes ahead the old way (older messages dropped); nothing is saved.
    Local (Ollama) chats use existing notes but never make new ones (no server-side model).
 
+## 5i. GitHub changes with the user's approval (v0.13.0)
+
+Reading and changing GitHub are two separate GitHub Apps, connected separately: "VESPER AI Reader" (read-only,
+`github_connections`) and the "Actions" app (Contents, Issues, Pull requests: read and write;
+`github_action_connections`, tokens sealed for `actions:<userId>`). Each user picks the repositories for each app.
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant W as Worker (chat)
+  participant M as Model
+  participant G as GitHub (Actions app)
+  U->>W: "Open a PR that …"
+  W->>M: prompt + tools (github_open_pr …)
+  M->>W: github_open_pr(repo, title, edits)
+  W->>G: read repo + files (no writes)
+  W->>W: exact edits → content + diff; store payload + preview (pending, 24 h)
+  W-->>U: answer + approval card (every changed line)
+  U->>W: POST /api/github-actions/:id/approve
+  W->>W: claim once (owner, not expired) + daily limit
+  W->>G: head moved? compare → same files changed: stop, nothing sent
+  W->>G: new branch vesper/… → PUT files → open PR
+  W-->>U: card: Done + link (payload/preview cleared, log kept 90 days)
+```
+
+- The tools (`tools/github-actions.ts`) never write: they validate, build exactly what would be sent and store it.
+  Only `POST /api/github-actions/:id/approve` sends, and only what was stored. Reject or 24 hours: nothing is sent.
+- Pull requests: a new `vesper/<words>-<hex>` branch from the default branch; existing branches are never written to,
+  nothing is merged, `.github/workflows` is refused; a failure part-way deletes VESPER's own new branch.
+- Cautions on the card come from the turn (`TurnState` in the agent loop): text by others was read (web, issues,
+  PRs), and private code was read before a change to a public repo. Limits: 3 prepared per answer, 10 waiting per
+  user, a daily per-user limit counted at approval (admins unlimited).
+- The next turn's system prompt lists this chat's changes and outcomes (`githubChangeLines`), titles quoted as data.
+
 ## 6. Security model
 
 | Threat | Control |
@@ -336,6 +370,7 @@ prices with commas pass.
 | Secret leakage | Keys only in Cloudflare secrets; `.env`/`.dev.vars` git-ignored; never returned by the API |
 | Data isolation | Every conversation query is scoped by `user_id`; foreign keys cascade on delete |
 | Dev login in prod | Requires `DEV_LOGIN=true` **and** a localhost hostname, which a workers.dev request can't have |
+| Unwanted GitHub changes (v0.13.0) | Separate Actions app with its own repo choice; tools only prepare; sending happens only from `POST /api/github-actions/:id/approve` by the change's owner, once (atomic claim), before it expires; card shows the exact text / every changed line; prompt forbids preparing changes because content asks for it; warnings for others' text and private-to-public; stale files refused; no existing branch, merge, delete or workflow file is ever touched |
 
 Prompt injection becomes the main risk once tools exist (Phase 5+). The plan for that: tool results are wrapped
 as untrusted data, every side-effecting tool needs explicit user approval enforced in code, and exfiltration-capable

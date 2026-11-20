@@ -369,8 +369,12 @@ describe("tool settings", () => {
     const web = { userAgent: "test", tavilyApiKey: "k", webSearchDailyLimit: 30 };
     expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web }).map((t) => t.name)).toEqual(noGithub.filter((n) => n !== "search_knowledge"));
     expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true }).map((t) => t.name)).toEqual(noGithub);
-    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, github: true }).map((t) => t.name)).toEqual(all);
-    expect(all.filter((n) => n.startsWith("github_"))).toEqual(["github_repo", "github_file", "github_search", "github_issues", "github_pr_changes"]);
+    // Reading (v0.12.0) and changes with approval (v0.13.0) are separate connections, each with its own tools.
+    const changes = ["github_create_issue", "github_comment", "github_open_pr"];
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, github: true }).map((t) => t.name)).toEqual(all.filter((n) => !changes.includes(n)));
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, githubActions: true }).map((t) => t.name)).toEqual([...noGithub, ...changes]);
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, github: true, githubActions: true }).map((t) => t.name)).toEqual(all);
+    expect(all.filter((n) => n.startsWith("github_"))).toEqual(["github_repo", "github_file", "github_search", "github_issues", "github_pr_changes", ...changes]);
     expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web: { ...web, webSearchDailyLimit: 0 } }).map((t) => t.name)).not.toContain("web_search");
     expect(enabledTools({ ...DEFAULT_SETTINGS, toolsEnabled: false })).toEqual([]);
     expect(enabledTools({ ...DEFAULT_SETTINGS, disabledTools: ["calculator"] }).map((t) => t.name)).not.toContain("calculator");

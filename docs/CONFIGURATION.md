@@ -61,6 +61,18 @@ never touches them). Never paste them into chats, files or commits.
 | `GITHUB_APP_SLUG` | Secret | The app's short name, used for the "Choose repositories on GitHub" link (`github.com/apps/<slug>/installations/new`) | The app's public link `github.com/apps/<slug>` | Only changes if the app is renamed |
 | `GITHUB_TOKEN_KEY` | Secret | Encrypts every user's GitHub tokens in the database (AES-256-GCM) | Made on your PC: base64 of 32 random bytes (PowerShell command in section 5) | **Don't change it casually**: tokens encrypted with the old key can't be read, so every user would have to reconnect |
 
+### To add for v0.13.0 (GitHub changes with approval)
+
+All three are needed (plus the existing `GITHUB_TOKEN_KEY`, which is shared); until they're set, GitHub changes
+aren't offered anywhere and reading works as before. They belong to the **second, separate** GitHub App ("Actions",
+section 5), never to the reading app.
+
+| Name | Type | What it does | Where it comes from | How to replace |
+|---|---|---|---|---|
+| `GITHUB_ACTIONS_APP_CLIENT_ID` | Secret | Identifies the **VESPER Actions GitHub App** when a user connects "GitHub changes" | GitHub → Settings → Developer settings → GitHub Apps → the Actions app → **Client ID** | Shown on the app page (it doesn't change) |
+| `GITHUB_ACTIONS_APP_CLIENT_SECRET` | Secret | Server proof when connecting and renewing users' access for changes | Same app page → **Generate a new client secret** (shown once) | Generate a new secret, save it here, then delete the old one on GitHub |
+| `GITHUB_ACTIONS_APP_SLUG` | Text | The app's short name, for the "Choose repositories on GitHub" link | The app's public link `github.com/apps/<slug>` | Only changes if the app is renamed |
+
 ### Supported but not set (optional)
 
 | Name | What it would do | Default when not set |
@@ -122,6 +134,8 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 | Answer checks per user per day (v0.11.0) | Checks per user per UTC day (admins unlimited but counted; shown in Users). Failed checks don't count. 0 = paused for users | 10 |
 | Check research reports automatically (v0.11.0) | Every finished deep-research report is checked the same way right after it's written (1 more model request per run; doesn't use the user's daily checks) | On |
 | GitHub for users (v0.12.0) | Settings → Connections: regular users can connect their own GitHub (read-only) and choose which repositories VESPER may read. Admins can always use it once the four `GITHUB_APP_*`/`GITHUB_TOKEN_KEY` secrets are set (the panel says whether they are). At most 10 GitHub requests per message; nothing is ever changed on GitHub | Off |
+| GitHub changes for users (v0.13.0) | Settings → Connections → GitHub changes: regular users can connect the separate Actions app; VESPER then prepares issues, comments and pull requests that are sent only after the user approves each card. Admins can always use it once the three `GITHUB_ACTIONS_APP_*` settings (and `GITHUB_TOKEN_KEY`) are set. While the Actions app is installable only on the owner's account, nobody else can connect it anyway | Off |
+| GitHub changes per user per day (v0.13.0) | Approved changes each user may send per UTC day (failed ones are given back; admins unlimited). Besides this: at most 3 changes prepared per answer and 10 waiting per user; a waiting change expires after 24 hours | 10 |
 | **Feedback** tab (v0.9.7) | Read-only list of 👍/👎 on answers (Bad answers first) with Good/Bad counts per model; each entry shows the user, date, model, reason, note, question, answer and sources. Nothing to configure | n/a |
 | Per-user (each user's Settings → **Voice** tab, v0.9.6) | "Language you speak" (Detect automatically / English / Urdu) and "Read answers aloud automatically" (default off). Shown only when Voice is on | n/a |
 
@@ -165,7 +179,27 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
   `$b = New-Object byte[] 32; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`
 - Organisations: a member can only *request* access; an organisation owner approves it on GitHub. Organisations with
   single sign-on also need the user to authorize VESPER for that organisation (VESPER explains both when it happens).
-- Write access (create issues/comments/PRs) is **not** part of v0.12.0; see HANDOFF for how v0.13.0 would add it.
+- Write access is **never** added to this app: changes use the separate Actions app below (v0.13.0).
+
+### VESPER Actions GitHub App (changes with the user's approval), v0.13.0
+A second app, so the reading app never gets write access and people who only want reading are never asked for it.
+- GitHub → Settings → Developer settings → **GitHub Apps** → **New GitHub App**. Name e.g. "VESPER AI Actions".
+- Homepage: `https://ai-assistant.vesper-ai.workers.dev`. Callback URL:
+  `https://ai-assistant.vesper-ai.workers.dev/api/connections/github-actions/callback`. Setup URL:
+  `https://ai-assistant.vesper-ai.workers.dev/?github=actions-installed` with **Redirect on update** ticked.
+- **Expire user authorization tokens**: on. **Request user authorization during installation**: off. **Device flow**:
+  off. **Webhook**: off.
+- **Repository permissions**: **Contents: Read and write**, **Issues: Read and write**, **Pull requests: Read and
+  write**; Metadata: Read-only (automatic). Nothing else (no Workflows, no Administration, no account permissions).
+- **Where can this app be installed: Only on this account** while testing (nobody else can install it, whatever the
+  admin switch says). Later, to let users make changes: the app's settings → **Make public**, then switch on
+  **GitHub changes for users** in the admin panel.
+- GitHub requires a private key to exist before the app can be installed; generate one and keep it nowhere (VESPER
+  doesn't use it), like the reading app.
+- What VESPER does with it: only after the user presses **Approve** on a card in the chat: create an issue, post a
+  comment, or create a new `vesper/…` branch from the default branch, commit the shown file changes there and open a
+  pull request. It never writes to existing branches, never merges, never deletes (except its own half-made branch
+  when sending fails) and can't touch `.github/workflows`.
 
 ### AI providers
 - Groq (<https://console.groq.com>): free plan, no payment method.
@@ -220,6 +254,7 @@ Changed in the app: **shield icon → Admin panel**. Stored in the D1 table `app
 | 2026-11-19 | **Source fixes (v0.9.4)** | No new settings, secrets or migrations. After the live re-test (the Copilot answer called the PDF's 62% "GitHub's report"): the server reads an organisation's own page when its search snippet has no figure (2–3 short passages, no extra search); document passages that quote an organisation are labelled "your document (quoting X)" + rule R3b; document citations are never links; "Note:" lines only for real disagreements; Groq waits once when its rate-limit wait is 10 s or less, otherwise falls back at once. OpenRouter key added as a Cloudflare secret the same day |
 | 2026-11-19 | **Fewer tokens (v0.9.5)** | No new settings or secrets. **Migration `0005_search_cache.sql`** (add-only: new table `search_cache`, public search results only, expires after 1 h for "latest" questions / 6 h otherwise; the daily cron deletes expired rows). Questions that clearly need a look-up are searched first so the model answers in one request (fits Groq's 8,000 tokens/min); shorter snippets (450) and passages (800); the paired document search keeps only passages about the question; dates read from snippet text; at most 2 "other website" results when an official one has the figure; quoting passages carry a warning in their text; one extra search limited to the organisation's own sites when an "According to X" question gets none of X's pages |
 | 2026-11-19 | **Images + voice (v0.9.6)** | No new Cloudflare settings, secrets or bindings (uses the existing Gemini/OpenRouter/Groq keys and the `AI` binding). **Migration `0006_images_voice.sql`** (add-only: `messages.images` for ~20 KB previews; `user_usage_daily.images` and `.speech_seconds` counters). Four new admin-panel settings: Image attachments (on), Images per user per day (10), Voice (on), Minutes of speech per user per day (15). Two new per-user settings (Settings → Voice): speech language, read answers aloud automatically. `public/_headers`: `Permissions-Policy` now allows the microphone for VESPER's own pages (`microphone=(self)`). `/api/chat` accepts bodies up to 4 MB (other routes keep 256 KB); new endpoints `GET /api/media/features`, `POST /api/media/transcribe`. The offline mock (`npm run mock:llm`) answers speech-to-text too |
+| 2026-11-21 | **GitHub changes with approval (v0.13.0)** | **A second GitHub App, "VESPER Actions"** (section 5; Contents, Issues, Pull requests: read and write; installable only on the owner's account at first) and **three new Cloudflare settings** (`GITHUB_ACTIONS_APP_CLIENT_ID`, `GITHUB_ACTIONS_APP_CLIENT_SECRET` as secrets, `GITHUB_ACTIONS_APP_SLUG` as text; `GITHUB_TOKEN_KEY` is shared). **Migration `0012_github_actions.sql`** (add-only, revert-safe: new tables `github_action_connections` (encrypted tokens, bound to `actions:<user>`) and `github_actions` (prepared changes; their text is kept only until decided, at most 24 hours; the log line 90 days), plus `user_usage_daily.github_actions` DEFAULT 0). Two new admin settings: **GitHub changes for users** (off), **GitHub changes per user per day** (10). New endpoints: `/api/connections/github-actions/{start,callback,disconnect}`, `GET /api/github-actions/:id`, `POST /api/github-actions/:id/approve`, `POST /api/github-actions/:id/reject`. Three new assistant tools that only prepare (issue, comment, pull request). The daily clean-up expires undecided changes and removes log lines after 90 days |
 | 2026-11-20 | **Cleaner sources + GitHub line links (v0.12.4)** | No settings, secrets or migrations. Under answers, the chips show only the pages the answer used: search results it links to, plus pages it read and other single look-ups; the other search results fold behind "+N other results checked". The same site listed twice shows the page titles. GitHub line links are repaired to `#L9-L13` and plain line references next to a file VESPER read become links; one prompt line asks the model to write line links that way. Display only: stored answers and the Check button are unchanged |
 | 2026-11-20 | **Sign-in orbit animation (v0.12.3)** | No settings, secrets or migrations. On the sign-in page's brand panel, the small circles now travel slowly along the orbit lines around the logo (CSS only, allowed by the existing security policy); one small violet circle added. The logo stays still, and the circles stay still for people whose device asks for reduced motion |
 | 2026-11-20 | **Logo follows the theme (v0.12.2)** | No settings, secrets or migrations. In light mode the logo has a bright tile (dark-ink and violet blades); dark mode keeps the dark tile. The browser-tab icon follows the browser's own light/dark setting |

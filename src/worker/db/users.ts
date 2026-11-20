@@ -214,7 +214,9 @@ type AdminUserRow = UserRow & {
   today_speech: number;
   today_research: number;
   today_answer_checks: number;
+  today_github_actions: number;
   github_connected: number;
+  github_actions_connected: number;
   conversations: number;
 };
 
@@ -225,7 +227,9 @@ export function toAdminUserDto(
     today_speech?: number;
     today_research?: number;
     today_answer_checks?: number;
+    today_github_actions?: number;
     github_connected?: number;
+    github_actions_connected?: number;
     conversations?: number;
   },
   config: AppConfig,
@@ -240,6 +244,8 @@ export function toAdminUserDto(
     todayResearch: row.today_research ?? 0,
     todayAnswerChecks: row.today_answer_checks ?? 0,
     githubConnected: row.github_connected === 1,
+    githubActionsConnected: row.github_actions_connected === 1,
+    todayGithubActions: row.today_github_actions ?? 0,
     conversations: row.conversations ?? 0,
     github: row.github_login !== null,
     google: row.google_sub !== null,
@@ -252,8 +258,9 @@ const ADMIN_LIST_SQL = `SELECT ${USER_COLUMNS.split(", ")
   .map((c) => `u.${c}`)
   .join(", ")}, COALESCE(d.messages, 0) AS today_messages, COALESCE(d.images, 0) AS today_images,
     COALESCE(d.speech_seconds, 0) AS today_speech, COALESCE(d.research_runs, 0) AS today_research,
-    COALESCE(d.answer_checks, 0) AS today_answer_checks,
+    COALESCE(d.answer_checks, 0) AS today_answer_checks, COALESCE(d.github_actions, 0) AS today_github_actions,
     EXISTS (SELECT 1 FROM github_connections g WHERE g.user_id = u.id AND g.status = 'connected') AS github_connected,
+    EXISTS (SELECT 1 FROM github_action_connections a WHERE a.user_id = u.id AND a.status = 'connected') AS github_actions_connected,
     (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.id) AS conversations
   FROM users u LEFT JOIN user_usage_daily d ON d.user_id = u.id AND d.day = ?1`;
 
@@ -362,6 +369,30 @@ export async function consumeDailyAnswerCheck(db: D1Database, userId: string, li
 export async function refundDailyAnswerCheck(db: D1Database, userId: string, day: string): Promise<void> {
   await db
     .prepare("UPDATE user_usage_daily SET answer_checks = MAX(0, answer_checks - 1) WHERE user_id = ?1 AND day = ?2")
+    .bind(userId, day)
+    .run();
+}
+
+/**
+ * GitHub changes (v0.13.0): counts one approved change if it fits today's limit. Counted before it is sent, so two
+ * approvals at once can't both slip through; refundDailyGithubAction gives it back when sending fails.
+ */
+export async function consumeDailyGithubAction(db: D1Database, userId: string, limit: number): Promise<boolean> {
+  if (limit <= 0) return false;
+  const row = await db
+    .prepare(
+      `INSERT INTO user_usage_daily (user_id, day, messages, github_actions) VALUES (?1, ?2, 0, 1)
+       ON CONFLICT(user_id, day) DO UPDATE SET github_actions = github_actions + 1 WHERE github_actions < ?3
+       RETURNING github_actions`,
+    )
+    .bind(userId, utcDay(), limit)
+    .first<{ github_actions: number }>();
+  return row !== null;
+}
+
+export async function refundDailyGithubAction(db: D1Database, userId: string, day: string): Promise<void> {
+  await db
+    .prepare("UPDATE user_usage_daily SET github_actions = MAX(0, github_actions - 1) WHERE user_id = ?1 AND day = ?2")
     .bind(userId, day)
     .run();
 }

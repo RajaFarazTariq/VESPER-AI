@@ -106,8 +106,8 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
     ...(micAvailable || readAloudAvailable ? ([["voice", "Voice"]] as [Tab, string][]) : []),
     // Local models (Ollama on the user's own computer): admins always; users only when the admin allows it.
     ...(features?.localModels ? ([["local", "Local models"]] as [Tab, string][]) : []),
-    // The user's own GitHub (read-only, v0.12.0): when the admin set it up and allows it.
-    ...(features?.github?.available ? ([["connections", "Connections"]] as [Tab, string][]) : []),
+    // The user's own GitHub (read-only, v0.12.0) and GitHub changes with approval (v0.13.0): when set up and allowed.
+    ...(features?.github?.available || features?.githubActions?.available ? ([["connections", "Connections"]] as [Tab, string][]) : []),
     ["appearance", "Appearance"],
   ];
 
@@ -211,7 +211,7 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
                         hint={`${t.description}${needsMemory ? " (Turn on Memory to use this.)" : ""}`}
                       />
                       <span className="ml-12 mt-1 inline-block rounded-full bg-[var(--bg-soft)] px-2 py-0.5 text-[11px] text-[var(--text-soft)]">
-                        {t.risk === "read" ? "Read-only" : "Changes data in your account"}
+                        {t.risk === "read" ? "Read-only" : t.risk === "approval" ? "Sent only after you approve it" : "Changes data in your account"}
                       </span>
                     </div>
                   );

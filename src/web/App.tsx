@@ -300,6 +300,9 @@ function ChatApp({
       const outcomes: Record<string, [string, "info" | "error"]> = {
         connected: ["GitHub connected. If you haven't yet, choose which repositories VESPER may read.", "info"],
         installed: ["Your repository choice was saved on GitHub.", "info"],
+        // GitHub changes with approval (v0.13.0): the separate Actions app.
+        "actions-connected": ["GitHub changes connected. If you haven't yet, choose which repositories VESPER may change.", "info"],
+        "actions-installed": ["Your repository choice for GitHub changes was saved.", "info"],
         denied: ["GitHub wasn't connected (you cancelled on GitHub).", "error"],
         failed: ["Couldn't connect GitHub. Please try again.", "error"],
         not_available: ["GitHub isn't available for your account.", "error"],

@@ -34,7 +34,7 @@ export function parseRepo(input: string): string {
   return repo;
 }
 
-const enc = (path: string) => path.split("/").map(encodeURIComponent).join("/");
+export const enc = (path: string) => path.split("/").map(encodeURIComponent).join("/");
 const cleanPath = (path: string) => path.trim().replace(/^\/+|\/+$/g, "");
 export const fileUrl = (repo: string, sha: string, path: string, from?: number, to?: number) =>
   `https://github.com/${repo}/blob/${sha}/${enc(path)}${from ? `#L${from}${to && to !== from ? `-L${to}` : ""}` : ""}`;
@@ -95,7 +95,7 @@ type Contents =
   | { type: "dir"; entries: { name: string; path: string; type: string; size: number }[] }
   | { type: "file"; text: string | null; size: number; binary: boolean };
 
-function decodeBase64Utf8(data: string): { text: string; binary: boolean } {
+export function decodeBase64Utf8(data: string): { text: string; binary: boolean } {
   const bytes = Uint8Array.from(atob(data.replace(/\s/g, "")), (c) => c.charCodeAt(0));
   if (bytes.subarray(0, 8_000).includes(0)) return { text: "", binary: true };
   return { text: new TextDecoder().decode(bytes), binary: false };

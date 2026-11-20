@@ -5,12 +5,13 @@ import type {
   AppSettingsDto,
   ChatImageInput,
   ChatStreamEvent,
+  ConnectionsDto,
   ConversationDto,
   FeaturesDto,
   FeedbackItemDto,
   FeedbackReason,
   FeedbackSummaryDto,
-  GithubConnectionDto,
+  GithubActionDto,
   KnowledgeChunkInput,
   KnowledgeCollectionDto,
   KnowledgeDocKind,
@@ -122,9 +123,19 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  /** Settings → Connections (v0.12.0). Connecting is a normal link to /api/connections/github/start. */
-  connections: () => request<{ github: GithubConnectionDto }>("/api/connections"),
-  disconnectGithub: () => request<{ github: GithubConnectionDto }>("/api/connections/github/disconnect", { method: "POST", body: "{}" }),
+  /**
+   * Settings → Connections (v0.12.0; GitHub changes v0.13.0). Connecting is a normal link to
+   * /api/connections/github/start (reading) or /api/connections/github-actions/start (changes).
+   */
+  connections: () => request<ConnectionsDto>("/api/connections"),
+  disconnectGithub: () => request<ConnectionsDto>("/api/connections/github/disconnect", { method: "POST", body: "{}" }),
+  disconnectGithubActions: () => request<ConnectionsDto>("/api/connections/github-actions/disconnect", { method: "POST", body: "{}" }),
+  /** A GitHub change waiting for (or given) the user's decision (v0.13.0). */
+  githubAction: (id: string) => request<{ action: GithubActionDto }>(`/api/github-actions/${encodeURIComponent(id)}`),
+  approveGithubAction: (id: string) =>
+    request<{ action: GithubActionDto }>(`/api/github-actions/${encodeURIComponent(id)}/approve`, { method: "POST", body: "{}" }),
+  rejectGithubAction: (id: string) =>
+    request<{ action: GithubActionDto }>(`/api/github-actions/${encodeURIComponent(id)}/reject`, { method: "POST", body: "{}" }),
   /** "Check this answer" (v0.11.0): the answer's key claims rated against its sources (saved; asking again is free). */
   checkAnswer: (messageId: string) =>
     request<{ verification: VerificationDto }>(`/api/answer-check/${encodeURIComponent(messageId)}`, { method: "POST", body: "{}" }),
@@ -149,6 +160,7 @@ export const api = {
         tools: ToolInfoDto[];
         webSearch: { keyConfigured: boolean; usedToday: number };
         github?: { configured: boolean };
+        githubActions?: { configured: boolean };
       }>(
         "/api/admin/settings",
       ),

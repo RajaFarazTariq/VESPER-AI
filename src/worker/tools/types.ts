@@ -1,6 +1,17 @@
 /** Shared tool types, in their own module so tool files and the registry don't import each other. */
 import type { z } from "zod";
-import type { SourceDto, UserSettings } from "../../shared/types";
+import type { GithubActionRefDto, SourceDto, UserSettings } from "../../shared/types";
+import type { GithubWriter } from "./github-client";
+
+/** What happened so far in this answer (filled in by the agent loop), for tools that need to know. */
+export interface TurnState {
+  /** Names of the tools that ran, in order. */
+  used: string[];
+  /** Private repository content was read in this answer. */
+  privateRead: boolean;
+  /** GitHub changes prepared in this answer (v0.13.0). */
+  prepared: number;
+}
 
 export interface ToolContext {
   db: D1Database;
@@ -17,6 +28,12 @@ export interface ToolContext {
   ai?: Ai;
   /** The user's own GitHub access (read-only), when they connected GitHub and may use it (v0.12.0). */
   github?: GithubAccess;
+  /** The user's Actions-app access, for preparing GitHub changes they approve (v0.13.0). */
+  githubWriter?: GithubWriter;
+  /** The chat the answer belongs to (a prepared change is filed under it). */
+  conversationId?: string;
+  /** Set by the agent loop: what this answer has done so far. */
+  turn?: TurnState;
 }
 
 /** What the GitHub tools need from the per-user GitHub client (tools/github-client.ts). */
@@ -38,6 +55,8 @@ export interface ToolServerState {
   knowledgeReady?: boolean;
   /** This user has a working GitHub connection (v0.12.0). */
   github?: boolean;
+  /** This user has a working connection for GitHub changes (v0.13.0). */
+  githubActions?: boolean;
 }
 
 export interface WebToolContext {
@@ -69,6 +88,8 @@ export interface ToolOutput {
   keep?: string;
   /** The result holds private repository content: no more web pages may be opened in this answer (leak guard). */
   private?: boolean;
+  /** A GitHub change was prepared and waits for the user's approval (shown as a card). */
+  action?: GithubActionRefDto;
 }
 
 /** A tool the model may call. Parameters are plain JSON Schema (portable across providers). */
@@ -76,7 +97,8 @@ export interface AgentTool {
   name: string;
   label: string;
   description: string;
-  risk: "read" | "write";
+  /** read: looks up. write: changes the user's own VESPER data. approval: prepares a change the user approves first. */
+  risk: "read" | "write" | "approval";
   requiresMemory: boolean;
   /** Needs something on the server (web search: TAVILY_API_KEY; knowledge base: documents); omitted = always available. */
   isAvailable?(server: ToolServerState): boolean;

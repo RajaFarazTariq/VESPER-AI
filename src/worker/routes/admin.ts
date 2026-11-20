@@ -66,8 +66,9 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({
       settings,
       // GitHub tools are listed as available so they can be switched off for everyone (each user still connects).
-      tools: toolInfo({ web, knowledgeReady, github: config.githubAppEnabled }),
+      tools: toolInfo({ web, knowledgeReady, github: config.githubAppEnabled, githubActions: config.githubActionsAppEnabled }),
       github: { configured: config.githubAppEnabled },
+      githubActions: { configured: config.githubActionsAppEnabled },
       webSearch: {
         keyConfigured: Boolean(web.tavilyApiKey),
         usedToday: Math.min(searchesUsed, settings.webSearchDailyLimit),

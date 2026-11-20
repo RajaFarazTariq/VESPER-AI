@@ -41,6 +41,7 @@ export function featuresFor(env: Env, settings: AppSettingsDto, admin: boolean):
     localModels: admin || settings.localModelsForUsers,
     answerCheck: { enabled: settings.answerCheckEnabled, perDay: settings.answerChecksPerDay },
     github: { available: getConfig(env).githubAppEnabled && (admin || settings.githubForUsers) },
+    githubActions: { available: getConfig(env).githubActionsAppEnabled && (admin || settings.githubActionsForUsers) },
   };
 }
 

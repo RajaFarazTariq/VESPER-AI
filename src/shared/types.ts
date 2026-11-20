@@ -38,6 +38,10 @@ export interface AdminUserDto extends UserDto {
   todayAnswerChecks: number;
   /** Connected their GitHub through the VESPER GitHub App (v0.12.0). */
   githubConnected?: boolean;
+  /** Connected the Actions app for GitHub changes (v0.13.0). */
+  githubActionsConnected?: boolean;
+  /** GitHub changes they approved today that went through (v0.13.0). */
+  todayGithubActions?: number;
   conversations: number;
   github: boolean;
   google: boolean;
@@ -89,6 +93,13 @@ export interface AppSettingsDto {
   researchAutoCheck: boolean;
   /** Regular users may connect their own GitHub (read-only, v0.12.0). Admins always can when the app is set up. */
   githubForUsers: boolean;
+  /**
+   * Regular users may let VESPER prepare GitHub changes (issues, comments, pull requests) that they approve one by one
+   * (v0.13.0, the separate "Actions" GitHub App). Admins always can when that app is set up.
+   */
+  githubActionsForUsers: boolean;
+  /** Approved GitHub changes each user may make per UTC day (admins unlimited). */
+  githubActionsPerDay: number;
 }
 
 /** What the chat screen may offer right now (admin switches + whether a capable service is set up). */
@@ -107,6 +118,8 @@ export interface FeaturesDto {
   answerCheck: { enabled: boolean; perDay: number };
   /** Settings → Connections → GitHub: the GitHub App is set up and this account may use it (v0.12.0). */
   github: { available: boolean };
+  /** Settings → Connections → GitHub changes: the Actions app is set up and this account may use it (v0.13.0). */
+  githubActions: { available: boolean };
 }
 
 // ------------------------------------------------------------------ Connections: GitHub, read-only (v0.12.0)
@@ -135,6 +148,14 @@ export interface GithubConnectionDto {
   reposTruncated: boolean;
   /** Couldn't ask GitHub right now (the connection itself is fine). */
   error: string | null;
+}
+
+/** Settings → Connections: reading (VESPER AI Reader) and changes with approval (the Actions app, v0.13.0). */
+export interface ConnectionsDto {
+  github: GithubConnectionDto;
+  githubActions: GithubConnectionDto;
+  /** The user's latest GitHub changes (newest first, up to 20), for the log under "Changes". */
+  recentActions: GithubActionDto[];
 }
 
 export interface TranscriptionDto {
@@ -197,6 +218,62 @@ export interface ToolEventDto {
   summary: string | null;
   /** Where the information came from (web pages, Wikipedia, weather/currency services). Shown to everyone. */
   sources?: SourceDto[];
+  /** A GitHub change this step prepared, waiting for the user's approval (v0.13.0). The card loads its details. */
+  action?: GithubActionRefDto;
+}
+
+// ------------------------------------------------------------------ GitHub changes with approval (v0.13.0)
+
+export type GithubActionKind = "issue" | "comment" | "pull_request";
+/**
+ * pending: waiting for Approve/Reject. running: being sent right now. done: sent (resultUrl). failed: GitHub refused
+ * or something changed (error). rejected: the user said no. expired: not decided within 24 hours.
+ */
+export type GithubActionStatus = "pending" | "running" | "done" | "failed" | "rejected" | "expired";
+
+/** What a chat step carries: enough to draw the card's heading; the card loads the rest. */
+export interface GithubActionRefDto {
+  id: string;
+  kind: GithubActionKind;
+  repo: string;
+  title: string;
+}
+
+export interface GithubActionFileDto {
+  path: string;
+  status: "added" | "modified";
+  additions: number;
+  deletions: number;
+  /** Unified diff lines ("@@ …", " context", "-removed", "+added"), possibly shortened for display. */
+  diff: string;
+}
+
+/** Exactly what will be sent to GitHub. Kept only while the card waits for a decision. */
+export interface GithubActionPreviewDto {
+  /** Issue / pull request title. */
+  title?: string;
+  /** Issue, comment or pull request text (Markdown, shown as plain text on the card). */
+  body: string;
+  /** Comment: the issue or pull request it goes on. */
+  target?: { number: number; kind: "issue" | "pr"; title: string; url: string };
+  /** Pull request: the branch it goes into and the new branch VESPER creates. */
+  base?: string;
+  branch?: string;
+  files?: GithubActionFileDto[];
+}
+
+export interface GithubActionDto extends GithubActionRefDto {
+  status: GithubActionStatus;
+  /** The repository is public: whatever is sent can be read by anyone. */
+  publicRepo: boolean;
+  /** Plain-language cautions shown on the card (text written by others was read; private code read before a public change). */
+  warnings: string[];
+  preview: GithubActionPreviewDto | null;
+  resultUrl: string | null;
+  error: string | null;
+  createdAt: number;
+  expiresAt: number;
+  decidedAt: number | null;
 }
 
 /**
@@ -257,8 +334,11 @@ export interface ToolInfoDto {
   name: string;
   label: string;
   description: string;
-  /** "read": only looks things up. "write": changes data in your own account. */
-  risk: "read" | "write";
+  /**
+   * "read": only looks things up. "write": changes data in your own account. "approval": prepares a change elsewhere
+   * (GitHub) that is sent only after you approve it on a card.
+   */
+  risk: "read" | "write" | "approval";
   requiresMemory: boolean;
   /** False when the server lacks what it needs (e.g. web search without TAVILY_API_KEY). */
   available: boolean;

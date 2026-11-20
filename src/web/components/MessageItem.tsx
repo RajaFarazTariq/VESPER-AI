@@ -37,6 +37,7 @@ import {
 } from "../lib/format";
 import { canSpeak, speak, stopSpeaking, useSpeakingId } from "../lib/voice";
 import { CopyButton, Markdown } from "./Markdown";
+import { GithubActionCard } from "./GithubActionCard";
 import { SourceList, ToolActivity } from "./ToolActivity";
 import { VesperMark } from "./VesperMark";
 
@@ -103,6 +104,9 @@ function AssistantMessage({ message, isLast, canRetry, onRetry, isAdmin = false,
             <Markdown text={content} />
           </div>
         ) : null}
+
+        {/* GitHub changes this answer prepared: sent only when the user approves the card (v0.13.0). */}
+        {(message.tools ?? []).flatMap((t) => (t.action ? [<GithubActionCard key={t.action.id} action={t.action} />] : []))}
 
         <SourceList sources={sources.shown} more={sources.unused} />
 
