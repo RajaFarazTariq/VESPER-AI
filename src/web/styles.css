@@ -138,7 +138,8 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .shimmer-text,
   .rise-in,
-  .streaming-caret::after {
+  .streaming-caret::after,
+  .auth-orbiter {
     animation: none !important;
   }
   .shimmer-text {
@@ -161,8 +162,9 @@ body {
 
 /* ---------- Sign-in page ----------
  * Split layout. The form side follows the app theme (tokens above). The brand panel, shown on wide
- * screens only, is always dark: the logo inside fine orbit lines, then the wordmark. Static, no decorative
- * animation. The logo's own colours (v0.12.1): cyan nodes and orbit, violet blades, a warm "AI AGENT" line. */
+ * screens only, is always dark: the logo inside fine orbit lines, then the wordmark. The only motion is the small
+ * circles travelling along the orbit lines (v0.12.3), and they stay still when the system asks for reduced motion.
+ * The logo's own colours (v0.12.1): cyan nodes and orbit, violet blades, a warm "AI AGENT" line. */
 .auth-showcase {
   --sc-bg: #0b0b10;
   --sc-text: #ececf3;
@@ -171,6 +173,7 @@ body {
   --sc-accent: #22d3ee;
   --sc-word: #f2f0ff;
   --sc-amber: #f0a35e;
+  --sc-violet: #9b7bff;
   background:
     radial-gradient(70% 55% at 50% 42%, rgb(91 76 240 / 0.1), transparent 70%),
     var(--sc-bg);
@@ -197,6 +200,29 @@ body {
 }
 .auth-planet-faint {
   fill-opacity: 0.45;
+}
+.auth-planet-violet {
+  fill: var(--sc-violet);
+  fill-opacity: 0.8;
+}
+/* v0.12.3: the small circles travel slowly along the orbit lines, all clockwise, outer ones slower (one turn
+ * every 32 s / 50 s / 76 s, about the same speed on screen). Only the circles move; the logo, the lines and the
+ * halo stay still. Each group turns around the centre of the 340 × 340 drawing (view-box 50% 50% = 170, 170). */
+.auth-orbiter {
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  animation: auth-orbit-turn 50s linear infinite;
+}
+.auth-orbiter-1 {
+  animation-duration: 32s;
+}
+.auth-orbiter-3 {
+  animation-duration: 76s;
+}
+@keyframes auth-orbit-turn {
+  to {
+    transform: rotate(360deg);
+  }
 }
 /* ---------- The VESPER mark (components/VesperMark.tsx, v0.12.2) ----------
  * Light mode: a bright tile, dark-ink and violet blades, deeper cyan so it shows on white.

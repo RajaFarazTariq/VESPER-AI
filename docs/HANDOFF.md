@@ -5,6 +5,8 @@ Read this first when resuming work. Last updated: **2026-11-20**. No secrets are
 ## 0. ▶ Resume here (where we stopped on 2026-11-20)
 
 **State:** Live is **v0.12.2** (logo follows the light/dark theme; PR #9, merge `8781ec4`, deployed 2026-11-20).
+**v0.12.3 sign-in orbit animation built 2026-11-20, not pushed yet** (branch `release/v0.12.3-sign-in-orbit`, see
+below). GitHub's `main` was at `3cbcfd1` that day (the README PR #10 looks merged; owner to confirm).
 **README rewritten** (docs only, no version change; branch `docs/readme-rewrite` + PR #10): what VESPER is, how it
 differs, features, how it works (diagram), install/setup (incl. the GitHub App), using it, development, security,
 troubleshooting; `.env.example` lists the 4 GitHub App settings. **GitHub App set up by the owner (2026-11-20):**
@@ -37,14 +39,26 @@ violet sparkle; dark mode and the always-dark sign-in brand panel = the dark ver
 tab) switches by the browser's own light/dark setting (`prefers-color-scheme` inside the SVG; works for the tab icon,
 checked as an image; opening the file directly shows it black because of the site's style-src policy, which doesn't
 matter). `public/logo.svg` stays as a standalone dark brand file (not used by the app).
+**v0.12.3 (owner, 2026-11-20: "animate the logo on the sign-in page: small circles orbiting around it; keep the
+logo unchanged and centred, the animation around it, not over it"):** the three small circles of the brand panel
+(`BrandPanel` in `LoginPage.tsx`) each sit in a `<g class="auth-orbiter">` that turns around the centre of the
+340 × 340 drawing (`transform-box: view-box; transform-origin: 50% 50%`, keyframes `auth-orbit-turn` in
+`styles.css`): inner line 32 s per turn, middle 50 s, outer 76 s, all clockwise (about the same speed on screen).
+One small violet circle (`--sc-violet`, `.auth-planet-violet`) was added on the middle line, travelling with the
+bright cyan one, to fill the empty lower right. The logo, the lines and the halo don't move; the circles never
+cross the logo (inner line r 80 px, the tile reaches about 73 px from the centre). Reduced motion → the circles
+stay where they always were. CSS only, so the strict CSP is untouched. Checked in headless Edge at 1366 px under
+the live CSP (`wrangler dev` after `npm run build`): circles stay on their lines and move at the planned speeds,
+the logo's position is unchanged, no console or CSP errors; reduced motion keeps them still. Typecheck + build ✔️.
 
 **Rules in force:** a **branch protection rule for `main`** (exact ticks not confirmed yet; see section 2), so
 **`main` can't be pushed to directly**: every change, docs included, goes on a branch + PR. The owner replaced the
 GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-20.
 **Order (owner, 2026-11-20):** v0.10.1 ✅ → v0.11.0 ✅ → v0.12.0 GitHub read-only ✅ → v0.12.1 new logo ✅ → v0.12.2
-logo in light mode ✅ → README rewrite (docs PR). Proposed next (owner to choose): v0.12.3 cleaner source chips +
-GitHub line-link fixes, then v0.13.0 GitHub write actions with approval cards, then data analysis / Gmail + Calendar.
-**Pending owner checks:** GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
+logo in light mode ✅ → README rewrite (docs PR) → v0.12.3 sign-in orbit animation (owner's request). Proposed next
+(owner to choose): v0.12.4 cleaner source chips + GitHub line-link fixes, then v0.13.0 GitHub write actions with
+approval cards, then data analysis / Gmail + Calendar.
+**Pending owner checks:** v0.12.3 quick look at the sign-in page (wide window); GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
 
 **v0.10.0 live test (owner, 2026-11-20):** ✔️ phone number refused with the reason; memories "planning a trip to
@@ -643,7 +657,8 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **GitHub for each user, read-only (v0.12.0)**: Settings → Connections (GitHub App, encrypted tokens, one renewal at a time), 5 read-only tools, untrusted-content + leak guard, org/SSO messages, code-search fallback, 15-min cache with ETags, 10 requests per message, PR review in parts, Check via references; migration 0011 | ✅ live (v0.12.0, PR #7, merge `de648de`, deployed 2026-11-20; 243 tests); needs the GitHub App + 4 secrets before use |
 | **New logo (v0.12.1)**: "Mark V5 · faceted blades" as `public/logo.svg` (full) + `public/favicon.svg` (small sizes); sign-in wordmark (VESPER / AI AGENT); spaced brand name | ✅ live (v0.12.1, PR #8, merge `762917d`, deployed 2026-11-20) |
 | **Logo follows the theme (v0.12.2)**: inline `VesperMark` with `--vm-*` colours (bright tile in light mode); tab icon follows the browser's light/dark setting | ✅ live (v0.12.2, PR #9, merge `8781ec4`, deployed 2026-11-20) |
-| **README rewrite** (docs only): what/how-different/features/how it works/install/use/dev/security/troubleshooting | 🔨 written 2026-11-20, not pushed yet (PR #10) |
+| **README rewrite** (docs only): what/how-different/features/how it works/install/use/dev/security/troubleshooting | ✅ pushed as PR #10 (2026-11-20); `main` moved to `3cbcfd1`, so it looks merged (owner to confirm) |
+| **Sign-in orbit animation (v0.12.3)**: the small circles travel slowly along the orbit lines around the logo (32/50/76 s per turn), one violet circle added; logo still; still for reduced motion; CSS only | 🔨 built 2026-11-20, not pushed yet |
 | **Next: to propose** (v0.13.0 GitHub write actions with approval cards is planned) | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
@@ -668,7 +683,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
   corners, clear hierarchy, minimal motion. Applies to new UI work.
 - **Sign-in page (v0.8.1)** (`LoginPage.tsx`): split layout. The form side uses the app tokens (follows light/dark); the
   brand panel (wide screens only) is always dark with its own tokens (`.auth-showcase`, `--sc-*` in `styles.css`):
-  the logo inside fine SVG orbit lines, headline "Clear answers. Trusted sources.". Static, no animation.
+  the logo inside fine SVG orbit lines, headline "Clear answers. Trusted sources.". The only motion (v0.12.3, owner's
+  request): small circles travelling slowly along the orbit lines (`.auth-orbiter`); the logo stays still, and the
+  circles stay still for reduced motion.
 
 **Options (the roadmap PDF puts knowledge/reliability before integrations, so 6a comes first):**
 - **6b GitHub**: read repos/files/issues/PRs; create issues, comments and PRs behind an **Approve/Reject gate**
