@@ -4,12 +4,17 @@ Read this first when resuming work. Last updated: **2026-11-20**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-20)
 
-**State:** **v0.12.2 (logo follows the light/dark theme) is built and checked locally, not pushed yet** (to go on
-branch `release/v0.12.2-logo-light-mode` + PR #9; no database or settings changes). Live is **v0.12.1** (new logo;
-PR #8, merge `762917d`, deployed 2026-11-20). GitHub (v0.12.0, live) still needs the owner's **GitHub App + 4
-Cloudflare secrets** (CONFIGURATION sections 2 and 5) before it can be used. Earlier: v0.12.0 via PR #7 (migration
-0011), v0.11.0 via PR #6 (migration 0010), v0.10.1 via PR #5, v0.10.0 via PR #4 (migration 0009), v0.9.10 via PR #3,
-v0.9.9 via PR #2, v0.9.8 via PR #1.
+**State:** Live is **v0.12.2** (logo follows the light/dark theme; PR #9, merge `8781ec4`, deployed 2026-11-20).
+**README rewritten** (docs only, no version change; branch `docs/readme-rewrite` + PR #10): what VESPER is, how it
+differs, features, how it works (diagram), install/setup (incl. the GitHub App), using it, development, security,
+troubleshooting; `.env.example` lists the 4 GitHub App settings. **GitHub App set up by the owner (2026-11-20):**
+"VESPER AI Reader" (slug `vesper-ai-reader`, owned by RajaFarazTariq, installable by any account; a private key had to
+be generated for installation, VESPER doesn't use it), 4 Cloudflare settings added (`GITHUB_APP_SLUG` as a plain
+variable, the others as secrets), the owner connected and chose only **VESPER-AI**. First live test ✔️: "What does
+src/worker/llm/verify.ts do?" answered correctly from commit `8781ec4` with line links (two links used `#L9-13`
+instead of `#L9-L13`, one line reference was plain text → small fix planned with the source-chip cleanup).
+Earlier: v0.12.1 via PR #8, v0.12.0 via PR #7 (migration 0011), v0.11.0 via PR #6 (migration 0010), v0.10.1 via PR #5,
+v0.10.0 via PR #4 (migration 0009), v0.9.10 via PR #3, v0.9.9 via PR #2, v0.9.8 via PR #1.
 **How the owner pushes (his preference, 2026-11-20):** git asks for the username and token; nothing is typed into the
 command: `git -c credential.helper= push -u origin <branch>` → Username `RajaFarazTariq`, Password = the token. If it
 fails with "No anonymous write access" without asking (VS Code's terminal swallowed the prompt), use
@@ -37,9 +42,9 @@ matter). `public/logo.svg` stays as a standalone dark brand file (not used by th
 **`main` can't be pushed to directly**: every change, docs included, goes on a branch + PR. The owner replaced the
 GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-20.
 **Order (owner, 2026-11-20):** v0.10.1 ✅ → v0.11.0 ✅ → v0.12.0 GitHub read-only ✅ → v0.12.1 new logo ✅ → v0.12.2
-logo in light mode (built). Proposed next (owner to choose): v0.12.2+ cleaner source chips, then v0.13.0 GitHub
-write actions with approval cards (after the read-only live test), then data analysis / Gmail + Calendar.
-**Pending owner checks:** v0.12.2 quick look in light and dark mode (tab icon, sidebar, replies, sign-in page); create the GitHub App + secrets, then the v0.12.0 live test (below); v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
+logo in light mode ✅ → README rewrite (docs PR). Proposed next (owner to choose): v0.12.3 cleaner source chips +
+GitHub line-link fixes, then v0.13.0 GitHub write actions with approval cards, then data analysis / Gmail + Calendar.
+**Pending owner checks:** GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
 
 **v0.10.0 live test (owner, 2026-11-20):** ✔️ phone number refused with the reason; memories "planning a trip to
@@ -637,7 +642,8 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Answer verification (v0.11.0)**: "Check" under answers that used sources → claims rated Supported / Contradicted / Not in the sources with the source; research reports checked automatically; number check skips general-knowledge numbers; admin switches + daily checks; migration 0010 | ✅ live (v0.11.0, PR #6, merge `d2a7a46`, deployed 2026-11-20; 234 tests); live Check ✔️ (3 of 3 supported) |
 | **GitHub for each user, read-only (v0.12.0)**: Settings → Connections (GitHub App, encrypted tokens, one renewal at a time), 5 read-only tools, untrusted-content + leak guard, org/SSO messages, code-search fallback, 15-min cache with ETags, 10 requests per message, PR review in parts, Check via references; migration 0011 | ✅ live (v0.12.0, PR #7, merge `de648de`, deployed 2026-11-20; 243 tests); needs the GitHub App + 4 secrets before use |
 | **New logo (v0.12.1)**: "Mark V5 · faceted blades" as `public/logo.svg` (full) + `public/favicon.svg` (small sizes); sign-in wordmark (VESPER / AI AGENT); spaced brand name | ✅ live (v0.12.1, PR #8, merge `762917d`, deployed 2026-11-20) |
-| **Logo follows the theme (v0.12.2)**: inline `VesperMark` with `--vm-*` colours (bright tile in light mode); tab icon follows the browser's light/dark setting | 🔨 built 2026-11-20, not pushed yet (PR #9) |
+| **Logo follows the theme (v0.12.2)**: inline `VesperMark` with `--vm-*` colours (bright tile in light mode); tab icon follows the browser's light/dark setting | ✅ live (v0.12.2, PR #9, merge `8781ec4`, deployed 2026-11-20) |
+| **README rewrite** (docs only): what/how-different/features/how it works/install/use/dev/security/troubleshooting | 🔨 written 2026-11-20, not pushed yet (PR #10) |
 | **Next: to propose** (v0.13.0 GitHub write actions with approval cards is planned) | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
