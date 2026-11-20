@@ -6,6 +6,7 @@ import { sensitiveMessage, sensitiveReason } from "../lib/sensitive";
 import { CalcError, evaluate } from "./calculator";
 import { searchKnowledge } from "./knowledge";
 import { GITHUB_TOOLS } from "./github";
+import { GITHUB_ACTION_TOOLS } from "./github-actions";
 import { define, ToolInputError, type AgentTool, type ToolServerState, type WebToolContext } from "./types";
 import { WEB_TOOLS } from "./web";
 
@@ -130,7 +131,17 @@ const forget = define({
   },
 });
 
-export const ALL_TOOLS: AgentTool[] = [calculator, datetime, remember, forget, ...WEB_TOOLS, searchKnowledge, ...GITHUB_TOOLS];
+export const ALL_TOOLS: AgentTool[] = [
+  calculator,
+  datetime,
+  remember,
+  forget,
+  ...WEB_TOOLS,
+  searchKnowledge,
+  ...GITHUB_TOOLS,
+  // Prepare GitHub changes the user approves on a card (v0.13.0).
+  ...GITHUB_ACTION_TOOLS,
+];
 
 const isAvailable = (t: AgentTool, server: ToolServerState) => (t.isAvailable ? t.isAvailable(server) : true);
 

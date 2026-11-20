@@ -1,6 +1,7 @@
 import type { ProviderId, ToolEventDto } from "../../shared/types";
 import type { ProviderHealth, ProviderStateStore } from "../db/provider-state";
 import { ToolInputError, type AgentTool, type ToolContext } from "../tools/registry";
+import type { TurnState } from "../tools/types";
 import { numberCheckEvent } from "./number-check";
 import { prefetchNote } from "./prefetch";
 import { executeRoute, type RouteError, type RouteTarget, type RouterEvents } from "./router";
@@ -110,6 +111,8 @@ async function runTool(
         status: "done",
         summary: output.summary.slice(0, 300),
         ...(sources.length ? { sources } : {}),
+        // A prepared GitHub change: the card under the answer (v0.13.0).
+        ...(output.action ? { action: output.action } : {}),
       },
       content: output.content.slice(0, MAX_TOOL_RESULT_CHARS),
       ...(output.evidence ? { evidence: output.evidence } : {}),
@@ -156,6 +159,9 @@ export async function runAgent(input: {
   const evidence: string[] = []; // everything the tools returned in this reply, for the number check
   const kept: string[] = []; // what the look-up tools returned, kept with the answer so it can be checked later
   let privateContent = false; // private repository content is in this answer: no more web pages (leak guard)
+  // What this answer has done so far, for tools that need it (GitHub changes: warnings and the per-answer cap).
+  const turn: TurnState = { used: [], privateRead: false, prepared: 0 };
+  const toolContext: ToolContext = { ...input.toolContext, turn };
   const result: AgentResult = {
     status: "error",
     target: null,
@@ -193,13 +199,12 @@ export async function runAgent(input: {
     if (paired || call.name === "search_knowledge") knowledgeChecked = true;
     await input.events.tool(running(call));
     if (paired) await input.events.tool(running(paired));
-    const [main, extra] = await Promise.all([
-      runTool(call, toolMap, input.toolContext),
-      paired ? runTool(paired, toolMap, input.toolContext) : null,
-    ]);
+    const [main, extra] = await Promise.all([runTool(call, toolMap, toolContext), paired ? runTool(paired, toolMap, toolContext) : null]);
     result.tools.push(main.event);
     await input.events.tool(main.event);
-    if (main.private) privateContent = true;
+    if (main.private) privateContent = turn.privateRead = true;
+    if (main.event.status === "done") turn.used.push(call.name);
+    if (extra?.event.status === "done") turn.used.push(extra.event.name);
     // GitHub results go to the number check (in memory) but only their references are kept with the answer.
     evidence.push(main.content, main.evidence ?? "");
     if (main.event.status === "done" && KEPT_TOOLS.has(call.name)) kept.push(`[${main.event.label}]\n${main.keep ?? main.content}`);

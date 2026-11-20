@@ -12,10 +12,12 @@ import {
   FileText,
   FolderGit2,
   GitPullRequest,
+  GitPullRequestArrow,
   CircleDot,
   Library,
   ListChecks,
   Loader2,
+  MessageSquare,
   ScrollText,
   Search,
   SearchCode,
@@ -47,6 +49,10 @@ export const TOOL_ICONS: Record<string, typeof Wrench> = {
   github_search: SearchCode,
   github_issues: CircleDot,
   github_pr_changes: GitPullRequest,
+  // Prepared GitHub changes, sent only after the user approves the card (v0.13.0).
+  github_create_issue: CircleDot,
+  github_comment: MessageSquare,
+  github_open_pr: GitPullRequestArrow,
 };
 
 /**

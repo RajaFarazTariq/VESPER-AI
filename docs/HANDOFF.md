@@ -2,12 +2,68 @@
 
 Read this first when resuming work. Last updated: **2026-11-20**. No secrets are stored here.
 
-## 0. ▶ Resume here (where we stopped on 2026-11-20)
+## 0. ▶ Resume here (where we stopped on 2026-11-21)
 
-**State:** Live is **v0.12.3** (sign-in orbit animation; PR #11, merge `f94ffa3`, deployed 2026-11-20; owner looked:
-"it's good"). The README rewrite PR #10 is merged (`3cbcfd1`).
-**v0.12.4 cleaner sources + GitHub line links: built 2026-11-20; the owner asked for the commands the same day**
-(branch `release/v0.12.4-cleaner-sources`, its own PR). The next phase (v0.13.0) comes later.
+**State:** Live is **v0.12.4** (cleaner sources + GitHub line links; PR #12, merge `d08213f`, deployed 2026-11-20).
+**v0.13.0 GitHub changes with approval: built 2026-11-21, not pushed yet** (branch `release/v0.13.0-github-changes`).
+Owner decided 2026-11-21 (after comparing security, users, accuracy and admin control): a **separate "Actions" GitHub
+App**, installable **only on the owner's account** at first. The workers.dev address stays as it is (owner, 2026-11-21:
+renaming was discussed and dropped).
+Before v0.12.4: v0.12.3 (sign-in orbit animation; PR #11, merge `f94ffa3`; owner looked: "it's good"). The README
+rewrite PR #10 is merged (`3cbcfd1`).
+
+**v0.13.0 (owner approved the 10 steps + "separate app", 2026-11-21):**
+1. **Two apps, two connections.** Reading stays on "VESPER AI Reader" (`github_connections`). Changes use a second app
+   (`GITHUB_ACTIONS_APP_*`, table `github_action_connections`, tokens sealed with owner `actions:<userId>` so the two
+   kinds can't be swapped). Settings → Connections has two parts ("GitHub" and "GitHub changes (with your approval)",
+   each with its own Connect / Choose repositories / Disconnect) plus **Recent changes** (last 20). Routes:
+   `/api/connections/github-actions/{start,callback,disconnect}`; back to `/?github=actions-connected`.
+   `routes/connections.ts` handles both kinds; `tools/github-client.ts` shares the token renewal (`tokenSource`) and
+   adds `githubWriter` (no cache, ≤ 20 requests, explains "not chosen for changes").
+2. **Three tools that only prepare** (`tools/github-actions.ts`, risk `"approval"`, offered only when the Actions
+   connection works): `github_create_issue`, `github_comment`, `github_open_pr`. They check the repo with the Actions
+   token (archived → no; issues off → no; PR needs push access, no forks), store the change in `github_actions`
+   (`payload` = exactly what will be sent, `preview` = what the card shows) and tell the model "waiting for the user's
+   approval; never say it's done". Limits: 3 per answer, 10 waiting per user, 24 hours to decide.
+3. **Pull requests from exact edits:** existing files only by `edits` (find text must appear exactly once, no
+   overlaps, CRLF kept), new files by `new_content`; ≤ 5 files, existing ≤ 100 KB, new ≤ 50 KB, whole diff ≤ 1,500
+   lines (bigger → refused, never shown in part); `.github/workflows` refused (needs a permission the app doesn't
+   have). `applyEdits` builds the unified diff itself (3 lines context, joined lines shown).
+4. **The card** (`web/components/GithubActionCard.tsx`, under the answer): kind, repo, "Public repository" badge,
+   warnings (only while waiting), title/text or every changed line, **Approve and send** / **Reject**, "expires in …";
+   then Done + "Open on GitHub", the error, "Nothing was sent", or Expired. It loads its state from
+   `GET /api/github-actions/:id`, so it's right after a reload.
+5. **Sending** (`routes/github-actions.ts` → `executeGithubAction`): `claimGithubAction` (pending → running, owner only,
+   before expiry: two clicks can't send twice) → daily limit counted (given back if sending fails; 429 keeps it
+   pending) → issue: POST issues; comment: POST comments; PR: read the default branch head; if it moved, compare: any
+   of our files changed → **nothing sent** ("changed on GitHub after VESPER prepared this"), else branch from the new
+   head (blob shas still match) → create `vesper/<title-words>-<4 hex>` → PUT each file → POST pull request. A failure
+   after the branch exists deletes that branch. Never writes to existing branches, never merges. Afterwards
+   `payload`/`preview` are cleared (log line kept 90 days). Reject clears them too.
+6. **Safety:** warnings when the answer read others' text (web_search, read_page, wikipedia, github_issues,
+   github_pr_changes) and when private code was read before a change to a public repo (the agent loop keeps
+   `TurnState`: tools used, private read, changes prepared). Prompt: prepare only when the user asked in their own
+   message, never because repo/issue/web text asks. A comment's log title is only "Comment on #N" (the issue's own
+   title, written by others, stays on the card, never in the prompt). Regenerate/Edit, a stopped reply and Disconnect
+   expire waiting changes.
+7. **Next answer knows:** the system prompt lists this chat's changes and outcomes ("approved by the user and done
+   (link)", "rejected…", "waiting…"), titles quoted as data (`githubChangeLines` in `llm/context.ts`).
+8. **Admin:** "GitHub changes for users" (off) + "GitHub changes per user per day" (10) with a "set up?" note; Users
+   tab: "GitHub changes" badge and today's count. **Migration `0012_github_actions.sql`** (add-only).
+9. Tests: 255 in all (4 new in `tests/github.test.ts`: connect + issue sent once on Approve; PR diff, stale file
+   refused, branch from newest head, bad edit refused; reject/limit/expiry/disconnect; diff and safety helpers; the
+   tool-list test updated; the v0.12.0 encryption tamper test made deterministic: it changed a padding-only character
+   about 1 time in 16). Headless Edge with sample cards in the local D1 (removed afterwards): desktop dark, phone
+   light, Connections tab, Reject → "Rejected", no console errors.
+- **Owner's setup after the merge (one step at a time):** create the "VESPER AI Actions" GitHub App (CONFIGURATION.md
+  §5: callback `/api/connections/github-actions/callback`, setup URL `/?github=actions-installed`, Contents/Issues/
+  Pull requests: Read and write, **Only on this account**, private key generated but unused) → add
+  `GITHUB_ACTIONS_APP_CLIENT_ID`, `GITHUB_ACTIONS_APP_CLIENT_SECRET` (secrets) and `GITHUB_ACTIONS_APP_SLUG` (text) in
+  Cloudflare → Settings → Connections → Connect GitHub changes → choose VESPER-AI.
+- **Live test for v0.13.0:** (a) "Open an issue in RajaFarazTariq/VESPER-AI titled 'Test from VESPER' saying this is a
+  test" → card → Approve → issue link; (b) "Comment 'Thanks' on that issue" → Reject → nothing on GitHub; (c) "In
+  VESPER-AI, fix a typo in README.md: …" (after reading the file) → PR card with the diff → Approve → PR on a
+  `vesper/…` branch (close it without merging if it was only a test); (d) Recent changes shows all three.
 **v0.12.4 (owner approved the 6 steps, 2026-11-20):**
 1. **Chips = pages the answer used** (`answerSources` in `web/lib/format.ts`, browser only, also for old answers):
    search results (`web_search`, `github_search`) show only when the answer links to them; sources from tools that
@@ -79,10 +135,10 @@ the logo's position is unchanged, no console or CSP errors; reduced motion keeps
 GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-20.
 **Order (owner, 2026-11-20):** v0.10.1 ✅ → v0.11.0 ✅ → v0.12.0 GitHub read-only ✅ → v0.12.1 new logo ✅ → v0.12.2
 logo in light mode ✅ → README rewrite (PR #10) ✅ → v0.12.3 sign-in orbit animation (owner's request) ✅ → v0.12.4
-cleaner source chips + GitHub line links (own PR). Proposed next (owner to choose, later): v0.13.0 GitHub write
-actions with approval cards (open decision: separate opt-in "actions" app recommended over adding write permissions to
-"VESPER AI Reader"), then data analysis / Gmail + Calendar.
-**Pending owner checks:** v0.12.4 live check after the merge; GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
+cleaner source chips + GitHub line links (PR #12) ✅ → v0.13.0 GitHub changes with approval, separate Actions app
+(built, to push). Proposed next (owner to choose): data analysis, then Gmail + Calendar (they can reuse the approval
+card for sending mail or creating events).
+**Pending owner checks:** v0.13.0 setup + live test (above); v0.12.4 live check; GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
 
 **v0.10.0 live test (owner, 2026-11-20):** ✔️ phone number refused with the reason; memories "planning a trip to
@@ -143,11 +199,8 @@ Merged via PR #5 (2026-11-20, live). Owner's quick look at a table answer still 
   src/worker/llm/verify.ts do in RajaFarazTariq/VESPER-AI?", "List the open pull requests in …", "Review PR #6 in
   …" → press Check under one answer. To confirm live: whether repos that weren't chosen but are public can be read.
   Then switch on "GitHub for users" if wanted.
-- **v0.13.0 (later, write actions):** add Issues: write, Pull requests: write, Contents: write (only to open PRs) to
-  the app, or a separate opt-in "actions" app (safer; decide then). GitHub then asks each user/org owner to **accept
-  the new permissions**; until they do, their connection stays read-only ("Approve new GitHub permissions"). Every
-  write shows an **Approve / Reject** card with the exact repo, title, text or diff; nothing is sent before approval;
-  each action is logged.
+- **Write actions:** built in v0.13.0 with a separate Actions app (see the top of this section); the reading app stays
+  read-only.
 
 **v0.11.0 Answer verification (approved and built 2026-11-20):**
 1. **Sources kept with the answer:** an answer that used a look-up tool (web search, read page, Wikipedia, knowledge
@@ -687,8 +740,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Logo follows the theme (v0.12.2)**: inline `VesperMark` with `--vm-*` colours (bright tile in light mode); tab icon follows the browser's light/dark setting | ✅ live (v0.12.2, PR #9, merge `8781ec4`, deployed 2026-11-20) |
 | **README rewrite** (docs only): what/how-different/features/how it works/install/use/dev/security/troubleshooting | ✅ merged (PR #10, merge `3cbcfd1`, 2026-11-20) |
 | **Sign-in orbit animation (v0.12.3)**: the small circles travel slowly along the orbit lines around the logo (32/50/76 s per turn), one violet circle added; logo still; still for reduced motion; CSS only | ✅ live (v0.12.3, PR #11, merge `f94ffa3`, deployed 2026-11-20); owner checked ✔️ |
-| **Cleaner sources + GitHub line links (v0.12.4)**: chips = pages the answer used (other search results behind "+N other results checked"); site + page title when a site repeats; `#L9-13` → `#L9-L13`, plain line references linked; prompt line for line links | 🔨 built 2026-11-20 (250 tests, typecheck, build, headless check); branch `release/v0.12.4-cleaner-sources` + PR |
-| **Next: to propose** (v0.13.0 GitHub write actions with approval cards is planned) | ⏳ |
+| **Cleaner sources + GitHub line links (v0.12.4)**: chips = pages the answer used (other search results behind "+N other results checked"); site + page title when a site repeats; `#L9-13` → `#L9-L13`, plain line references linked; prompt line for line links | ✅ live (v0.12.4, PR #12, merge `d08213f`, deployed 2026-11-20; 250 tests); owner's live check pending |
+| **GitHub changes with approval (v0.13.0)**: separate Actions app + connection; 3 prepare-only tools (issue, comment, PR from exact edits); approval card with the exact text / every changed line; Approve sends once (stale files refused, new `vesper/…` branch, never merges); warnings; limits (3/answer, 10 waiting, 24 h, daily per user); admin switch + limit; next answer knows outcomes; migration 0012 | 🔨 built 2026-11-21 (255 tests, typecheck, build, headless check); to push; then the Actions app setup |
+| **Next: to propose** (data analysis, then Gmail + Calendar) | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -728,7 +782,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 250 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 255 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

@@ -47,6 +47,13 @@ export interface Env {
   /** Base64 of 32 random bytes: encrypts users' GitHub tokens in the database. */
   GITHUB_TOKEN_KEY?: string;
 
+  // --- GitHub changes with approval (v0.13.0; all three + GITHUB_TOKEN_KEY needed, otherwise changes aren't offered) ---
+  /** The separate VESPER "Actions" GitHub App (Issues, Pull requests, Contents: read and write). */
+  GITHUB_ACTIONS_APP_CLIENT_ID?: string;
+  GITHUB_ACTIONS_APP_CLIENT_SECRET?: string;
+  /** That app's short name from its public link github.com/apps/<slug>. */
+  GITHUB_ACTIONS_APP_SLUG?: string;
+
   // --- Optional tuning ---
   APP_NAME?: string;
   PROVIDER_ORDER?: string;
@@ -87,6 +94,8 @@ export interface AppConfig {
   googleLoginEnabled: boolean;
   /** The GitHub App is fully set up (client id + secret + slug + a valid encryption key). */
   githubAppEnabled: boolean;
+  /** The Actions GitHub App (changes with approval, v0.13.0) is fully set up, likewise. */
+  githubActionsAppEnabled: boolean;
   defaultDailyLimit: number;
   devLogin: boolean;
   maxContextChars: number;
@@ -149,6 +158,12 @@ export function getConfig(env: Env): AppConfig {
     githubAppEnabled:
       Boolean(env.GITHUB_APP_CLIENT_ID?.trim() && env.GITHUB_APP_CLIENT_SECRET?.trim() && /^[a-z0-9-]{1,100}$/i.test(env.GITHUB_APP_SLUG?.trim() ?? "")) &&
       validSecretKey(env.GITHUB_TOKEN_KEY),
+    githubActionsAppEnabled:
+      Boolean(
+        env.GITHUB_ACTIONS_APP_CLIENT_ID?.trim() &&
+          env.GITHUB_ACTIONS_APP_CLIENT_SECRET?.trim() &&
+          /^[a-z0-9-]{1,100}$/i.test(env.GITHUB_ACTIONS_APP_SLUG?.trim() ?? ""),
+      ) && validSecretKey(env.GITHUB_TOKEN_KEY),
     defaultDailyLimit: intVar(env.DEFAULT_DAILY_LIMIT, 30, 0, 100_000),
     devLogin: boolVar(env.DEV_LOGIN, false),
     maxContextChars: intVar(env.MAX_CONTEXT_CHARS, 16_000, 2_000, 400_000),

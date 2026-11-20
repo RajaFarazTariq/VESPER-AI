@@ -212,6 +212,7 @@ function UserRow({
             {user.google ? <Badge>Google</Badge> : null}
             {user.github ? <Badge>GitHub</Badge> : null}
             {user.githubConnected ? <Badge>Repos connected</Badge> : null}
+            {user.githubActionsConnected ? <Badge>GitHub changes</Badge> : null}
           </div>
           <p className="truncate text-xs text-[var(--text-soft)]">{user.email ?? user.login}</p>
           <p className="mt-1 text-xs text-[var(--text-soft)]">
@@ -220,7 +221,8 @@ function UserRow({
             {user.todayImages > 0 ? ` · ${user.todayImages} image${user.todayImages === 1 ? "" : "s"}` : ""}
             {user.todaySpeechSeconds > 0 ? ` · ${Math.ceil(user.todaySpeechSeconds / 60)} min voice` : ""}
             {user.todayResearch > 0 ? ` · ${user.todayResearch} research run${user.todayResearch === 1 ? "" : "s"}` : ""}
-            {user.todayAnswerChecks > 0 ? ` · ${user.todayAnswerChecks} answer check${user.todayAnswerChecks === 1 ? "" : "s"}` : ""} · {user.conversations} chat
+            {user.todayAnswerChecks > 0 ? ` · ${user.todayAnswerChecks} answer check${user.todayAnswerChecks === 1 ? "" : "s"}` : ""}
+            {user.todayGithubActions ? ` · ${user.todayGithubActions} GitHub change${user.todayGithubActions === 1 ? "" : "s"}` : ""} · {user.conversations} chat
             {user.conversations === 1 ? "" : "s"} · last sign-in {formatDate(user.lastLoginAt)} · joined {formatDate(user.createdAt)}
           </p>
         </div>
@@ -312,6 +314,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const [checksText, setChecksText] = useState("");
   const [webSearch, setWebSearch] = useState<{ keyConfigured: boolean; usedToday: number } | null>(null);
   const [githubConfigured, setGithubConfigured] = useState(false);
+  const [actionsConfigured, setActionsConfigured] = useState(false);
+  const [actionsText, setActionsText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -332,6 +336,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         setTools(r.tools);
         setWebSearch(r.webSearch);
         setGithubConfigured(Boolean(r.github?.configured));
+        setActionsConfigured(Boolean(r.githubActions?.configured));
+        setActionsText(String(r.settings.githubActionsPerDay));
       },
       (e: unknown) => setError(errorText(e, "Could not load settings.")),
     );
@@ -353,6 +359,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const researchKeepValid = researchKeepText.trim() !== "" && Number.isInteger(researchKeep) && researchKeep >= 0 && researchKeep <= 1_000;
   const checksPerDay = Number(checksText);
   const checksValid = checksText.trim() !== "" && Number.isInteger(checksPerDay) && checksPerDay >= 0 && checksPerDay <= 100;
+  const actionsPerDay = Number(actionsText);
+  const actionsValid = actionsText.trim() !== "" && Number.isInteger(actionsPerDay) && actionsPerDay >= 0 && actionsPerDay <= 100;
   const next: AppSettingsDto = {
     ...draft,
     defaultDailyLimit: limitValid ? limit : draft.defaultDailyLimit,
@@ -364,6 +372,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
     researchRunsPerDay: researchRunsValid ? researchRuns : draft.researchRunsPerDay,
     researchSearchReserve: researchKeepValid ? researchKeep : draft.researchSearchReserve,
     answerChecksPerDay: checksValid ? checksPerDay : draft.answerChecksPerDay,
+    githubActionsPerDay: actionsValid ? actionsPerDay : draft.githubActionsPerDay,
   };
   // Research can use the day's searches above the ones kept for normal chat.
   const researchSearches = next.webSearchDailyLimit - next.researchSearchReserve;
@@ -387,6 +396,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       setResearchRunsText(String(settings.researchRunsPerDay));
       setResearchKeepText(String(settings.researchSearchReserve));
       setChecksText(String(settings.answerChecksPerDay));
+      setActionsText(String(settings.githubActionsPerDay));
       onNotice("App settings saved.", "info");
     } catch (e) {
       setError(errorText(e, "Could not save settings."));
@@ -556,6 +566,30 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
           {githubConfigured
             ? "The VESPER GitHub App is set up."
             : "Not set up yet: add GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET, GITHUB_APP_SLUG and GITHUB_TOKEN_KEY in Cloudflare (see the configuration guide)."}
+        </p>
+      </div>
+      <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
+        <Toggle
+          checked={draft.githubActionsForUsers}
+          onChange={(githubActionsForUsers) => setDraft({ ...draft, githubActionsForUsers })}
+          label="GitHub changes for users"
+          hint="Settings → Connections → GitHub changes: users connect the separate Actions app and choose which repositories VESPER may change. VESPER then prepares issues, comments and pull requests; each one is shown on a card and sent only when the user approves it. Pull requests always go on a new branch; nothing is merged or deleted. Admins can always use it."
+        />
+        <label className="ml-12 flex flex-wrap items-center gap-2 text-xs text-[var(--text-soft)]">
+          GitHub changes per user per day
+          <input
+            value={actionsText}
+            onChange={(e) => setActionsText(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            aria-label="GitHub changes per user per day"
+            className={`w-20 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)] ${actionsValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+          />
+          <span>(approved changes; admins unlimited; failed ones don't count)</span>
+        </label>
+        <p className={`ml-12 text-xs ${actionsConfigured ? "text-[var(--text-soft)]" : "text-amber-600 dark:text-amber-400"}`}>
+          {actionsConfigured
+            ? "The VESPER Actions GitHub App is set up. While it's installable only on your own account, nobody else can connect it, whatever this switch says."
+            : "Not set up yet: add GITHUB_ACTIONS_APP_CLIENT_ID, GITHUB_ACTIONS_APP_CLIENT_SECRET and GITHUB_ACTIONS_APP_SLUG in Cloudflare (GITHUB_TOKEN_KEY is shared; see the configuration guide)."}
         </p>
       </div>
       <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">

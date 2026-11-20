@@ -59,6 +59,8 @@ export const appSettingsSchema = z.object({
   answerChecksPerDay: z.number().int().min(0).max(100),
   researchAutoCheck: z.boolean(),
   githubForUsers: z.boolean(),
+  githubActionsForUsers: z.boolean(),
+  githubActionsPerDay: z.number().int().min(0).max(100),
 });
 
 type Key = keyof AppSettingsDto;
@@ -93,6 +95,9 @@ export function defaultAppSettings(config: AppConfig): AppSettingsDto {
     researchAutoCheck: true,
     // GitHub (read-only, each user connects their own): admins first; switch on for users after a live test.
     githubForUsers: false,
+    // GitHub changes with approval (separate Actions app): admins first; switch on for users after a live test.
+    githubActionsForUsers: false,
+    githubActionsPerDay: 10,
   };
 }
 

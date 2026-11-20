@@ -7,6 +7,7 @@ import { requestContext, sameOriginGuard } from "./middleware/security";
 import { adminRoutes } from "./routes/admin";
 import { answerCheckRoutes } from "./routes/answer-check";
 import { connectionRoutes } from "./routes/connections";
+import { githubActionRoutes } from "./routes/github-actions";
 import { authRoutes } from "./routes/auth";
 import { chatRoutes } from "./routes/chat";
 import { conversationRoutes } from "./routes/conversations";
@@ -45,6 +46,7 @@ app.route("/api/media", mediaRoutes);
 app.route("/api/feedback", feedbackRoutes);
 app.route("/api/answer-check", answerCheckRoutes);
 app.route("/api/connections", connectionRoutes);
+app.route("/api/github-actions", githubActionRoutes);
 app.route("/api/admin/knowledge", knowledgeRoutes);
 app.route("/api/admin", adminRoutes);
 

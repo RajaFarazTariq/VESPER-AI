@@ -1,4 +1,5 @@
 import type { ModelInfo, ProviderId } from "../../shared/types";
+import { githubActionCleanup } from "./github";
 
 export interface ProviderHealth {
   cooldownUntil: number;
@@ -106,5 +107,7 @@ export async function cleanup(db: D1Database): Promise<void> {
     db.prepare("DELETE FROM search_cache WHERE expires_at < ?1").bind(now),
     // GitHub responses are kept 15 minutes at most (v0.12.0).
     db.prepare("DELETE FROM github_cache WHERE expires_at < ?1").bind(now),
+    // GitHub changes: undecided ones expire after 24 hours, the log after 90 days (v0.13.0).
+    ...githubActionCleanup(db, now),
   ]);
 }

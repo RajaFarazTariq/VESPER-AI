@@ -9,7 +9,7 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.12.4**.
+Current version: **0.13.0**.
 
 - [What VESPER does](#what-vesper-does)
 - [How VESPER is different](#how-vesper-is-different)
@@ -37,6 +37,8 @@ question needs a look-up, fetches what it needs and cites it:
 - **Your documents**: the administrator adds PDFs, Word files, text or web pages to a knowledge base; answers cite
   "document, page X".
 - **Your code**: each user can connect their own GitHub (read-only) and ask about files, issues and pull requests.
+- **Changes you approve**: VESPER can prepare a GitHub issue, comment or pull request; it shows the exact change on a
+  card and sends it only when you press Approve.
 - **Checking answers**: one click rates an answer's key claims against the sources it used.
 - **Remembering you**: notes you ask it to keep (preferences, projects), which you can see, pin, edit and delete.
 - **Images and voice**: attach screenshots or photos, speak your question, or have answers read aloud.
@@ -58,8 +60,9 @@ choices:
 4. **You own it.** The code is in your GitHub repository and the data is in your own Cloudflare database. There's no
    third-party account system: users sign in with Google, and you decide who can sign up and how much they can use.
 5. **Safe with outside content.** Web pages, documents and repository text are treated as untrusted data, never as
-   instructions. GitHub access is read-only and encrypted, and once private code is in an answer the assistant can't
-   open other web pages (so planted text can't send your code elsewhere).
+   instructions. Reading GitHub uses a read-only app; changes use a separate app and are sent only after you approve
+   each one on a card. Access is encrypted, and once private code is in an answer the assistant can't open other web
+   pages (so planted text can't send your code elsewhere).
 6. **A clean view for users, full detail for the admin.** Users see answers and sources; the administrator can also
    see which model answered, every tool step and an automatic number check.
 
@@ -104,7 +107,19 @@ choices:
 - Each user connects their own GitHub in **Settings → Connections** and picks which repositories VESPER may read.
 - Ask VESPER to explain a repository, read a file (with line numbers), search the code, list or open issues and pull
   requests, or review a pull request's changes. Big pull requests are reviewed in parts, code first.
-- Answers link to the exact commit and lines on GitHub. Nothing on GitHub can be changed.
+- Answers link to the exact commit and lines on GitHub. This connection can't change anything on GitHub.
+
+**GitHub changes, only with your approval**
+- A separate connection (**Settings → Connections → GitHub changes**) with its own repository choice, so reading never
+  comes with write access.
+- Ask VESPER to open an issue, comment on an issue or pull request, or make a pull request that changes files. It
+  prepares the change and shows a card with the exact text, or every changed line; nothing is sent until you press
+  **Approve**. **Reject** sends nothing; an undecided card expires after 24 hours.
+- Pull requests always go on a new `vesper/…` branch from the default branch. VESPER never writes to existing
+  branches, never merges and never deletes. If someone changed the same files on GitHub in the meantime, nothing is
+  sent.
+- The card warns when VESPER read text written by others while preparing it, and when private code was read before a
+  change to a public repository. Every change is logged under **Recent changes**.
 
 **Memory**
 - Each message gets your pinned memories plus the ones related to it; view, add, pin, edit, export and delete them in
@@ -155,7 +170,7 @@ What happens when you send a message:
 | API | Cloudflare Workers, Hono, zod validation, Server-Sent Events for streaming |
 | Database | Cloudflare D1 (SQLite) with add-only migrations |
 | AI | Groq, Google Gemini, OpenRouter (`:free` only), Mistral, Cloudflare Workers AI; Ollama optional |
-| Tests | Vitest running inside the Workers runtime with a real local D1 (250 tests) |
+| Tests | Vitest running inside the Workers runtime with a real local D1 (255 tests) |
 | Delivery | GitHub Actions: checks on every pull request, deploy on merge to `main` |
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -248,6 +263,7 @@ models, website lists) are in the admin panel instead.
 | `MISTRAL_API_KEY` | optional | [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys) |
 | `TAVILY_API_KEY` | optional | Turns on web search and deep research: [app.tavily.com](https://app.tavily.com) |
 | `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_SLUG`, `GITHUB_TOKEN_KEY` | optional | Lets users connect their own GitHub, read-only (see step 4) |
+| `GITHUB_ACTIONS_APP_CLIENT_ID`, `GITHUB_ACTIONS_APP_CLIENT_SECRET`, `GITHUB_ACTIONS_APP_SLUG` | optional | A second GitHub App for changes users approve one by one (see step 4b; uses the same `GITHUB_TOKEN_KEY`) |
 | `APP_NAME` | no | Display name (default `Assistant`) |
 | `DEFAULT_DAILY_LIMIT` | no | Messages per user per day (default 30; also in the admin panel). Admins are unlimited. |
 | `PROVIDER_ORDER` | no | Auto-fallback order (default `groq,gemini,openrouter,mistral,workers-ai`) |
@@ -274,6 +290,22 @@ models, website lists) are in the admin panel instead.
 5. Admins can use it straight away (**Settings → Connections**); turn on **GitHub for users** in **Admin panel → App
    settings** when you're ready.
 
+### 4b. Optional: GitHub changes with approval
+
+A **second** GitHub App, so the reading app never gets write access:
+
+1. **New GitHub App** again (e.g. "VESPER AI Actions"):
+   - Callback URL: `https://<your-app>/api/connections/github-actions/callback`
+   - Setup URL: `https://<your-app>/?github=actions-installed`, with **Redirect on update** ticked
+   - Keep **Expire user authorization tokens** ticked; untick webhooks
+   - Repository permissions: **Contents, Issues, Pull requests: Read and write** (nothing else)
+   - Installable **Only on this account** while you test; make it public later to offer it to users
+2. Copy the **Client ID**, generate a **client secret** and a private key (not used by VESPER), note the **slug**.
+3. Add `GITHUB_ACTIONS_APP_CLIENT_ID`, `GITHUB_ACTIONS_APP_CLIENT_SECRET` and `GITHUB_ACTIONS_APP_SLUG` in Cloudflare
+   (`GITHUB_TOKEN_KEY` is shared with the reading app).
+4. Admins can use it straight away (**Settings → Connections → GitHub changes**); turn on **GitHub changes for users**
+   and set the daily limit in **Admin panel → App settings** when you're ready.
+
 Full details: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ### 5. Optional: local models
@@ -295,13 +327,16 @@ only when the admin turns on **Local models for users**.
 - **Research**: switch on **Research** in the message box for a planned, multi-source report.
 - **Images and voice**: use the paperclip (or paste/drag) to attach images, and the microphone to speak.
 - **Under each answer**: copy, read aloud, 👍/👎, **Check** (when the answer used sources) and regenerate.
-- **Settings**: General (default model, your own instructions), Tools, Memory, Voice, Connections (GitHub) and
-  Appearance (light, dark or system).
+- **GitHub changes**: ask for an issue, a comment or a pull request; read the card under the answer, then **Approve**
+  or **Reject**.
+- **Settings**: General (default model, your own instructions), Tools, Memory, Voice, Connections (GitHub reading and
+  GitHub changes) and Appearance (light, dark or system).
 
 **Administrators** (the accounts in `ADMIN_EMAILS` / `ADMIN_GITHUB_USERS`) also get the **Admin panel**:
 - **Users**: usage per day, personal limits, block or delete.
 - **App settings**: sign-ups, daily limits, instructions for the assistant, tools for everyone, web search cap,
-  trusted/blocked websites, images, voice, deep research, answer checks, local models and GitHub for users.
+  trusted/blocked websites, images, voice, deep research, answer checks, local models, GitHub for users, and GitHub
+  changes for users with a daily limit.
 - **Models**: which models users may pick, with friendly names.
 - **Knowledge**: folders, documents and web pages for the knowledge base.
 - **Feedback**: 👍/👎 ratings with the question, answer and sources.
@@ -334,9 +369,9 @@ losing data; a test applies every migration over existing data to check nothing 
 │  ├─ shared/           types and the streaming parser shared by server and browser
 │  ├─ worker/           Cloudflare Worker (Hono)
 │  │  ├─ routes/        auth, chat (streaming), conversations, models, settings, memories, media,
-│  │  │                 feedback, knowledge, admin, answer-check, connections
+│  │  │                 feedback, knowledge, admin, answer-check, connections, github-actions
 │  │  ├─ llm/           providers, fallback router, agent loop, prompts, research, answer checks
-│  │  ├─ tools/         calculator, date/time, memory, web tools, knowledge base, GitHub
+│  │  ├─ tools/         calculator, date/time, memory, web tools, knowledge base, GitHub (read; changes with approval)
 │  │  ├─ db/            D1 queries
 │  │  ├─ lib/           security helpers (encryption, sensitive-data check, presentation)
 │  │  └─ middleware/    sign-in, origin checks, rate limits
@@ -361,6 +396,9 @@ losing data; a test applies every migration over existing data to check nothing 
 - **Outside content**: web pages, documents and repository text are passed to the model as untrusted data. Answers
   are rendered without raw HTML and remote images are shown as links, so injected content can't leak data through
   image addresses. After private repository content, opening other web pages is blocked for that answer.
+- **GitHub changes**: a separate app with its own repository choice. The assistant can only prepare a change; it is
+  sent from the approval card, exactly as shown, once, by its owner only. Prepared text is kept only until you decide
+  (at most 24 hours); afterwards only a log line stays (90 days).
 - **What leaves the server**: your messages (and any file text or code VESPER reads for an answer) go to the AI
   provider that writes the answer. A 👍/👎 sends a copy of that question and answer to the administrator's feedback
   list.
@@ -383,3 +421,8 @@ losing data; a test applies every migration over existing data to check nothing 
   `https://<your-app>/api/connections/github/callback` exactly.
 - **"VESPER can't read any of your repositories yet"**: choose repositories with **Choose repositories on GitHub** in
   Settings → Connections. An organisation's repositories need approval from one of its owners.
+- **No "GitHub changes" part in Connections**: one of the three `GITHUB_ACTIONS_APP_*` settings is missing, or GitHub
+  changes for users is off for regular users. Its callback URL must be
+  `https://<your-app>/api/connections/github-actions/callback`.
+- **A change says a file "changed on GitHub after VESPER prepared this"**: someone changed it meanwhile; nothing was
+  sent. Ask VESPER to prepare it again.

@@ -52,8 +52,9 @@ import { MAX_RESEARCH_SEARCHES, MIN_RESEARCH_SEARCHES, runResearch, type Researc
 import { planRoute } from "../llm/router";
 import { factCheckEvent, sourcesOfTools, verifyAnswer } from "../llm/verify";
 import { enabledTools, webToolContext, type AgentTool } from "../tools/registry";
-import { githubAccess, githubConnected } from "../tools/github-client";
-import { githubAllowed } from "./connections";
+import { githubAccess, githubConnected, githubWriter } from "../tools/github-client";
+import { conversationGithubActions, expireGithubActions } from "../db/github";
+import { githubActionsAllowed, githubAllowed } from "./connections";
 import { requireUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/security";
 
@@ -151,6 +152,8 @@ async function prepareTurn(
     research?: boolean;
     /** May ask a model to summarise the older part of a long chat (cloud turns; not local models). */
     summarize?: boolean;
+    /** GitHub changes are offered: the prompt lists what happened to the ones prepared in this chat (v0.13.0). */
+    githubChanges?: boolean;
   },
 ): Promise<{
   conversation: ConversationDto;
@@ -180,12 +183,14 @@ async function prepareTurn(
     const last = history[history.length - 1];
     if (!last || last.role !== "user") throw badRequest("There is no user message to regenerate a reply for.");
     userMessage = last;
+    await expireGithubActions(db, user.id, { conversationId: conversation.id, since: last.createdAt });
   } else if (input.edit) {
     // Edit: the last user message gets the new text and the old reply is replaced.
     await deleteTrailingAssistantMessages(db, conversation.id);
     const edited = await updateLastUserMessage(db, conversation.id, text);
     if (!edited) throw badRequest("There is no message to edit in this conversation.");
     userMessage = edited;
+    await expireGithubActions(db, user.id, { conversationId: conversation.id, since: edited.createdAt });
   } else {
     // Only the small previews are kept; the full images go to the model once.
     userMessage = await insertMessage(db, conversation.id, {
@@ -199,10 +204,11 @@ async function prepareTurn(
     conversation = { ...conversation, model: selection };
   }
 
-  const [history, memories, earlier] = await Promise.all([
+  const [history, memories, earlier, githubChanges] = await Promise.all([
     listMessages(db, conversation.id, HISTORY_LIMIT),
     user.settings.memoryEnabled ? listMemories(db, user.id) : Promise.resolve(undefined),
     getConversationSummary(db, conversation.id),
+    extras.githubChanges && !isNew ? conversationGithubActions(db, user.id, conversation.id) : Promise.resolve([]),
   ]);
   // Memories: pinned ones plus those related to this message and the last few things the user said (v0.10.0).
   const about = history
@@ -223,6 +229,7 @@ async function prepareTurn(
       ...(extras.sendImages?.length ? { images: true } : {}),
       ...(extras.research ? { research: true } : {}),
       ...(summary ? { summary } : {}),
+      ...(githubChanges.length ? { githubChanges } : {}),
     });
 
   // Long chats: messages already covered by the running notes aren't sent again in full.
@@ -367,7 +374,15 @@ export const chatRoutes = new Hono<AppEnv>()
     const knowledge = await searchableCollections(c.env.DB);
     // The user's own GitHub (read-only, v0.12.0): offered when the app is set up, allowed and connected.
     const githubOn = !research && githubAllowed(c.env, user, appSettings) && (await githubConnected(c.env.DB, user.id));
-    const tools = enabledTools(user.settings, appSettings.disabledTools, { web, knowledgeReady: knowledge.length > 0, github: githubOn });
+    // GitHub changes with approval (v0.13.0): offered when the Actions app is set up, allowed and connected.
+    const githubActionsOn =
+      !research && githubActionsAllowed(c.env, user, appSettings) && (await githubConnected(c.env.DB, user.id, "actions"));
+    const tools = enabledTools(user.settings, appSettings.disabledTools, {
+      web,
+      knowledgeReady: knowledge.length > 0,
+      github: githubOn,
+      githubActions: githubActionsOn,
+    });
     const timeZone = normalizeTimeZone(body.timeZone);
     let turn: Awaited<ReturnType<typeof prepareTurn>>;
     try {
@@ -380,6 +395,7 @@ export const chatRoutes = new Hono<AppEnv>()
         sendImages,
         research,
         summarize: true,
+        githubChanges: githubActionsOn,
       });
     } catch (error) {
       await settleResearch(null);
@@ -425,6 +441,10 @@ export const chatRoutes = new Hono<AppEnv>()
           ...(timeZone ? { timeZone } : {}),
           ...(c.env.AI ? { ai: c.env.AI } : {}),
           ...(githubOn ? { github: githubAccess({ env: c.env, db: c.env.DB, userId: user.id, userAgent: web.userAgent, signal: abort.signal }) } : {}),
+          ...(githubActionsOn
+            ? { githubWriter: githubWriter({ env: c.env, db: c.env.DB, userId: user.id, userAgent: web.userAgent, signal: abort.signal }) }
+            : {}),
+          conversationId: turn.conversation.id,
         };
         const events = {
           attempt: (t: { provider: ProviderId; model: string }) => send({ type: "attempt", provider: t.provider, model: t.model }),
@@ -494,7 +514,12 @@ export const chatRoutes = new Hono<AppEnv>()
           });
         }
 
-        if (result.status === "aborted") return; // stopped before any output: nothing to save
+        if (result.status === "aborted") {
+          // Stopped before any output: nothing is saved, so changes prepared on the way have no card to approve them.
+          const prepared = result.tools.flatMap((t) => (t.action ? [t.action.id] : []));
+          if (prepared.length) await expireGithubActions(c.env.DB, user.id, { ids: prepared }).catch(() => {});
+          return;
+        }
 
         // Deep research: the finished report is checked against its sources (1 more model request; admin switch).
         let verification: VerificationDto | null = null;
