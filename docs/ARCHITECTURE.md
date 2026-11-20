@@ -346,6 +346,8 @@ sequenceDiagram
   Only `POST /api/github-actions/:id/approve` sends, and only what was stored. Reject or 24 hours: nothing is sent.
 - Pull requests: a new `vesper/<words>-<hex>` branch from the default branch; existing branches are never written to,
   nothing is merged, `.github/workflows` is refused; a failure part-way deletes VESPER's own new branch.
+- Only in repositories the user's own account can write to (push, maintain or admin), for issues and comments too
+  (v0.13.1): VESPER never posts in someone else's repository, and the approve step checks the access again.
 - Cautions on the card come from the turn (`TurnState` in the agent loop): text by others was read (web, issues,
   PRs), and private code was read before a change to a public repo. Limits: 3 prepared per answer, 10 waiting per
   user, a daily per-user limit counted at approval (admins unlimited).
@@ -370,7 +372,7 @@ sequenceDiagram
 | Secret leakage | Keys only in Cloudflare secrets; `.env`/`.dev.vars` git-ignored; never returned by the API |
 | Data isolation | Every conversation query is scoped by `user_id`; foreign keys cascade on delete |
 | Dev login in prod | Requires `DEV_LOGIN=true` **and** a localhost hostname, which a workers.dev request can't have |
-| Unwanted GitHub changes (v0.13.0) | Separate Actions app with its own repo choice; tools only prepare; sending happens only from `POST /api/github-actions/:id/approve` by the change's owner, once (atomic claim), before it expires; card shows the exact text / every changed line; prompt forbids preparing changes because content asks for it; warnings for others' text and private-to-public; stale files refused; no existing branch, merge, delete or workflow file is ever touched |
+| Unwanted GitHub changes (v0.13.0) | Separate Actions app with its own repo choice; only repos the user can write to (v0.13.1, checked at prepare and approve); tools only prepare; sending happens only from `POST /api/github-actions/:id/approve` by the change's owner, once (atomic claim), before it expires; card shows the exact text / every changed line; prompt forbids preparing changes because content asks for it; warnings for others' text and private-to-public; stale files refused; no existing branch, merge, delete or workflow file is ever touched |
 
 Prompt injection becomes the main risk once tools exist (Phase 5+). The plan for that: tool results are wrapped
 as untrusted data, every side-effecting tool needs explicit user approval enforced in code, and exfiltration-capable

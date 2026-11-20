@@ -26,12 +26,30 @@ const HAS_OWN_TOOL = /\b(?:weather|temperature|forecast|rain|humidity|convert|co
 const MAX_QUESTION_CHARS = 600;
 
 /**
+ * About the user's code on GitHub (v0.13.1): "Current version" in "change the README line 'Current version …' in
+ * owner/repo" isn't a question for the web. Only when GitHub tools are offered; the model can still search itself.
+ */
+const GITHUB_TOOLS = ["github_repo", "github_file", "github_open_pr", "github_create_issue", "github_comment"];
+const ABOUT_CODE =
+  /github\.com\/|\b(?:repo|repos|repository|repositories|pull requests?|PRs?|commits?|branch(?:es)?|README|codebase)\b|#\d+\b|\b[\w-]+\.(?:ts|tsx|js|jsx|py|go|rs|java|cs|md|json|ya?ml|css|html)\b/i;
+function namesRepo(text: string): boolean {
+  if (ABOUT_CODE.test(text)) return true;
+  // "owner/name" like RajaFarazTariq/VESPER-AI or octo-dev/app (not "and/or", "km/h", "24/7").
+  for (const m of text.matchAll(/\b([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9._-]{2,100})/g)) {
+    const [, owner = "", name = ""] = m;
+    if (/[A-Za-z]/.test(owner) && /[A-Za-z]/.test(name) && /[A-Z-]/.test(owner + name)) return true;
+  }
+  return false;
+}
+
+/**
  * The tool call to run before the first model request, or null to let the model decide.
  * `available` is the set of tools offered this turn (the user's and admin's switches are respected).
  */
 export function planPrefetch(question: string, available: ReadonlySet<string>): ToolCall | null {
   const text = question.trim();
   if (text.length < 8 || text.length > MAX_QUESTION_CHARS || NOT_A_LOOKUP.test(text) || ARITHMETIC.test(text)) return null;
+  if (GITHUB_TOOLS.some((name) => available.has(name)) && namesRepo(text)) return null;
   if (ABOUT_DOCUMENTS.test(text)) {
     return available.has("search_knowledge") ? call("search_knowledge", { query: text.slice(0, 300) }) : null;
   }

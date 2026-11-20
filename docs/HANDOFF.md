@@ -1,11 +1,33 @@
 # VESPER: handoff notes for a new working session
 
-Read this first when resuming work. Last updated: **2026-11-20**. No secrets are stored here.
+Read this first when resuming work. Last updated: **2026-11-21**. No secrets are stored here.
+
+## ⏩ Quick resume (2026-11-21, end of session)
+- **Live:** v0.13.0 (GitHub changes with approval). **v0.13.1** (write-access rule + no web search for GitHub code
+  requests) was handed to the owner to push on branch `release/v0.13.1-write-access-rule`. Check
+  https://ai-assistant.vesper-ai.workers.dev/api/health: `0.13.1` means it was merged and deployed; if it still says
+  `0.13.0`, ask whether the PR was merged. The local folder is then on that branch: start with `git switch main` →
+  `git -c credential.helper= pull origin main`.
+- **GitHub set-up now:** two apps. "VESPER AI Reader" (read-only, any account) and "VESPER AI Actions" (slug
+  `vesper-ai-actions`, Contents/Issues/Pull requests read+write, **made public 2026-11-21**). Admin panel: **GitHub for
+  users ON**, **GitHub changes for users ON**, 10 changes per user per day. Each user acts only on repos their own
+  account can write to (v0.13.1); nobody else can change VESPER-AI.
+- **Owner's small to-dos:** on GitHub close test **PR #15 without merging** (merging would deploy) and delete its
+  `vesper/…` branch; close test **issue #14**. Older optional checks: the "Pending owner checks" line below.
+- **Next (owner to choose when we continue):** (1) data analysis: upload a CSV/Excel file and ask questions about it;
+  (2) Gmail + Google Calendar: draft emails / create events, reusing the Approve/Reject card from v0.13.0; (3) any
+  fixes from testers' use of GitHub changes.
+- **How he works (details in section 2 and "How the owner wants each task run"):** numbered plan first, then report
+  each step; plain words; dashboard tasks one step at a time; he runs all git himself; **git commands only for larger
+  changes** (small fixes wait unless he asks); every release on its own branch + PR; no assistant/AI mentions in
+  commits or PRs; personal project: nothing saved in the assistant's memory, no EOD logging, this file is the memory.
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-21)
 
-**State:** Live is **v0.12.4** (cleaner sources + GitHub line links; PR #12, merge `d08213f`, deployed 2026-11-20).
-**v0.13.0 GitHub changes with approval: built 2026-11-21, not pushed yet** (branch `release/v0.13.0-github-changes`).
+**v0.13.1 built 2026-11-21, handed to the owner to push** (branch `release/v0.13.1-write-access-rule`): (1) **write-access rule** (owner asked, after opening GitHub changes to users): every change, issues and comments too, is prepared only in repos the user's own account can write to (`canWrite` in `tools/github-actions.ts`: push/maintain/admin), and `executeGithubAction` checks it again before sending ("can no longer write … Nothing was sent"); so nobody can use VESPER to post in someone else's public repo, VESPER-AI included. (2) **No automatic web search for GitHub code requests** (`planPrefetch` skips when GitHub tools are offered and the message names a repo: owner/name, github.com link, repo/PR/commit/branch/README words, #number or a file name). 257 tests (1 new GitHub test, 1 new unit test), typecheck, build.
+**State:** Live is **v0.13.0** (GitHub changes with approval; PR #13, merge `cacce3d`, deployed 2026-11-21). Actions app
+set up by the owner 2026-11-21: app "VESPER AI Actions" (slug `vesper-ai-actions`, first only on his account, made public the same day; private key under Credentials → Key pairs, unused), 3 Cloudflare settings added, connected as @RajaFarazTariq with VESPER-AI chosen. **Live test ✔️ (2026-11-21):** (a) issue #14 "Test from VESPER" approved → created; (b) comment on #14 rejected → nothing sent (card showed the "text by others" warning after github_issues, as designed); (c) PR #15 from `vesper/update-readme-version-for-approval-test-7f21`, one-line README diff, CI green (owner to close it unmerged and delete the branch, and close #14); (d) Recent changes listed all three. **Found:** (c) also ran the automatic web search (prefetch) because "Current version" looks time-sensitive (`planPrefetch` → `isTimeSensitive`), adding 3 unrelated chips and using a search. Small fix proposed (v0.13.1): no prefetch when the message names a GitHub repo (owner/name or github.com link) and GitHub tools are offered.
+Before it: v0.12.4 (cleaner sources + GitHub line links; PR #12, merge `d08213f`, deployed 2026-11-20).
 Owner decided 2026-11-21 (after comparing security, users, accuracy and admin control): a **separate "Actions" GitHub
 App**, installable **only on the owner's account** at first. The workers.dev address stays as it is (owner, 2026-11-21:
 renaming was discussed and dropped).
@@ -130,13 +152,14 @@ stay where they always were. CSS only, so the strict CSP is untouched. Checked i
 the live CSP (`wrangler dev` after `npm run build`): circles stay on their lines and move at the planned speeds,
 the logo's position is unchanged, no console or CSP errors; reduced motion keeps them still. Typecheck + build ✔️.
 
+**Owner decision (2026-11-21, updated the same day): GitHub changes open to users.** After asking whether others could touch his repo (answer: no; each user acts only through their own GitHub account, on repos GitHub lets them change; nobody else can write to VESPER-AI; on a public repo anyone can already open issues/comments on GitHub itself), he chose to: make "VESPER AI Actions" public (Advanced → Danger zone → Make public; can't be made private again once others install it), and switch on "GitHub for users" + "GitHub changes for users" (limit 10/day).
 **Rules in force:** a **branch protection rule for `main`** (exact ticks not confirmed yet; see section 2), so
 **`main` can't be pushed to directly**: every change, docs included, goes on a branch + PR. The owner replaced the
 GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11-20.
 **Order (owner, 2026-11-20):** v0.10.1 ✅ → v0.11.0 ✅ → v0.12.0 GitHub read-only ✅ → v0.12.1 new logo ✅ → v0.12.2
 logo in light mode ✅ → README rewrite (PR #10) ✅ → v0.12.3 sign-in orbit animation (owner's request) ✅ → v0.12.4
 cleaner source chips + GitHub line links (PR #12) ✅ → v0.13.0 GitHub changes with approval, separate Actions app
-(built, to push). Proposed next (owner to choose): data analysis, then Gmail + Calendar (they can reuse the approval
+(PR #13) ✅, set up + live-tested ✅ → v0.13.1 write-access rule + search fix (to push). Proposed next (owner to choose): data analysis, then Gmail + Calendar (they can reuse the approval
 card for sending mail or creating events).
 **Pending owner checks:** v0.13.0 setup + live test (above); v0.12.4 live check; GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
@@ -741,7 +764,8 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **README rewrite** (docs only): what/how-different/features/how it works/install/use/dev/security/troubleshooting | ✅ merged (PR #10, merge `3cbcfd1`, 2026-11-20) |
 | **Sign-in orbit animation (v0.12.3)**: the small circles travel slowly along the orbit lines around the logo (32/50/76 s per turn), one violet circle added; logo still; still for reduced motion; CSS only | ✅ live (v0.12.3, PR #11, merge `f94ffa3`, deployed 2026-11-20); owner checked ✔️ |
 | **Cleaner sources + GitHub line links (v0.12.4)**: chips = pages the answer used (other search results behind "+N other results checked"); site + page title when a site repeats; `#L9-13` → `#L9-L13`, plain line references linked; prompt line for line links | ✅ live (v0.12.4, PR #12, merge `d08213f`, deployed 2026-11-20; 250 tests); owner's live check pending |
-| **GitHub changes with approval (v0.13.0)**: separate Actions app + connection; 3 prepare-only tools (issue, comment, PR from exact edits); approval card with the exact text / every changed line; Approve sends once (stale files refused, new `vesper/…` branch, never merges); warnings; limits (3/answer, 10 waiting, 24 h, daily per user); admin switch + limit; next answer knows outcomes; migration 0012 | 🔨 built 2026-11-21 (255 tests, typecheck, build, headless check); to push; then the Actions app setup |
+| **GitHub changes with approval (v0.13.0)**: separate Actions app + connection; 3 prepare-only tools (issue, comment, PR from exact edits); approval card with the exact text / every changed line; Approve sends once (stale files refused, new `vesper/…` branch, never merges); warnings; limits (3/answer, 10 waiting, 24 h, daily per user); admin switch + limit; next answer knows outcomes; migration 0012 | ✅ live (v0.13.0, PR #13, merge `cacce3d`, deployed 2026-11-21; 255 tests); hidden until the Actions app is set up; live test pending |
+| **Write-access rule + GitHub search fix (v0.13.1)**: changes only in repos the user can write to (checked again at Approve); no automatic web search for messages about the user's GitHub code | 🔨 built 2026-11-21 (257 tests, typecheck, build); handed to the owner to push |
 | **Next: to propose** (data analysis, then Gmail + Calendar) | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
@@ -782,7 +806,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 255 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 257 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

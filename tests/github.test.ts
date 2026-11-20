@@ -383,7 +383,7 @@ const callA = (path: string, init: Parameters<typeof call>[1] = {}) => call(path
 /** Fake GitHub for the Actions app (its own token), and a fake model. Records every request. */
 function actionsWorld(model: (body: any) => Response = () => text("ok")) {
   const seen: Seen[] = [];
-  const state = { head: SHA, changedSince: [] as string[] };
+  const state = { head: SHA, changedSince: [] as string[], canWrite: true };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const headers = new Headers(init?.headers);
@@ -405,7 +405,9 @@ function actionsWorld(model: (body: any) => Response = () => text("ok")) {
       return json({ installations: [{ id: 2, account: { login: "octo-dev", type: "User" }, repository_selection: "selected", html_url: "https://github.com/settings/installations/2" }] });
     }
     if (path === "/user/installations/2/repositories?per_page=100") return json({ total_count: 1, repositories: [{ full_name: REPO, private: true }] });
-    if (path === `/repos/${REPO}`) return json({ full_name: REPO, private: true, default_branch: "main", has_issues: true, permissions: { pull: true, push: true } });
+    if (path === `/repos/${REPO}`) return json({ full_name: REPO, private: true, default_branch: "main", has_issues: true, permissions: { pull: true, push: state.canWrite } });
+    // Someone else's public repository: the user may read it and (on GitHub) open issues, but not write to it.
+    if (path === "/repos/someone/public-lib") return json({ full_name: "someone/public-lib", private: false, default_branch: "main", has_issues: true, permissions: { pull: true, push: false } });
     if (path === "/repos/octo-dev/site") return json({ full_name: "octo-dev/site", private: false, default_branch: "main", has_issues: true, permissions: { push: true } });
     if (path === `/repos/${REPO}/git/ref/heads/main`) return json({ ref: "refs/heads/main", object: { sha: state.head } });
     if (path === `/repos/${REPO}/contents/src/verify.ts?ref=${SHA}`) return json({ type: "file", encoding: "base64", size: VERIFY_TS.length, content: btoa(VERIFY_TS), sha: "blob-verify-1" });
@@ -440,7 +442,8 @@ async function chatWith(cookie: string, toolName: string, args: object, message 
   return { events, chat, world, conversationId: conversation?.conversation.id, done: events.at(-1) as Extract<ChatStreamEvent, { type: "done" }> };
 }
 
-describe("v0.13.0: GitHub changes with approval", () => {
+// Several chat turns and approvals per test: more than the default 5 s on a busy machine (CI or the office PC).
+describe("v0.13.0: GitHub changes with approval", { timeout: 15_000 }, () => {
   it("connects the Actions app on its own, prepares an issue, and sends it only on Approve, exactly once", async () => {
     const admin = await devLogin("octocat");
     const tester = await devLogin("tester");
@@ -605,6 +608,27 @@ describe("v0.13.0: GitHub changes with approval", () => {
     await callA("/api/connections/github-actions/disconnect", { method: "POST", body: "{}", cookie: tester });
     expect((await callA(`/api/github-actions/${thirdId}`, { cookie: tester })).json.action.status).toBe("expired");
     expect(writes(third.world.seen)).toEqual([]);
+  });
+
+  it("v0.13.1: prepares nothing in repositories the user can't write to, and checks again at Approve", async () => {
+    const admin = await devLogin("octocat");
+    actionsWorld();
+    await connectActions(admin);
+    // Someone else's public repo: GitHub would let anyone open an issue there, VESPER doesn't.
+    const issue = await chatWith(admin, "github_create_issue", { repo: "someone/public-lib", title: "Hi" });
+    expect(issue.chat[1].messages.at(-1).content).toContain("can't write to someone/public-lib");
+    const comment = await chatWith(admin, "github_comment", { repo: "someone/public-lib", number: 1, body: "Hi" });
+    expect(comment.chat[1].messages.at(-1).content).toContain("only prepares changes (issues, comments and pull requests) in repositories the user can write to");
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM github_actions").first()).toEqual({ n: 0 });
+
+    // Write access taken away between preparing and approving: nothing is sent.
+    const mine = await chatWith(admin, "github_create_issue", { repo: REPO, title: "Mine" });
+    const id = mine.done.message.tools!.find((t) => t.name === "github_create_issue")!.action!.id;
+    const world = actionsWorld();
+    world.state.canWrite = false;
+    const refused = await callA(`/api/github-actions/${id}/approve`, { method: "POST", body: "{}", cookie: admin });
+    expect(refused.json.action).toMatchObject({ status: "failed", error: expect.stringContaining("can no longer write") });
+    expect(writes(world.seen)).toEqual([]);
   });
 
   it("works out exact edits and diffs, and refuses unclear or unsafe ones", () => {

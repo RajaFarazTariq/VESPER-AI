@@ -75,6 +75,19 @@ describe("search first, answer in one call", () => {
     expect(plan("What does it say about rates?")).toBeNull(); // "it" isn't an organisation
     expect(plan("What is the latest stable version of Python?", new Set(["calculator"]))).toBeNull(); // web search off
   });
+
+  it("v0.13.1: doesn't search the web for requests about the user's own GitHub code", () => {
+    const withGithub = new Set([...all, "github_repo", "github_file", "github_open_pr"]);
+    const pr = 'In RajaFarazTariq/VESPER-AI, prepare a pull request that changes the README line "Current version: 0.13.0."';
+    expect(plan(pr, withGithub)).toBeNull();
+    expect(plan("What changed in the latest commits of octo-dev/app?", withGithub)).toBeNull();
+    expect(plan("Is the current version in package.json up to date?", withGithub)).toBeNull();
+    // Without GitHub tools nothing changes, and normal questions still search first with them on.
+    expect(plan(pr)?.name).toBe("web_search");
+    expect(plan("According to GitHub, what share of code does Copilot write?", withGithub)?.name).toBe("web_search");
+    expect(plan("What is the latest stable version of Python?", withGithub)?.name).toBe("web_search");
+    expect(plan("What's the latest news on km/h speed records today?", withGithub)?.name).toBe("web_search");
+  });
 });
 
 describe("dates and organisations in web search", () => {
