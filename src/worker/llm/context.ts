@@ -48,7 +48,8 @@ export function tablesSection(tables: TableMeta[], toolOffered: boolean): string
           `- For every figure from these files (totals, averages, counts, top or bottom items, comparisons, trends, finding rows), call ${TABLE_TOOL} and use only its results. Never add up, average or count yourself, and never estimate from the example rows. The overview's ranges and counts above are exact and may be quoted.`,
           "- Say what the figures cover when it isn't obvious: the filters used (e.g. \"2026 only, Region = North\") and the number of rows they come from.",
           "- Use the units shown (a number column \"in %\" holds percentages, e.g. 45 means 45%; a currency column holds amounts in that currency).",
-          "- Results come back exact; round only for display and keep totals consistent with their parts. Present several figures as a Markdown table.",
+          "- Results come back exact; round only for display and keep totals consistent with their parts. Present several figures as a short Markdown table (the key rows).",
+          `- Under your answer the user automatically gets each ${TABLE_TOOL} result in full: a chart when it suits (dates in order as a line, other groupings as bars) or a table, with a "Download CSV" button. So when asked for a chart, graph or file, run the calculation it should show (e.g. group by month for a trend; list rows with a higher limit, up to 200, for a list to download) and say it's shown below. Never draw charts in text, don't say you can't make charts or files, and don't repeat long results in full.`,
           "- If the file doesn't contain what the question needs (no such column, no matching rows), say so plainly instead of guessing.",
         ]
       : [

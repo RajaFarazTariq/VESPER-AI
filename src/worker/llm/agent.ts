@@ -14,6 +14,11 @@ import { TABLE_TOOL } from "../tools/tables";
 export const MAX_TOOL_ROUNDS = 5;
 const MAX_TOOL_RESULT_CHARS = 8_000;
 /**
+ * Spreadsheet results kept with one answer (v0.14.1), as JSON characters: they are saved in the message and sent with
+ * the chat every time it opens, so a later result beyond this keeps only its source chip.
+ */
+export const MAX_TABLE_RESULTS_CHARS = 120_000;
+/**
  * Web look-ups that also search the knowledge base (same query, at the same time) when the documents haven't been
  * checked yet in this reply, so the model can compare both instead of ignoring the admin's documents.
  * read_page is left out: the user asked for one specific page.
@@ -115,6 +120,8 @@ async function runTool(
         ...(sources.length ? { sources } : {}),
         // A prepared GitHub change: the card under the answer (v0.13.0).
         ...(output.action ? { action: output.action } : {}),
+        // A spreadsheet calculation's whole result: the chart or table under the answer (v0.14.1).
+        ...(output.table ? { table: output.table } : {}),
       },
       content: output.content.slice(0, MAX_TOOL_RESULT_CHARS),
       ...(output.evidence ? { evidence: output.evidence } : {}),
@@ -161,6 +168,7 @@ export async function runAgent(input: {
   const evidence: string[] = []; // everything the tools returned in this reply, for the number check
   const kept: string[] = []; // what the look-up tools returned, kept with the answer so it can be checked later
   let privateContent = false; // private repository content is in this answer: no more web pages (leak guard)
+  let tableChars = 0; // spreadsheet results kept with this answer so far
   // What this answer has done so far, for tools that need it (GitHub changes: warnings and the per-answer cap).
   const turn: TurnState = { used: [], privateRead: false, prepared: 0 };
   const toolContext: ToolContext = { ...input.toolContext, turn };
@@ -202,6 +210,11 @@ export async function runAgent(input: {
     await input.events.tool(running(call));
     if (paired) await input.events.tool(running(paired));
     const [main, extra] = await Promise.all([runTool(call, toolMap, toolContext), paired ? runTool(paired, toolMap, toolContext) : null]);
+    if (main.event.table) {
+      const size = JSON.stringify(main.event.table).length;
+      if (tableChars + size > MAX_TABLE_RESULTS_CHARS) delete main.event.table;
+      else tableChars += size;
+    }
     result.tools.push(main.event);
     await input.events.tool(main.event);
     if (main.private) privateContent = turn.privateRead = true;

@@ -237,6 +237,8 @@ export interface ToolEventDto {
   sources?: SourceDto[];
   /** A GitHub change this step prepared, waiting for the user's approval (v0.13.0). The card loads its details. */
   action?: GithubActionRefDto;
+  /** A spreadsheet calculation's whole result: the chart or table under the answer, with a CSV download (v0.14.1). */
+  table?: TableResultDto;
 }
 
 // ------------------------------------------------------------------ GitHub changes with approval (v0.13.0)
@@ -380,6 +382,52 @@ export interface MessageFileDto {
   sheets: number;
   /** Data rows in all its tables. */
   rows: number;
+}
+
+/** How a date column is grouped in a calculation ("value": by its own values). */
+export type TableBucket = "value" | "year" | "quarter" | "month" | "week" | "day" | "weekday" | "hour";
+export type TableMetricOp = "count" | "count_distinct" | "sum" | "avg" | "min" | "max" | "median";
+
+/** One column of a calculation's result (v0.14.1). */
+export interface TableResultColumnDto {
+  /** As the model sees it, e.g. "Region", "Date (month)", "sum of Amount (USD)", "row". */
+  label: string;
+  /** group: what the rows are grouped by; metric: a calculated figure; row: the spreadsheet row number; column: a listed column. */
+  kind: "group" | "metric" | "row" | "column";
+  /**
+   * The values' type. Counts, sums, averages and medians are numbers; a lowest/highest value has its column's type;
+   * a date grouped by a period is text in a fixed form (see `by`).
+   */
+  type: TableColumnType;
+  /**
+   * Groups: how they were made. year "2026", quarter "2026-Q1", month "2026-03", week "2026-03-02" (its Monday),
+   * day "2026-03-05", weekday "1 Monday" … "7 Sunday", hour "00" … "23".
+   */
+  by?: TableBucket;
+  op?: TableMetricOp;
+  /** Number values: "%" or a currency such as "$" or "PKR" (from the spreadsheet column). */
+  unit?: string;
+}
+
+/**
+ * A calculation's whole result, kept with the answer and shown under it as a chart or table that the user can
+ * download as CSV (v0.14.1). The model may have seen only the first part of a long result.
+ */
+export interface TableResultDto {
+  /** The file (› sheet) it was calculated from. */
+  table: string;
+  /** What was calculated, e.g. "sum of Amount by Region · where Date in 2026". */
+  title: string;
+  mode: "aggregate" | "rows";
+  columns: TableResultColumnDto[];
+  /** In the result's order; an empty group is null. */
+  rows: TableCell[][];
+  /** Result rows in all (groups, or matching rows when listing): more than `rows` when only the first ones are kept. */
+  total: number;
+  /** Spreadsheet rows that matched the filters. */
+  matched: number;
+  /** How the figures were worked out, e.g. "Amount has empty cells; they are left out of the sum." */
+  notes?: string[];
 }
 
 // ------------------------------------------------------------------ Knowledge base (admin panel → Knowledge)

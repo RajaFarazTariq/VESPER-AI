@@ -9,7 +9,7 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.14.0**.
+Current version: **0.14.1**.
 
 - [What VESPER does](#what-vesper-does)
 - [How VESPER is different](#how-vesper-is-different)
@@ -37,7 +37,8 @@ question needs a look-up, fetches what it needs and cites it:
 - **Your documents**: the administrator adds PDFs, Word files, text or web pages to a knowledge base; answers cite
   "document, page X".
 - **Your spreadsheets**: attach a CSV or Excel file and ask questions about it; totals, averages, counts and trends are
-  calculated exactly over every row, and the answer says what was calculated.
+  calculated exactly over every row, the answer says what was calculated, and each result comes with a chart or table
+  you can download as CSV.
 - **Your code**: each user can connect their own GitHub (read-only) and ask about files, issues and pull requests.
 - **Changes you approve**: VESPER can prepare a GitHub issue, comment or pull request; it shows the exact change on a
   card and sends it only when you press Approve.
@@ -120,6 +121,19 @@ choices:
   database code: the query is built from fixed parts and every value is passed separately.
 - Under the answer, a chip such as "sales.xlsx · sum of Amount by Region · where Date in 2026" shows what was
   calculated; **Check** works on these answers too.
+- **Charts and downloads** (v0.14.1): each calculation also appears under the answer as a card with the whole result.
+  The chart is chosen for you:
+  - **a line** for figures over time (by year, quarter, month, week, day or hour). A period with no rows counts as 0 for
+    totals and counts and is a gap for averages.
+  - **bars** for other groupings, each with its figure.
+  - **one line per value** for "by month and region" (up to four values, with a legend).
+  - **a table** for lists of rows and anything else.
+
+  Hover, tap or use the arrow keys to read a point. Switch between **Chart** and **Table**, and pick the figure when
+  there are several (one at a time, never two scales on one chart). **Download CSV** saves the result with exact
+  values; it opens correctly in Excel, Urdu text included, and text that Excel could run as a formula is kept as plain
+  text. A result can hold up to 500 groups or 200 listed rows; the card says when only the first ones are shown. Ask
+  "make a chart of sales by month" or "list the overdue invoices so I can download them".
 - The AI provider gets the column overview, three example rows and the results, not the whole file. The rows are kept
   with the chat and deleted with it; a file you remove before sending is deleted at once, one never sent after a day.
 
@@ -193,7 +207,7 @@ What happens when you send a message:
 | API | Cloudflare Workers, Hono, zod validation, Server-Sent Events for streaming |
 | Database | Cloudflare D1 (SQLite) with add-only migrations |
 | AI | Groq, Google Gemini, OpenRouter (`:free` only), Mistral, Cloudflare Workers AI; Ollama optional |
-| Tests | Vitest running inside the Workers runtime with a real local D1 (274 tests) |
+| Tests | Vitest running inside the Workers runtime with a real local D1 (282 tests) |
 | Delivery | GitHub Actions: checks on every pull request, deploy on merge to `main` |
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -350,7 +364,8 @@ only when the admin turns on **Local models for users**.
 - **Research**: switch on **Research** in the message box for a planned, multi-source report.
 - **Images and voice**: use the paperclip (or paste/drag) to attach images, and the microphone to speak.
 - **Spreadsheets**: use the paperclip to attach a CSV or Excel file, wait until its chip shows the number of rows,
-  then ask about it. Follow-up questions in the same chat keep using it.
+  then ask about it. Follow-up questions in the same chat keep using it. Each result shows as a chart or table under
+  the answer, with **Download CSV**.
 - **Under each answer**: copy, read aloud, 👍/👎, **Check** (when the answer used sources) and regenerate.
 - **GitHub changes**: ask for an issue, a comment or a pull request; read the card under the answer, then **Approve**
   or **Reject**.

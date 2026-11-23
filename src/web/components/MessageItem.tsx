@@ -39,6 +39,7 @@ import {
 import { canSpeak, speak, stopSpeaking, useSpeakingId } from "../lib/voice";
 import { CopyButton, Markdown } from "./Markdown";
 import { GithubActionCard } from "./GithubActionCard";
+import { TableResults } from "./TableResultCard";
 import { SourceList, ToolActivity } from "./ToolActivity";
 import { VesperMark } from "./VesperMark";
 
@@ -105,6 +106,9 @@ function AssistantMessage({ message, isLast, canRetry, onRetry, isAdmin = false,
             <Markdown text={content} />
           </div>
         ) : null}
+
+        {/* Spreadsheet results: a chart or table each, with a CSV download (v0.14.1). After the answer is written. */}
+        {!message.streaming ? <TableResults tools={message.tools} /> : null}
 
         {/* GitHub changes this answer prepared: sent only when the user approves the card (v0.13.0). */}
         {(message.tools ?? []).flatMap((t) => (t.action ? [<GithubActionCard key={t.action.id} action={t.action} />] : []))}

@@ -3,22 +3,21 @@
 Read this first when resuming work. Last updated: **2026-11-24**. No secrets are stored here.
 
 ## ⏩ Quick resume (2026-11-24, end of session)
-- **Live:** v0.13.1 (write-access rule + no web search for GitHub code requests; PR #16, merge `1370123`, confirmed
-  live via /api/health on 2026-11-24). **v0.14.0 data analysis (spreadsheets in chat): built 2026-11-24, handed to the
-  owner to push** on branch `release/v0.14.0-data-analysis`. Check https://ai-assistant.vesper-ai.workers.dev/api/health:
-  `0.14.0` means it was merged and deployed; if it still says `0.13.1`, ask whether the PR was merged. Then run the
-  live test in section 0 ("v0.14.0 live test").
-- **Owner decided (2026-11-24):** build data analysis, with the recommended defaults: limits 10 MB / 50,000 rows /
-  100 columns per file, 10 files per user per day, 20 kept per user, 5 per chat; **on for everyone** from day one (it
-  only reads the user's own file); charts and downloads in a later release. He asked for it to be "perfect and accurate".
+- **Live:** v0.14.0 data analysis (spreadsheets in chat; PR #17, merge `a60b5ce`, CI and "Deploy to Cloudflare" green,
+  /api/health showed 0.14.0 on 2026-11-24). **v0.14.1 charts + CSV download: built 2026-11-24, handed to the owner to
+  push** on branch `release/v0.14.1-charts-csv`. Check https://ai-assistant.vesper-ai.workers.dev/api/health:
+  `0.14.1` means it was merged and deployed; if it still says `0.14.0`, ask whether the PR was merged.
+- **Owner's live tests still to do (he said "later"):** the v0.14.0 live test and the v0.14.1 live test (section 0).
+  Ask how they went; fix anything found in a v0.14.2.
+- **Owner decided (2026-11-24):** data analysis with the recommended defaults (10 MB / 50,000 rows / 100 columns per
+  file, 10 files per user per day, 20 kept per user, 5 per chat, on for everyone), then "go with your recommendation"
+  for v0.14.1 (charts + CSV download). He asks for work to be "perfect and accurate".
 - **GitHub set-up (unchanged):** "VESPER AI Reader" (read-only) and "VESPER AI Actions" (public since 2026-11-21);
-  GitHub for users ON, GitHub changes for users ON (10/day).
-- **Owner's small to-dos:** close test **PR #15 without merging** and delete its `vesper/…` branch; close test
-  **issue #14** (if not done yet; not checked from here). Older optional checks: "Pending owner checks" below.
-- **Next (owner to choose):** (1) v0.14.1 charts + "download result as CSV" for spreadsheet answers; (2) Gmail + Google
-  Calendar (drafts/events through the Approve/Reject card; note: Gmail access is a Google "restricted" scope, so
-  opening it to other users likely needs Google's app review, and in Testing mode sign-ins expire every 7 days);
-  (3) Excel files in the knowledge base (the reader from v0.14.0 can be reused); (4) fixes from testers.
+  GitHub for users ON, GitHub changes for users ON (10/day). Test PR #15 and issue #14 are closed (owner, 2026-11-24).
+- **Next (owner to choose):** (1) Gmail + Google Calendar (drafts/events through the Approve/Reject card; Gmail access
+  is a Google "restricted" scope, so opening it to other users likely needs Google's app review, and in Testing mode
+  sign-ins expire every 7 days); (2) Excel files in the knowledge base (reuse the v0.14.0 reader); (3) fixes from the
+  live tests or testers.
 - **How he works (details in section 2 and "How the owner wants each task run"):** numbered plan first, then report
   each step; plain words; dashboard tasks one step at a time; he runs all git himself; **git commands only for larger
   changes** (small fixes wait unless he asks); every release on its own branch + PR; no assistant/AI mentions in
@@ -26,8 +25,43 @@ Read this first when resuming work. Last updated: **2026-11-24**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-24)
 
-**v0.14.0 data analysis built 2026-11-24, handed to the owner to push** (branch `release/v0.14.0-data-analysis`).
-Plan approved by the owner (10 steps, defaults above). What was built:
+**v0.14.1 charts + CSV download built 2026-11-24, handed to the owner to push** (branch `release/v0.14.1-charts-csv`).
+Owner: "go with your recommendation". What was built (details in ARCHITECTURE 5j, "Charts and CSV downloads"):
+1. **Whole result with the answer:** `query_table` returns `table` (TableResultDto: columns with kind/type/by/op/unit,
+   exact rows, `total`, `matched`, notes); the agent puts it on the tool step, so it streams, is saved in
+   `messages.tools` and comes back on reload. No migration. Up to 500 groups (default 100) or 200 listed rows (default
+   20); the model still sees ≤ 7,000 characters. Caps: 40,000 JSON characters per result (`MAX_KEPT_RESULT_CHARS`),
+   120,000 per answer (`MAX_TABLE_RESULTS_CHARS`; a later result keeps only its chip).
+2. **Chart choice** (`web/lib/table-result.ts`, plain logic): date periods complete or in order → a line (empty
+   periods 0 for counts/sums, gaps for averages/medians/lowest/highest; > 1,500 periods → table); rankings and other
+   single groupings → bars; a date period × ≤ 4 values, complete → one line per value with a legend; single figures
+   get no card; listed rows → table.
+3. **Card** (`components/TableResultCard.tsx`, own SVG/HTML, no chart library): title = what was calculated,
+   "file · from N rows", Chart/Table switch, figure picker, hover/tap crosshair readout, arrow keys + spoken readout,
+   "Show all" for > 15 bars, notes ("Showing the first N of M groups", empty cells), **Download CSV**. Colours
+   `--chart-1…4` in styles.css (violet accent, orange, aqua, yellow), validated for colour-blind separation on the
+   card surface in light and dark.
+4. **CSV:** exact values, Yes/No, ISO dates ("2026-03-05 14:30"), weekdays by name, hours as 14:00, quoting, formula
+   guard (leading apostrophe on text starting with = + - @), CRLF, byte-order mark (Excel + Urdu), file name
+   "file - what was calculated.csv".
+5. **Prompt + tool description:** the model is told results appear under its answer as a chart/table with a download,
+   so "make a chart" / "give me a file" means running the right calculation, never drawing in text or saying it can't.
+6. **Tests:** 282 in all (8 new: kept result and units, size caps through a chat turn, which results get a card, chart
+   choice, period filling, wording, CSV and file name). Headless Edge against `wrangler dev` + mock (regular user):
+   bars, line with picker + hover readout, one line per region, rows table, Table view, both CSV downloads checked
+   byte for byte (BOM, CRLF, exact values), phone light, keyboard readout, reload keeps the cards; only console error
+   the usual pre-login 401. Typecheck + build ✔️. Fixed during the check: phone heading squeezed by the switch (now
+   wraps), "no figure" widening the bar column (now "–", read out as "no figure").
+7. Docs (README, ARCHITECTURE 5j, CONFIGURATION, this file) and version 0.14.1.
+
+**v0.14.1 live test (after the merge):** (a) /api/health shows 0.14.1; (b) in a chat with a real file ask "total
+<amount> by month": a line chart under the answer, hover a point, switch to Table; (c) "total <amount> by <text
+column>": bars; (d) "list the rows where …": a table; press **Download CSV** and open the file in Excel: same values,
+Urdu/accents readable; (e) on the phone: card fits, Chart/Table switch below the title; (f) reload the chat: the
+cards come back.
+
+**v0.14.0 data analysis (live since 2026-11-24, PR #17, merge `a60b5ce`).** Plan approved by the owner (10 steps,
+defaults above). What was built:
 1. **Reading** in the browser (`web/lib/table-read.ts` pure logic, `table-file.ts` file + SheetJS, `table-reader.worker.ts`
    background worker, `lib/tables.ts` worker + upload): CSV/TSV (separator sniffed, `sep=` hint, quotes, UTF-8 /
    UTF-16 / Windows-1252), Excel .xlsx/.xlsm/.xls and .ods (SheetJS CE **0.20.3 from cdn.sheetjs.com**, pinned with
@@ -67,7 +101,7 @@ Plan approved by the owner (10 steps, defaults above). What was built:
 10. Docs (README, ARCHITECTURE 5j, CONFIGURATION, this file) and version 0.14.0.
 Also fixed on the way: the admin Save button now also waits for a valid "GitHub changes per user per day".
 
-**v0.14.0 live test (after the merge, one step at a time):** (a) /api/health shows 0.14.0; (b) Admin panel → App
+**v0.14.0 live test (owner: "later"; one step at a time):** (a) /api/health shows 0.14.0 ✔️ (2026-11-24); (b) Admin panel → App
 settings: "Spreadsheets (CSV and Excel)" on, 10 per day, rows read 2,000,000, "Used today: 0"; (c) in a new chat attach
 a small real Excel or CSV file (a few hundred rows, with a date and an amount column): chip shows the right row count;
 (d) ask "total <amount> by month" and "top 5 <names> by <amount>": compare with Excel's own totals (SUM / a pivot
@@ -210,9 +244,9 @@ GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11
 logo in light mode ✅ → README rewrite (PR #10) ✅ → v0.12.3 sign-in orbit animation (owner's request) ✅ → v0.12.4
 cleaner source chips + GitHub line links (PR #12) ✅ → v0.13.0 GitHub changes with approval, separate Actions app
 (PR #13) ✅, set up + live-tested ✅ → v0.13.1 write-access rule + search fix (PR #16) ✅ → v0.14.0 data analysis
-(built 2026-11-24, to push). Proposed next (owner to choose): v0.14.1 charts + CSV download, then Gmail + Calendar
-(they can reuse the approval card for sending mail or creating events).
-**Pending owner checks:** v0.14.0 live test (above, after the merge); v0.13.0 setup + live test (above); v0.12.4 live check; GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
+(PR #17) ✅ → v0.14.1 charts + CSV download (built 2026-11-24, to push). Proposed next (owner to choose): Gmail +
+Calendar (they can reuse the approval card for sending mail or creating events), Excel in the knowledge base.
+**Pending owner checks:** v0.14.1 live test (above, after the merge); v0.14.0 live test steps (b)–(g) (above); v0.13.0 setup + live test (above); v0.12.4 live check; GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
 
 **v0.10.0 live test (owner, 2026-11-20):** ✔️ phone number refused with the reason; memories "planning a trip to
@@ -817,8 +851,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Cleaner sources + GitHub line links (v0.12.4)**: chips = pages the answer used (other search results behind "+N other results checked"); site + page title when a site repeats; `#L9-13` → `#L9-L13`, plain line references linked; prompt line for line links | ✅ live (v0.12.4, PR #12, merge `d08213f`, deployed 2026-11-20; 250 tests); owner's live check pending |
 | **GitHub changes with approval (v0.13.0)**: separate Actions app + connection; 3 prepare-only tools (issue, comment, PR from exact edits); approval card with the exact text / every changed line; Approve sends once (stale files refused, new `vesper/…` branch, never merges); warnings; limits (3/answer, 10 waiting, 24 h, daily per user); admin switch + limit; next answer knows outcomes; migration 0012 | ✅ live (v0.13.0, PR #13, merge `cacce3d`, deployed 2026-11-21; 255 tests); hidden until the Actions app is set up; live test pending |
 | **Write-access rule + GitHub search fix (v0.13.1)**: changes only in repos the user can write to (checked again at Approve); no automatic web search for messages about the user's GitHub code | ✅ live (v0.13.1, PR #16, merge `1370123`; confirmed 2026-11-24) |
-| **Spreadsheets in chat: data analysis (v0.14.0)**: CSV/Excel/ODS read in the browser (worker, SheetJS), rows in D1 per chat, `query_table` calculates in the database over every row, source chip says what was calculated, daily share of D1 reads, migration 0013 | 🔨 built 2026-11-24 (274 tests, typecheck, build, headless check); to push; then the live test in section 0 |
-| **Next: to propose** (v0.14.1 charts + CSV download, then Gmail + Calendar) | ⏳ |
+| **Spreadsheets in chat: data analysis (v0.14.0)**: CSV/Excel/ODS read in the browser (worker, SheetJS), rows in D1 per chat, `query_table` calculates in the database over every row, source chip says what was calculated, daily share of D1 reads, migration 0013 | ✅ live (v0.14.0, PR #17, merge `a60b5ce`; /api/health confirmed 2026-11-24); owner's live test pending |
+| **Charts + CSV download (v0.14.1)**: each calculation under the answer as a line/bars/table card with Chart/Table switch, figure picker, hover and keyboard readouts, and an exact, Excel-safe CSV download; up to 500 groups / 200 listed rows | 🔨 built 2026-11-24 (282 tests, typecheck, build, headless check); to push; then the live test in section 0 |
+| **Next: to propose** (Gmail + Calendar, Excel in the knowledge base) | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -858,7 +893,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 274 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 282 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
@@ -924,6 +959,14 @@ Apply new migrations locally first: `npx wrangler d1 migrations apply DB --local
   Real Excel files are unaffected (VESPER converts day numbers itself, without time zones).
 - **D1 counts every row `json_each()` walks as a row read**, and GROUP BY / ORDER BY read them again (measured
   2026-11-24). Keep the spreadsheet read budget (`tablesRowsPerDay`) well under the free 5,000,000 a day.
+- **Local server against the mock without touching `.dev.vars`** (its key lines are empty):
+  `npx wrangler dev --port 8787 --local --var GROQ_API_KEY:mock --var GROQ_BASE_URL:http://127.0.0.1:8790/groq`, with
+  `node scripts/mock-llm.mjs` running. On Windows, stopping the background command leaves wrangler's `node`/`workerd`
+  children running: end the tree (`taskkill /PID <npx pid> /T /F`) and check that ports 8787/8790 are free.
+- **Headless downloads:** send `Browser.setDownloadBehavior` (`allow`, a download folder, `eventsEnabled`) on the
+  browser's own DevTools connection (`/json/version`) and keep that connection open; closing it resets the setting.
+- **Code under `src/web/lib` that tests import must not use `document`/`window`**: the worker typecheck also reads the
+  tests (no DOM types there). Keep page code in components (e.g. the CSV save lives in `TableResultCard.tsx`).
 - Model IDs and free limits change often: lists are fetched live; defaults can be overridden with `*_MODEL` variables.
 - The OpenRouter guard (`:free` only) and "no paid provider in code" are the zero-cost guarantees. Keep them.
 
