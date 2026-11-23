@@ -61,6 +61,9 @@ export const appSettingsSchema = z.object({
   githubForUsers: z.boolean(),
   githubActionsForUsers: z.boolean(),
   githubActionsPerDay: z.number().int().min(0).max(100),
+  tablesEnabled: z.boolean(),
+  tablesPerDay: z.number().int().min(0).max(1_000),
+  tablesRowsPerDay: z.number().int().min(0).max(4_500_000),
 });
 
 type Key = keyof AppSettingsDto;
@@ -98,6 +101,11 @@ export function defaultAppSettings(config: AppConfig): AppSettingsDto {
     // GitHub changes with approval (separate Actions app): admins first; switch on for users after a live test.
     githubActionsForUsers: false,
     githubActionsPerDay: 10,
+    // Spreadsheets (v0.14.0): on for everyone (they only read the user's own file); 10 files per user per day.
+    tablesEnabled: true,
+    tablesPerDay: 10,
+    // 2 of D1's free 5 million rows read a day: about 20 questions on a 50,000-row file, or 400 on a 2,500-row one.
+    tablesRowsPerDay: 2_000_000,
   };
 }
 

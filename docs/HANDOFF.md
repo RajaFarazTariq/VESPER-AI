@@ -1,31 +1,81 @@
 # VESPER: handoff notes for a new working session
 
-Read this first when resuming work. Last updated: **2026-11-21**. No secrets are stored here.
+Read this first when resuming work. Last updated: **2026-11-24**. No secrets are stored here.
 
-## ⏩ Quick resume (2026-11-21, end of session)
-- **Live:** v0.13.0 (GitHub changes with approval). **v0.13.1** (write-access rule + no web search for GitHub code
-  requests) was handed to the owner to push on branch `release/v0.13.1-write-access-rule`. Check
-  https://ai-assistant.vesper-ai.workers.dev/api/health: `0.13.1` means it was merged and deployed; if it still says
-  `0.13.0`, ask whether the PR was merged. The local folder is then on that branch: start with `git switch main` →
-  `git -c credential.helper= pull origin main`.
-- **GitHub set-up now:** two apps. "VESPER AI Reader" (read-only, any account) and "VESPER AI Actions" (slug
-  `vesper-ai-actions`, Contents/Issues/Pull requests read+write, **made public 2026-11-21**). Admin panel: **GitHub for
-  users ON**, **GitHub changes for users ON**, 10 changes per user per day. Each user acts only on repos their own
-  account can write to (v0.13.1); nobody else can change VESPER-AI.
-- **Owner's small to-dos:** on GitHub close test **PR #15 without merging** (merging would deploy) and delete its
-  `vesper/…` branch; close test **issue #14**. Older optional checks: the "Pending owner checks" line below.
-- **Next (owner to choose when we continue):** (1) data analysis: upload a CSV/Excel file and ask questions about it;
-  (2) Gmail + Google Calendar: draft emails / create events, reusing the Approve/Reject card from v0.13.0; (3) any
-  fixes from testers' use of GitHub changes.
+## ⏩ Quick resume (2026-11-24, end of session)
+- **Live:** v0.13.1 (write-access rule + no web search for GitHub code requests; PR #16, merge `1370123`, confirmed
+  live via /api/health on 2026-11-24). **v0.14.0 data analysis (spreadsheets in chat): built 2026-11-24, handed to the
+  owner to push** on branch `release/v0.14.0-data-analysis`. Check https://ai-assistant.vesper-ai.workers.dev/api/health:
+  `0.14.0` means it was merged and deployed; if it still says `0.13.1`, ask whether the PR was merged. Then run the
+  live test in section 0 ("v0.14.0 live test").
+- **Owner decided (2026-11-24):** build data analysis, with the recommended defaults: limits 10 MB / 50,000 rows /
+  100 columns per file, 10 files per user per day, 20 kept per user, 5 per chat; **on for everyone** from day one (it
+  only reads the user's own file); charts and downloads in a later release. He asked for it to be "perfect and accurate".
+- **GitHub set-up (unchanged):** "VESPER AI Reader" (read-only) and "VESPER AI Actions" (public since 2026-11-21);
+  GitHub for users ON, GitHub changes for users ON (10/day).
+- **Owner's small to-dos:** close test **PR #15 without merging** and delete its `vesper/…` branch; close test
+  **issue #14** (if not done yet; not checked from here). Older optional checks: "Pending owner checks" below.
+- **Next (owner to choose):** (1) v0.14.1 charts + "download result as CSV" for spreadsheet answers; (2) Gmail + Google
+  Calendar (drafts/events through the Approve/Reject card; note: Gmail access is a Google "restricted" scope, so
+  opening it to other users likely needs Google's app review, and in Testing mode sign-ins expire every 7 days);
+  (3) Excel files in the knowledge base (the reader from v0.14.0 can be reused); (4) fixes from testers.
 - **How he works (details in section 2 and "How the owner wants each task run"):** numbered plan first, then report
   each step; plain words; dashboard tasks one step at a time; he runs all git himself; **git commands only for larger
   changes** (small fixes wait unless he asks); every release on its own branch + PR; no assistant/AI mentions in
   commits or PRs; personal project: nothing saved in the assistant's memory, no EOD logging, this file is the memory.
 
-## 0. ▶ Resume here (where we stopped on 2026-11-21)
+## 0. ▶ Resume here (where we stopped on 2026-11-24)
 
-**v0.13.1 built 2026-11-21, handed to the owner to push** (branch `release/v0.13.1-write-access-rule`): (1) **write-access rule** (owner asked, after opening GitHub changes to users): every change, issues and comments too, is prepared only in repos the user's own account can write to (`canWrite` in `tools/github-actions.ts`: push/maintain/admin), and `executeGithubAction` checks it again before sending ("can no longer write … Nothing was sent"); so nobody can use VESPER to post in someone else's public repo, VESPER-AI included. (2) **No automatic web search for GitHub code requests** (`planPrefetch` skips when GitHub tools are offered and the message names a repo: owner/name, github.com link, repo/PR/commit/branch/README words, #number or a file name). 257 tests (1 new GitHub test, 1 new unit test), typecheck, build.
-**State:** Live is **v0.13.0** (GitHub changes with approval; PR #13, merge `cacce3d`, deployed 2026-11-21). Actions app
+**v0.14.0 data analysis built 2026-11-24, handed to the owner to push** (branch `release/v0.14.0-data-analysis`).
+Plan approved by the owner (10 steps, defaults above). What was built:
+1. **Reading** in the browser (`web/lib/table-read.ts` pure logic, `table-file.ts` file + SheetJS, `table-reader.worker.ts`
+   background worker, `lib/tables.ts` worker + upload): CSV/TSV (separator sniffed, `sep=` hint, quotes, UTF-8 /
+   UTF-16 / Windows-1252), Excel .xlsx/.xlsm/.xls and .ods (SheetJS CE **0.20.3 from cdn.sheetjs.com**, pinned with
+   its integrity hash; the npm copy is outdated). Header row found (title rows skipped), one type per column (number,
+   date, yes/no, text; ≥ 90% fit, ≤ 1 or 2% misfits left empty and counted), "$1,200" / "(45)" / "12,5%" / "1.234,50"
+   (decimal comma per column) / ISO, slashed (day-month order per column; ambiguous → browser language) and named-month
+   dates; codes like "00123" stay text; "n/a", "-" empty; trailing "Total" row left out with a note; subtotals noted.
+   Excel day numbers converted without time zones (1900 leap-year bug, 1904 system), % formats → percent units,
+   currency formats → unit. Rows stored as `[row number, cells…]` in blocks of ≤ 500 rows and ≤ 200,000 **bytes**.
+2. **Storage**: migration `0013_data_tables.sql` (add-only): `data_files`, `data_tables`, `data_chunks`,
+   `messages.files`, `user_usage_daily.tables`. Deleting a chat deletes its files; unsent ones go after 24 h (cron) or
+   at once when removed from the composer (today's count given back).
+3. **Upload API** (`routes/files.ts`): create (overview, 512 KB cap) → chunks (≤ 240 KB, 3 at a time, retried, safe to
+   repeat) → complete (all blocks and the exact row count) → linked to the chat when the message is sent. Owner only.
+4. **Composer**: the paperclip takes images and spreadsheets (one per message, 5 per chat); chip shows Reading… →
+   Uploading n% (bar) → "N rows · M sheets"; the sent message keeps a chip. Cloud models only (Ollama and deep
+   research refuse files with a message).
+5. **Tool `query_table`** ("Table analysis", `tools/tables.ts`): filters, grouping (value; dates by year, quarter,
+   month, week starting Monday, day, weekday, hour), count / count distinct / sum / average / min / max / median,
+   sorting, limits, or listing rows with their spreadsheet row numbers. SQL built from fixed parts over
+   `json_each(data_chunks.rows)`, every value bound; text matching ignores case; "2026" / "2026-03" filter whole
+   periods. Results ≤ 7,000 characters (rows dropped from the end with a note).
+6. **Prompt**: "Files in this chat" with each table's overview (T1, T2…; ≤ 6,000 characters for all, shortened step by
+   step), marked as data; rules: every figure from the tool, say what it covers, use the units. Without the tool the
+   prompt says it can't calculate. No automatic web search in chats with a table ("sales in 2026" is about the file).
+7. **Under the answer**: a source chip "file · what was calculated" (kind `table`, always listed, visible to users);
+   results kept as evidence, so Check and the admin number check work.
+8. **Admin**: Spreadsheets switch (on), per user per day (10), **rows read for calculations per day (2,000,000)** with
+   "Used today"; Users tab shows today's spreadsheets. Found while measuring: D1 counts every JSON row a query walks as
+   a row read and grouping reads them again (50,000 rows → ~100,000 rows read, 135 ms locally). D1's free 5 million
+   reads a day are shared by the whole app and every query fails once they're used, so calculations got this share
+   (estimate checked before, real `meta.rows_read` counted after; counter `tables:rows_read` in `rate_limits`).
+9. **Tests**: 274 in all (16 new in `tests/tables.test.ts`; two tool-list tests updated; the migration guard adds one
+   for 0013). Headless Edge against `wrangler dev` + `scripts/mock-llm.mjs` (which can now call the table tool):
+   attach CSV → "8 rows" chip → question → exact grouped sums, source chip, message chip; desktop dark, phone light,
+   admin section; no console errors (the worker runs under the strict CSP). Typecheck + build ✔️.
+10. Docs (README, ARCHITECTURE 5j, CONFIGURATION, this file) and version 0.14.0.
+Also fixed on the way: the admin Save button now also waits for a valid "GitHub changes per user per day".
+
+**v0.14.0 live test (after the merge, one step at a time):** (a) /api/health shows 0.14.0; (b) Admin panel → App
+settings: "Spreadsheets (CSV and Excel)" on, 10 per day, rows read 2,000,000, "Used today: 0"; (c) in a new chat attach
+a small real Excel or CSV file (a few hundred rows, with a date and an amount column): chip shows the right row count;
+(d) ask "total <amount> by month" and "top 5 <names> by <amount>": compare with Excel's own totals (SUM / a pivot
+table); the chip under the answer says what was calculated; (e) ask a follow-up in the same chat (no re-upload); (f)
+press Check on one answer; (g) delete the chat (its file goes with it). Note "Used today" in the admin panel after.
+
+**v0.13.1 (live since 2026-11-24, PR #16, merge `1370123`)**: (1) **write-access rule** (branch `release/v0.13.1-write-access-rule`): (1) **write-access rule** (owner asked, after opening GitHub changes to users): every change, issues and comments too, is prepared only in repos the user's own account can write to (`canWrite` in `tools/github-actions.ts`: push/maintain/admin), and `executeGithubAction` checks it again before sending ("can no longer write … Nothing was sent"); so nobody can use VESPER to post in someone else's public repo, VESPER-AI included. (2) **No automatic web search for GitHub code requests** (`planPrefetch` skips when GitHub tools are offered and the message names a repo: owner/name, github.com link, repo/PR/commit/branch/README words, #number or a file name). 257 tests (1 new GitHub test, 1 new unit test), typecheck, build.
+**State:** Live is **v0.13.1** (since 2026-11-24). Before it v0.13.0 (GitHub changes with approval; PR #13, merge `cacce3d`, deployed 2026-11-21). Actions app
 set up by the owner 2026-11-21: app "VESPER AI Actions" (slug `vesper-ai-actions`, first only on his account, made public the same day; private key under Credentials → Key pairs, unused), 3 Cloudflare settings added, connected as @RajaFarazTariq with VESPER-AI chosen. **Live test ✔️ (2026-11-21):** (a) issue #14 "Test from VESPER" approved → created; (b) comment on #14 rejected → nothing sent (card showed the "text by others" warning after github_issues, as designed); (c) PR #15 from `vesper/update-readme-version-for-approval-test-7f21`, one-line README diff, CI green (owner to close it unmerged and delete the branch, and close #14); (d) Recent changes listed all three. **Found:** (c) also ran the automatic web search (prefetch) because "Current version" looks time-sensitive (`planPrefetch` → `isTimeSensitive`), adding 3 unrelated chips and using a search. Small fix proposed (v0.13.1): no prefetch when the message names a GitHub repo (owner/name or github.com link) and GitHub tools are offered.
 Before it: v0.12.4 (cleaner sources + GitHub line links; PR #12, merge `d08213f`, deployed 2026-11-20).
 Owner decided 2026-11-21 (after comparing security, users, accuracy and admin control): a **separate "Actions" GitHub
@@ -159,9 +209,10 @@ GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11
 **Order (owner, 2026-11-20):** v0.10.1 ✅ → v0.11.0 ✅ → v0.12.0 GitHub read-only ✅ → v0.12.1 new logo ✅ → v0.12.2
 logo in light mode ✅ → README rewrite (PR #10) ✅ → v0.12.3 sign-in orbit animation (owner's request) ✅ → v0.12.4
 cleaner source chips + GitHub line links (PR #12) ✅ → v0.13.0 GitHub changes with approval, separate Actions app
-(PR #13) ✅, set up + live-tested ✅ → v0.13.1 write-access rule + search fix (to push). Proposed next (owner to choose): data analysis, then Gmail + Calendar (they can reuse the approval
-card for sending mail or creating events).
-**Pending owner checks:** v0.13.0 setup + live test (above); v0.12.4 live check; GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
+(PR #13) ✅, set up + live-tested ✅ → v0.13.1 write-access rule + search fix (PR #16) ✅ → v0.14.0 data analysis
+(built 2026-11-24, to push). Proposed next (owner to choose): v0.14.1 charts + CSV download, then Gmail + Calendar
+(they can reuse the approval card for sending mail or creating events).
+**Pending owner checks:** v0.14.0 live test (above, after the merge); v0.13.0 setup + live test (above); v0.12.4 live check; GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
 
 **v0.10.0 live test (owner, 2026-11-20):** ✔️ phone number refused with the reason; memories "planning a trip to
@@ -765,8 +816,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Sign-in orbit animation (v0.12.3)**: the small circles travel slowly along the orbit lines around the logo (32/50/76 s per turn), one violet circle added; logo still; still for reduced motion; CSS only | ✅ live (v0.12.3, PR #11, merge `f94ffa3`, deployed 2026-11-20); owner checked ✔️ |
 | **Cleaner sources + GitHub line links (v0.12.4)**: chips = pages the answer used (other search results behind "+N other results checked"); site + page title when a site repeats; `#L9-13` → `#L9-L13`, plain line references linked; prompt line for line links | ✅ live (v0.12.4, PR #12, merge `d08213f`, deployed 2026-11-20; 250 tests); owner's live check pending |
 | **GitHub changes with approval (v0.13.0)**: separate Actions app + connection; 3 prepare-only tools (issue, comment, PR from exact edits); approval card with the exact text / every changed line; Approve sends once (stale files refused, new `vesper/…` branch, never merges); warnings; limits (3/answer, 10 waiting, 24 h, daily per user); admin switch + limit; next answer knows outcomes; migration 0012 | ✅ live (v0.13.0, PR #13, merge `cacce3d`, deployed 2026-11-21; 255 tests); hidden until the Actions app is set up; live test pending |
-| **Write-access rule + GitHub search fix (v0.13.1)**: changes only in repos the user can write to (checked again at Approve); no automatic web search for messages about the user's GitHub code | 🔨 built 2026-11-21 (257 tests, typecheck, build); handed to the owner to push |
-| **Next: to propose** (data analysis, then Gmail + Calendar) | ⏳ |
+| **Write-access rule + GitHub search fix (v0.13.1)**: changes only in repos the user can write to (checked again at Approve); no automatic web search for messages about the user's GitHub code | ✅ live (v0.13.1, PR #16, merge `1370123`; confirmed 2026-11-24) |
+| **Spreadsheets in chat: data analysis (v0.14.0)**: CSV/Excel/ODS read in the browser (worker, SheetJS), rows in D1 per chat, `query_table` calculates in the database over every row, source chip says what was calculated, daily share of D1 reads, migration 0013 | 🔨 built 2026-11-24 (274 tests, typecheck, build, headless check); to push; then the live test in section 0 |
+| **Next: to propose** (v0.14.1 charts + CSV download, then Gmail + Calendar) | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -806,7 +858,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 257 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 274 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
@@ -865,6 +917,13 @@ Apply new migrations locally first: `npx wrangler d1 migrations apply DB --local
   silently lays out at ~500px. Use DevTools-protocol emulation (`Emulation.setDeviceMetricsOverride`, mobile: true;
   `Emulation.setEmulatedMedia` for dark mode) via Node's built-in `WebSocket` with `--remote-debugging-port`.
 - Shell heredocs/Python one-liners turned `\n` escapes into real newlines; write multi-line code with a file editor instead.
+  The same happens to any doubled backslash (2026-11-24: `\\b` in a regex became an invisible backspace character in
+  `scripts/mock-llm.mjs`, found and fixed). Put scripts with backslashes in a file (editor), never inline.
+- **SheetJS turns JavaScript dates into Excel day numbers using the machine's time zone**, and the Workers test
+  runtime uses the PC's zone (UTC+5): build test workbooks from Excel day numbers (46037 = 2026-01-15), not `Date`s.
+  Real Excel files are unaffected (VESPER converts day numbers itself, without time zones).
+- **D1 counts every row `json_each()` walks as a row read**, and GROUP BY / ORDER BY read them again (measured
+  2026-11-24). Keep the spreadsheet read budget (`tablesRowsPerDay`) well under the free 5,000,000 a day.
 - Model IDs and free limits change often: lists are fetched live; defaults can be overridden with `*_MODEL` variables.
 - The OpenRouter guard (`:free` only) and "no paid provider in code" are the zero-cost guarantees. Keep them.
 

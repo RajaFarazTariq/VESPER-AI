@@ -5,6 +5,7 @@ import {
   CircleCheck,
   CircleQuestionMark,
   CircleX,
+  FileSpreadsheet,
   FileText,
   Info,
   Loader2,
@@ -521,6 +522,29 @@ function UserMessage({ message, canEdit, onEdit }: { message: UiMessage; canEdit
 
   return (
     <div className="rise-in group flex flex-col items-end gap-1">
+      {message.files?.length ? (
+        <ul className="flex max-w-[85%] flex-wrap justify-end gap-2" aria-label="Attached spreadsheets">
+          {message.files.map((f) => (
+            <li
+              key={f.id}
+              className="flex max-w-[18rem] items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] py-2 pl-2.5 pr-3.5"
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
+                <FileSpreadsheet size={16} />
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-[13px] font-medium" title={f.name}>
+                  {f.name}
+                </span>
+                <span className="block text-xs text-[var(--text-soft)]">
+                  {f.rows.toLocaleString()} row{f.rows === 1 ? "" : "s"}
+                  {f.sheets > 1 ? ` · ${f.sheets} sheets` : ""}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {message.images?.length ? (
         <div className="flex max-w-[85%] flex-wrap justify-end gap-2">
           {message.images.map((src, i) => (

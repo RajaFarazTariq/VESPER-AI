@@ -561,6 +561,8 @@ describe("phase 5: tools and memory over HTTP", () => {
       ["weather", "read"],
       ["wikipedia", "read"],
       ["currency", "read"],
+      // Spreadsheets are on by default (v0.14.0): Table analysis is listed (it's offered in chats with a spreadsheet).
+      ["query_table", "read"],
     ]);
     // With a search key, web search is listed too.
     const withKey = await call("/api/tools", { cookie, env: { TAVILY_API_KEY: "tvly-test" } });

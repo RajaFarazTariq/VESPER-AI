@@ -7,6 +7,7 @@ import type {
   ConversationDto,
   LocalPrepareResponse,
   MessageDto,
+  MessageFileDto,
   ProviderId,
   ToolEventDto,
   VerificationDto,
@@ -26,6 +27,8 @@ import {
   updateLastUserMessage,
 } from "../db/conversations";
 import { searchableCollections } from "../db/knowledge";
+import { conversationFileCount, conversationHasTables, conversationTables, linkTableFiles, unsentReadyFiles } from "../db/tables";
+import { TABLE_LIMITS } from "../../shared/tables";
 import { listMemories, selectMemories } from "../db/memories";
 import { D1ProviderStateStore, utcDay } from "../db/provider-state";
 import { getAppSettings, holdResearchSearches, releaseResearchSearches, userMayUseModel, type SearchHold } from "../db/app-settings";
@@ -55,6 +58,7 @@ import { enabledTools, webToolContext, type AgentTool } from "../tools/registry"
 import { githubAccess, githubConnected, githubWriter } from "../tools/github-client";
 import { conversationGithubActions, expireGithubActions } from "../db/github";
 import { githubActionsAllowed, githubAllowed } from "./connections";
+import { tablesAllowed } from "./files";
 import { requireUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/security";
 
@@ -76,9 +80,13 @@ const chatSchema = z
     images: z.array(chatImageSchema).max(MAX_IMAGES_PER_MESSAGE, `Up to ${MAX_IMAGES_PER_MESSAGE} images per message.`).optional(),
     /** Deep research: plan → several searches → read pages → a written brief. */
     research: z.boolean().optional(),
+    /** A spreadsheet added beforehand through /api/files (only with a new message, v0.14.0). */
+    files: z.array(z.uuid()).max(TABLE_LIMITS.perMessage, "Attach one spreadsheet per message.").optional(),
   })
   .refine((d) => !(d.research && d.images?.length), { message: "Deep research works with text questions only. Remove the images." })
-  .refine((d) => (d.regenerate ? Boolean(d.conversationId) : Boolean(d.message?.trim()) || Boolean(d.images?.length)), {
+  .refine((d) => !(d.research && d.files?.length), { message: "Deep research works with text questions only. Remove the spreadsheet." })
+  .refine((d) => !d.files?.length || (!d.regenerate && !d.edit), { message: "Spreadsheets can only be attached to a new message." })
+  .refine((d) => (d.regenerate ? Boolean(d.conversationId) : Boolean(d.message?.trim()) || Boolean(d.images?.length) || Boolean(d.files?.length)), {
     message: "A non-empty message is required (or conversationId with regenerate).",
   })
   .refine((d) => !d.edit || (Boolean(d.conversationId) && !d.regenerate && Boolean(d.message?.trim())), {
@@ -139,7 +147,7 @@ async function consumeImages(db: D1Database, user: SessionUser, count: number, p
 async function prepareTurn(
   c: Context<AppEnv>,
   user: SessionUser,
-  input: { conversationId?: string; message?: string; regenerate?: boolean; edit?: boolean; images?: ChatImageInput[] },
+  input: { conversationId?: string; message?: string; regenerate?: boolean; edit?: boolean; images?: ChatImageInput[]; files?: MessageFileDto[] },
   selection: string,
   extras: {
     tools: AgentTool[];
@@ -172,7 +180,8 @@ async function prepareTurn(
     conversation = await getConversation(db, user.id, input.conversationId);
     if (!conversation) throw notFound("Conversation");
   } else {
-    conversation = await createConversation(db, user.id, deriveTitle(text || (input.images?.length ? "Image" : "")), selection);
+    const attachedName = input.files?.[0]?.name ?? (input.images?.length ? "Image" : "");
+    conversation = await createConversation(db, user.id, deriveTitle(text || attachedName), selection);
     isNew = true;
   }
 
@@ -197,18 +206,23 @@ async function prepareTurn(
       role: "user",
       content: text,
       images: input.images?.map((i) => i.thumb) ?? null,
+      files: input.files?.length ? input.files : null,
     });
+    // The spreadsheets now belong to this chat (deleted with it).
+    if (input.files?.length) await linkTableFiles(db, user.id, input.files.map((f) => f.id), conversation.id);
   }
   if (conversation.model !== selection) {
     await updateConversation(db, user.id, conversation.id, { model: selection });
     conversation = { ...conversation, model: selection };
   }
 
-  const [history, memories, earlier, githubChanges] = await Promise.all([
+  const [history, memories, earlier, githubChanges, tables] = await Promise.all([
     listMessages(db, conversation.id, HISTORY_LIMIT),
     user.settings.memoryEnabled ? listMemories(db, user.id) : Promise.resolve(undefined),
     getConversationSummary(db, conversation.id),
     extras.githubChanges && !isNew ? conversationGithubActions(db, user.id, conversation.id) : Promise.resolve([]),
+    // Spreadsheets in this chat (v0.14.0): their overviews go into the prompt.
+    extras.research ? Promise.resolve([]) : conversationTables(db, user.id, conversation.id),
   ]);
   // Memories: pinned ones plus those related to this message and the last few things the user said (v0.10.0).
   const about = history
@@ -230,6 +244,7 @@ async function prepareTurn(
       ...(extras.research ? { research: true } : {}),
       ...(summary ? { summary } : {}),
       ...(githubChanges.length ? { githubChanges } : {}),
+      ...(tables.length ? { tables } : {}),
     });
 
   // Long chats: messages already covered by the running notes aren't sent again in full.
@@ -281,6 +296,20 @@ export const chatRoutes = new Hono<AppEnv>()
     if (newImages.length === 0 && !research && (body.regenerate || body.edit) && body.conversationId && appSettings.imagesEnabled) {
       if (!(await getConversation(c.env.DB, user.id, body.conversationId))) throw notFound("Conversation");
       sendImages = await lastUserMessageImages(c.env.DB, body.conversationId);
+    }
+
+    // Spreadsheets (v0.14.0): a new one must be the user's own, finished and not sent yet; a chat holds up to 5.
+    const newFileIds = body.files ?? [];
+    let newFiles: MessageFileDto[] = [];
+    if (newFileIds.length > 0) {
+      if (!tablesAllowed(appSettings)) throw new AppError(403, "tables_off", "Spreadsheets are switched off. Send the question as text.");
+      newFiles = await unsentReadyFiles(c.env.DB, user.id, newFileIds);
+      if (newFiles.length !== newFileIds.length) {
+        throw new AppError(409, "file_not_ready", "That spreadsheet isn't ready to send (or was already sent). Remove it and attach it again.");
+      }
+      if (body.conversationId && (await conversationFileCount(c.env.DB, user.id, body.conversationId)) + newFiles.length > TABLE_LIMITS.perChat) {
+        throw new AppError(409, "chat_files_full", `A chat can have up to ${TABLE_LIMITS.perChat} spreadsheets. Start a new chat to add more.`);
+      }
     }
 
     const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, appSettings);
@@ -377,16 +406,20 @@ export const chatRoutes = new Hono<AppEnv>()
     // GitHub changes with approval (v0.13.0): offered when the Actions app is set up, allowed and connected.
     const githubActionsOn =
       !research && githubActionsAllowed(c.env, user, appSettings) && (await githubConnected(c.env.DB, user.id, "actions"));
+    // Spreadsheets (v0.14.0): the Table analysis tool is offered in chats that have one (while the admin allows it).
+    const hasTables =
+      newFiles.length > 0 || (body.conversationId !== undefined && (await conversationHasTables(c.env.DB, user.id, body.conversationId)));
     const tools = enabledTools(user.settings, appSettings.disabledTools, {
       web,
       knowledgeReady: knowledge.length > 0,
       github: githubOn,
       githubActions: githubActionsOn,
+      tables: hasTables && !research && tablesAllowed(appSettings),
     });
     const timeZone = normalizeTimeZone(body.timeZone);
     let turn: Awaited<ReturnType<typeof prepareTurn>>;
     try {
-      turn = await prepareTurn(c, user, body, selection, {
+      turn = await prepareTurn(c, user, { ...body, files: newFiles }, selection, {
         // Research writes from collected material: no tools in its prompt (it uses the knowledge base itself).
         tools: research ? [] : tools,
         adminInstructions: appSettings.botInstructions,
@@ -445,6 +478,7 @@ export const chatRoutes = new Hono<AppEnv>()
             ? { githubWriter: githubWriter({ env: c.env, db: c.env.DB, userId: user.id, userAgent: web.userAgent, signal: abort.signal }) }
             : {}),
           conversationId: turn.conversation.id,
+          tables: { rowsPerDay: appSettings.tablesRowsPerDay },
         };
         const events = {
           attempt: (t: { provider: ProviderId; model: string }) => send({ type: "attempt", provider: t.provider, model: t.model }),
@@ -508,8 +542,9 @@ export const chatRoutes = new Hono<AppEnv>()
             signal: abort.signal,
             store,
             health,
-            // Questions that clearly need a look-up are searched first, so the model answers in one request.
-            prefetch: planPrefetch(turn.userMessage.content, new Set(tools.map((t) => t.name))),
+            // Questions that clearly need a look-up are searched first, so the model answers in one request. Not in chats
+            // with a spreadsheet: "sales in 2026" is about the file, not the web (the model can still search itself).
+            prefetch: hasTables ? null : planPrefetch(turn.userMessage.content, new Set(tools.map((t) => t.name))),
             events,
           });
         }
@@ -606,13 +641,14 @@ export const chatRoutes = new Hono<AppEnv>()
       throw badRequest("Local chat requires an ollama:<model> selection.");
     }
     if (body.images?.length) throw badRequest("Images work with the cloud models only. Choose Auto or another cloud model.");
+    if (body.files?.length) throw badRequest("Spreadsheets work with the cloud models only. Choose Auto or another cloud model.");
     if (body.research) throw badRequest("Deep research needs a cloud model. Choose Auto or another cloud model.");
     // Local models run on the user's own computer, so they don't count against the daily limit.
     const { botInstructions, localModelsForUsers } = await getAppSettings(c.env.DB, getConfig(c.env));
     if (user.role !== "admin" && !localModelsForUsers) {
       throw new AppError(403, "local_models_off", "Local models aren't available. Choose Auto or another model.");
     }
-    const turn = await prepareTurn(c, user, body, selection, {
+    const turn = await prepareTurn(c, user, { ...body, files: undefined }, selection, {
       tools: [],
       adminInstructions: botInstructions,
       timeZone: normalizeTimeZone(body.timeZone),

@@ -353,6 +353,63 @@ sequenceDiagram
   user, a daily per-user limit counted at approval (admins unlimited).
 - The next turn's system prompt lists this chat's changes and outcomes (`githubChangeLines`), titles quoted as data.
 
+## 5j. Spreadsheets in chat: data analysis (v0.14.0)
+
+Users attach a CSV/TSV, Excel (.xlsx/.xlsm/.xls) or OpenDocument (.ods) file and ask questions about it. The design
+rule: **the model decides what to calculate, the database calculates it over every row**. The model never does the
+arithmetic and never writes SQL.
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant W as Worker
+  participant D as D1
+  participant M as Model
+  B->>B: read the file in a Web Worker (SheetJS for Excel): header, column types, overview, blocks of 500 rows
+  B->>W: POST /api/files (overview) → /chunks ×N (≤ 200 KB each) → /complete
+  W->>D: data_files, data_tables, data_chunks (uploading → ready)
+  B->>W: POST /api/chat { message, files: [id] }
+  W->>D: link the file to the chat; load the chat's tables (T1, T2…)
+  W->>M: prompt with each table's overview + the query_table tool
+  M->>W: query_table(T1, filters, group_by, metrics, sort)
+  W->>D: one SQL query over json_each(data_chunks.rows), values bound
+  W->>M: exact result (≤ 7,000 characters)
+  W-->>B: answer + source chip "file · what was calculated"
+```
+
+- **Reading** (`web/lib/table-read.ts`, pure; `table-file.ts` for files and SheetJS; `table-reader.worker.ts` runs it
+  off the page): finds the header (title rows skipped), names columns (letters when there is no header, duplicates
+  numbered), decides one type per column (≥ 90% of filled cells and at most 1 or 2% misfits; misfits become empty and
+  are counted), parses "$1,200", "(45)", "12,5%" (decimal comma decided per column), ISO, slashed (day/month order
+  decided per column; ambiguous files follow the browser: US English → month first) and named-month dates, keeps codes
+  like "00123" as text, treats "n/a"/"-" as empty, drops a trailing "Total" row (with a note) and notes subtotal
+  rows. Excel day numbers are converted without time zones (1900 leap-year quirk and 1904 system handled),
+  percentage formats become percent units (0.45 → 45, unit "%"), currency formats become the column's unit.
+  Rows are stored as `[spreadsheet row number, cell…]` in blocks of ≤ 500 rows and ≤ 200,000 bytes.
+- **Storage** (migration `0013_data_tables.sql`, add-only): `data_files` (owner, chat once sent, status),
+  `data_tables` (one per sheet: overview JSON, notes, 3 example rows), `data_chunks` (the rows). Deleting a chat
+  cascades; unsent files are removed by the daily clean-up after 24 hours or at once from the composer. Limits: 10 MB,
+  50,000 rows and 100 columns per file, 10 sheets, 1 per message, 5 per chat, 20 kept per user, 1 GB for the whole app.
+- **The tool** (`tools/tables.ts`, `query_table`, offered only in chats with a table): filters (=, !=, >, ≥, <, ≤,
+  between, in, not in, contains, starts with, empty), grouping (value; dates by year, quarter, month, week starting
+  Monday, day, weekday, hour), metrics (count, count distinct, sum, average, min, max, median via window functions),
+  sorting and limits, or a list of matching rows with their spreadsheet row numbers. Columns become fixed positions
+  (`json_extract(r.value, '$[k]')`), operators and buckets come from fixed lists, every value is a bound parameter.
+  Text compares ignore case; a date filter compares as many characters as given ("2026" = the year). Sums use
+  `TOTAL()` and stay empty (not 0) when there are no numbers.
+- **The prompt** (`tablesSection` in `llm/context.ts`): each table's overview (types, ranges, empty cells, common
+  values, example rows, reading notes), shortened step by step to fit 6,000 characters for all tables, marked as
+  data; rules: every figure from `query_table`, say what the figures cover, use the units. Without the tool (local
+  model, tools off) the prompt says figures can't be calculated. No automatic web search in chats with a table.
+- **Under the answer**: the tool returns a source `{ title: file › sheet, location: what was calculated, kind:
+  "table" }`, always listed (users don't see tool details otherwise); the result is kept as evidence, so the number
+  check and **Check this answer** work.
+- **Free-tier guard**: D1 counts every JSON row a query walks as a row read, and grouping/sorting reads them again
+  (measured: 50,000 rows → ~100,000 rows read, 135 ms locally). D1's free 5 million rows read a day are shared by the
+  whole app, and every query fails once they are used, so calculations have their own daily share (`tablesRowsPerDay`,
+  default 2,000,000, max 4,500,000): checked before each query (estimate 2 × rows) and counted after it with D1's
+  own `meta.rows_read` (`rate_limits` key `tables:rows_read`). Writes are small: about 5 per block of 500 rows.
+
 ## 6. Security model
 
 | Threat | Control |
@@ -372,6 +429,7 @@ sequenceDiagram
 | Secret leakage | Keys only in Cloudflare secrets; `.env`/`.dev.vars` git-ignored; never returned by the API |
 | Data isolation | Every conversation query is scoped by `user_id`; foreign keys cascade on delete |
 | Dev login in prod | Requires `DEV_LOGIN=true` **and** a localhost hostname, which a workers.dev request can't have |
+| Spreadsheet content and queries (v0.14.0) | Files are read in the browser and re-checked on upload (cell types, row widths, sizes, row counts must match the overview); only the owner can add to, finish, send or delete an unsent file, and only their chats see its tables; SQL is built from fixed parts with column positions we control and every value bound, so neither the model nor cell text can change the query; column names and cell values are passed to the model as data; per-day file limit, per-chat/per-user caps, app-wide storage and daily read budget |
 | Unwanted GitHub changes (v0.13.0) | Separate Actions app with its own repo choice; only repos the user can write to (v0.13.1, checked at prepare and approve); tools only prepare; sending happens only from `POST /api/github-actions/:id/approve` by the change's owner, once (atomic claim), before it expires; card shows the exact text / every changed line; prompt forbids preparing changes because content asks for it; warnings for others' text and private-to-public; stale files refused; no existing branch, merge, delete or workflow file is ever touched |
 
 Prompt injection becomes the main risk once tools exist (Phase 5+). The plan for that: tool results are wrapped
@@ -402,6 +460,12 @@ tools are blocked once untrusted content is in context.
   trusted/blocked, ranking by date without dropping official pages, near-duplicates), the paired knowledge search,
   the number check inside the agent loop and the R1–R7 prompt rules; `tests/units.test.ts` covers number
   normalisation and what it ignores, admin-only display, site-list cleaning and cited-only page chips.
+- `tests/tables.test.ts` (v0.14.0): reading CSV (separators, quotes, decimal commas, percentages, day/month dates,
+  codes, titles, totals rows, Urdu text within the block size) and Excel (date formats, percent and currency formats,
+  several sheets, hidden sheets, 1900/1904 dates); exact sums, averages, medians, counts, filters and date grouping on
+  a real local D1; listing rows; plain errors; SQL text in values and column names having no effect; 50,000 rows
+  (timing and rows read); the prompt overview; the daily read budget; uploads, ownership, limits, the admin switch,
+  a full chat turn with a faked model, deletion with the chat and the clean-up of unsent files.
 - Tests never use real keys: `vitest.config.ts` blanks the provider and search keys even if `.dev.vars` has them.
 - Accuracy (real models, real search): `npm run accuracy` (see 5d); not part of `npm test`.
 - Manual/automated E2E: `wrangler dev` + `scripts/mock-llm.mjs` + a headless browser run (login, streaming,
@@ -426,6 +490,10 @@ tools are blocked once untrusted content is in context.
   weak for small text). Image questions can't use Groq (its main model has no image input) or local Ollama models.
 - Voice: Whisper may write Urdu speech in Hindi script when the language is "Detect automatically" (users can pick
   Urdu in Settings → Voice). Read aloud depends on the voices installed on the device.
+- Spreadsheets: one header row per sheet (two-row headers and merged headers aren't combined); formulas count by
+  their last saved value; subtotal rows in the middle are only noted, not left out; no charts or downloads of results
+  yet; files go to cloud models only (not Ollama) and not to deep research. The knowledge base still takes CSV, not
+  Excel.
 
 ## 9. Roadmap
 

@@ -4,12 +4,12 @@
 every answer came from.**
 
 VESPER is a ChatGPT-style assistant you host yourself: a web app where people sign in, chat, search the live web,
-ask about documents and their own GitHub code, and get answers with sources they can check. It runs on Cloudflare's
+ask about documents, spreadsheets and their own GitHub code, and get answers with sources they can check. It runs on Cloudflare's
 free plan (Workers + D1 database) and switches automatically between free AI providers (Groq, Google Gemini,
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.13.1**.
+Current version: **0.14.0**.
 
 - [What VESPER does](#what-vesper-does)
 - [How VESPER is different](#how-vesper-is-different)
@@ -36,6 +36,8 @@ question needs a look-up, fetches what it needs and cites it:
   sources list.
 - **Your documents**: the administrator adds PDFs, Word files, text or web pages to a knowledge base; answers cite
   "document, page X".
+- **Your spreadsheets**: attach a CSV or Excel file and ask questions about it; totals, averages, counts and trends are
+  calculated exactly over every row, and the answer says what was calculated.
 - **Your code**: each user can connect their own GitHub (read-only) and ask about files, issues and pull requests.
 - **Changes you approve**: VESPER can prepare a GitHub issue, comment or pull request; it shows the exact change on a
   card and sends it only when you press Approve.
@@ -56,7 +58,8 @@ choices:
 3. **Evidence first, and checkable.** Sources are ranked (official and government sites first) and labelled with
    dates; the assistant follows written rules (newest reliable source wins, differing figures are shown side by
    side, never blended). Any answer that used sources can be checked claim by claim, and deep-research reports are
-   checked automatically.
+   checked automatically. Figures from your spreadsheets are calculated by the database over every row, never by the
+   model.
 4. **You own it.** The code is in your GitHub repository and the data is in your own Cloudflare database. There's no
    third-party account system: users sign in with Google, and you decide who can sign up and how much they can use.
 5. **Safe with outside content.** Web pages, documents and repository text are treated as untrusted data, never as
@@ -103,6 +106,23 @@ choices:
   the admin's browser; only their text is stored (roughly 15,000 pages fit in the free database).
 - Full-text search plus Cloudflare's free re-ranker; answers cite "document, page X".
 
+**Spreadsheets (data analysis)**
+- Attach a CSV, TSV, Excel (.xlsx, .xlsm, .xls) or OpenDocument (.ods) file with the paperclip (or drag it in): up to
+  10 MB and 50,000 rows, one per message, five per chat. Every sheet with data becomes a table.
+- The file is read in your browser: VESPER finds the header row (titles above it are skipped), works out each column's
+  type (numbers, dates, yes/no, text) and understands "$1,200", "(45)", "12,5%", "05/03/2026" or "5 Mar 2026". Codes
+  such as "00123" stay text, "n/a" and "-" count as empty, and a "Total" row at the end is left out so nothing is
+  counted twice. Excel dates, percentages and currencies are read from the cell formats.
+- Ask in plain words: "total sales by region", "average order in March", "top 5 customers", "how many rows have no
+  email", "compare 2025 and 2026 by month". The assistant says what to calculate (filters, grouping by value or by
+  year, quarter, month, week, day, weekday or hour, and sum, average, count, different values, lowest, highest or
+  median) and the database works it out over every row. The model never does the arithmetic and never writes
+  database code: the query is built from fixed parts and every value is passed separately.
+- Under the answer, a chip such as "sales.xlsx · sum of Amount by Region · where Date in 2026" shows what was
+  calculated; **Check** works on these answers too.
+- The AI provider gets the column overview, three example rows and the results, not the whole file. The rows are kept
+  with the chat and deleted with it; a file you remove before sending is deleted at once, one never sent after a day.
+
 **Your GitHub (read-only)**
 - Each user connects their own GitHub in **Settings → Connections** and picks which repositories VESPER may read.
 - Ask VESPER to explain a repository, read a file (with line numbers), search the code, list or open issues and pull
@@ -137,7 +157,7 @@ choices:
 **Accounts and administration**
 - Google sign-in for everyone (no passwords stored); GitHub sign-in as a backup for administrators.
 - Admin panel: users (block, delete, personal daily limits), sign-ups open or closed, daily limits for messages,
-  images, voice, research and answer checks, instructions for the assistant, tools on or off for everyone, which
+  images, voice, research, answer checks and spreadsheets, instructions for the assistant, tools on or off for everyone, which
   models users may pick, the knowledge base, feedback, provider status.
 - Light, dark and system themes (dark by default), a responsive mobile layout and a logo that follows the theme.
 
@@ -146,9 +166,9 @@ choices:
 ```mermaid
 flowchart LR
   B["Browser<br/>(React web app)"] -- "HTTPS, streamed answers" --> W["Cloudflare Worker<br/>(API)"]
-  W --> D[("D1 database<br/>chats, memories, knowledge base")]
+  W --> D[("D1 database<br/>chats, memories, knowledge base, spreadsheets")]
   W --> P["Free AI providers<br/>Groq · Gemini · OpenRouter · Mistral · Workers AI"]
-  W --> T["Tools<br/>web search · pages · weather · Wikipedia · currency · GitHub"]
+  W --> T["Tools<br/>web search · pages · weather · Wikipedia · currency · GitHub · table analysis"]
   B -. "optional" .-> O["Ollama on your own computer"]
 ```
 
@@ -158,7 +178,8 @@ What happens when you send a message:
 2. It builds the prompt: VESPER's answer rules, the administrator's instructions, your relevant memories, short
    notes on the older part of a long chat, and the recent messages.
 3. If the question clearly needs a look-up (latest news, "according to…", your documents), the search runs first, so
-   the model can answer in a single request.
+   the model can answer in a single request. In a chat with a spreadsheet this is skipped: "sales in 2026" is about
+   the file.
 4. The router sends the request to the first free provider that's available. On a rate limit or error it moves to
    the next one and remembers the cooldown.
 5. The model may call tools (up to 5 rounds). Every tool result is passed as untrusted data, with its source.
@@ -168,11 +189,11 @@ What happens when you send a message:
 
 | Part | Technology |
 |---|---|
-| Web app | React, Vite, Tailwind CSS |
+| Web app | React, Vite, Tailwind CSS; SheetJS Community Edition for Excel files (read in a background worker) |
 | API | Cloudflare Workers, Hono, zod validation, Server-Sent Events for streaming |
 | Database | Cloudflare D1 (SQLite) with add-only migrations |
 | AI | Groq, Google Gemini, OpenRouter (`:free` only), Mistral, Cloudflare Workers AI; Ollama optional |
-| Tests | Vitest running inside the Workers runtime with a real local D1 (257 tests) |
+| Tests | Vitest running inside the Workers runtime with a real local D1 (274 tests) |
 | Delivery | GitHub Actions: checks on every pull request, deploy on merge to `main` |
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -183,7 +204,7 @@ More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 |---|---|---|---|
 | Hosting + API | Cloudflare Workers (Free plan) | 100,000 requests/day, 10 ms CPU per request | Requests fail until 00:00 UTC. **No billing.** |
 | Web app files | Workers static assets | Unlimited requests | n/a |
-| Database | Cloudflare D1 | 5 GB storage, 5M rows read/day, 100k rows written/day | Queries fail until 00:00 UTC. **No billing.** |
+| Database | Cloudflare D1 | 5 GB storage, 5M rows read/day, 100k rows written/day | Queries fail until 00:00 UTC. **No billing.** Spreadsheet calculations have their own daily share (2M rows by default), so they can't use it all up. |
 | AI | Groq free plan | ~30 req/min, ~1,000 req/day, 8K tokens/min per model | VESPER switches provider |
 | AI | Google Gemini free tier | Per-project limits (Flash-Lite allows the most) | VESPER switches provider |
 | AI | OpenRouter `:free` models | 20 req/min, 50 req/day | VESPER switches provider |
@@ -328,6 +349,8 @@ only when the admin turns on **Local models for users**.
   itself.
 - **Research**: switch on **Research** in the message box for a planned, multi-source report.
 - **Images and voice**: use the paperclip (or paste/drag) to attach images, and the microphone to speak.
+- **Spreadsheets**: use the paperclip to attach a CSV or Excel file, wait until its chip shows the number of rows,
+  then ask about it. Follow-up questions in the same chat keep using it.
 - **Under each answer**: copy, read aloud, 👍/👎, **Check** (when the answer used sources) and regenerate.
 - **GitHub changes**: ask for an issue, a comment or a pull request; read the card under the answer, then **Approve**
   or **Reject**.
@@ -337,8 +360,9 @@ only when the admin turns on **Local models for users**.
 **Administrators** (the accounts in `ADMIN_EMAILS` / `ADMIN_GITHUB_USERS`) also get the **Admin panel**:
 - **Users**: usage per day, personal limits, block or delete.
 - **App settings**: sign-ups, daily limits, instructions for the assistant, tools for everyone, web search cap,
-  trusted/blocked websites, images, voice, deep research, answer checks, local models, GitHub for users, and GitHub
-  changes for users with a daily limit.
+  trusted/blocked websites, images, spreadsheets (with the daily share of database reads for calculations and
+  today's use), voice, deep research, answer checks, local models, GitHub for users, and GitHub changes for users with
+  a daily limit.
 - **Models**: which models users may pick, with friendly names.
 - **Knowledge**: folders, documents and web pages for the knowledge base.
 - **Feedback**: 👍/👎 ratings with the question, answer and sources.
@@ -371,13 +395,13 @@ losing data; a test applies every migration over existing data to check nothing 
 │  ├─ shared/           types and the streaming parser shared by server and browser
 │  ├─ worker/           Cloudflare Worker (Hono)
 │  │  ├─ routes/        auth, chat (streaming), conversations, models, settings, memories, media,
-│  │  │                 feedback, knowledge, admin, answer-check, connections, github-actions
+│  │  │                 feedback, knowledge, admin, answer-check, connections, github-actions, files
 │  │  ├─ llm/           providers, fallback router, agent loop, prompts, research, answer checks
-│  │  ├─ tools/         calculator, date/time, memory, web tools, knowledge base, GitHub (read; changes with approval)
+│  │  ├─ tools/         calculator, date/time, memory, web tools, knowledge base, table analysis, GitHub (read; changes with approval)
 │  │  ├─ db/            D1 queries
 │  │  ├─ lib/           security helpers (encryption, sensitive-data check, presentation)
 │  │  └─ middleware/    sign-in, origin checks, rate limits
-│  └─ web/              React app (Vite + Tailwind)
+│  └─ web/              React app (Vite + Tailwind); lib/table-*.ts read spreadsheets in the browser
 ├─ tests/               Vitest suites, run inside the Workers runtime
 ├─ docs/                ARCHITECTURE, DEPLOYMENT, CONFIGURATION
 ├─ wrangler.jsonc       Worker configuration
@@ -402,8 +426,13 @@ losing data; a test applies every migration over existing data to check nothing 
   (checked when preparing and again when approving). The assistant can only prepare a change; it is sent from the
   approval card, exactly as shown, once, by its owner only. Prepared text is kept only until you decide
   (at most 24 hours); afterwards only a log line stays (90 days).
-- **What leaves the server**: your messages (and any file text or code VESPER reads for an answer) go to the AI
-  provider that writes the answer. A 👍/👎 sends a copy of that question and answer to the administrator's feedback
+- **Spreadsheets**: rows are stored in your Cloudflare database with the chat (deleted with it), visible only to their
+  owner. Calculations are database queries built from fixed parts with every value passed separately, so text in a
+  question or a cell can't change what runs. Column names and cell values are passed to the model as data, never as
+  instructions.
+- **What leaves the server**: your messages (and any file text or code VESPER reads for an answer, and for
+  spreadsheets their column overview, three example rows and the calculated results) go to the AI provider that writes
+  the answer. A 👍/👎 sends a copy of that question and answer to the administrator's feedback
   list.
 
 ## Troubleshooting
@@ -429,3 +458,10 @@ losing data; a test applies every migration over existing data to check nothing 
   `https://<your-app>/api/connections/github-actions/callback`.
 - **A change says a file "changed on GitHub after VESPER prepared this"**: someone changed it meanwhile; nothing was
   sent. Ask VESPER to prepare it again.
+- **A spreadsheet is refused**: the message says why (over 10 MB or 50,000 rows, password-protected, or not a CSV,
+  Excel or OpenDocument file). Remove what you don't need or save a copy as .xlsx or .csv.
+- **Numbers or dates read wrongly**: check the column in the file (one type per column works best). Dates like
+  03/04/2026 are read day-first unless the file shows otherwise or your browser is set to US English; the overview
+  the assistant gets says which order was used.
+- **"Spreadsheet calculations have used today's allowance"**: the whole app's daily share of database reads for
+  calculations is used; it resets at 00:00 UTC. The administrator can raise it (up to 4.5 million) in App settings.

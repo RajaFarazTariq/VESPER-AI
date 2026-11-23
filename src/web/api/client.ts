@@ -23,6 +23,10 @@ import type {
   MessageFeedbackDto,
   ModelsResponse,
   PublicConfigDto,
+  TableChunkInput,
+  TableFileDto,
+  TableFileKind,
+  TableSheetInput,
   SpeechLanguage,
   ToolInfoDto,
   TranscriptionDto,
@@ -40,6 +44,8 @@ export type ChatRequestBody = {
   images?: ChatImageInput[];
   /** Deep research (v0.9.8). */
   research?: boolean;
+  /** Spreadsheets added through api.files, sent with this message (v0.14.0). */
+  files?: string[];
 };
 
 export class ApiError extends Error {
@@ -141,6 +147,20 @@ export const api = {
     request<{ verification: VerificationDto }>(`/api/answer-check/${encodeURIComponent(messageId)}`, { method: "POST", body: "{}" }),
   transcribe: (body: { audio: string; mimeType: string; seconds: number; language?: SpeechLanguage }) =>
     request<TranscriptionDto>("/api/media/transcribe", { method: "POST", body: JSON.stringify(body) }),
+  /** Spreadsheets (v0.14.0): the overview first, then the rows in blocks, then ready. Removing works until it's sent. */
+  files: {
+    create: (body: { name: string; kind: TableFileKind; bytes: number; tables: TableSheetInput[] }, signal?: AbortSignal) =>
+      request<{ file: TableFileDto }>("/api/files", { method: "POST", body: JSON.stringify(body), ...(signal ? { signal } : {}) }),
+    addChunks: (fileId: string, table: string, chunks: TableChunkInput[], signal?: AbortSignal) =>
+      request<{ stored: number; expected: number }>(`/api/files/${encodeURIComponent(fileId)}/chunks`, {
+        method: "POST",
+        body: JSON.stringify({ table, chunks }),
+        ...(signal ? { signal } : {}),
+      }),
+    complete: (fileId: string, signal?: AbortSignal) =>
+      request<{ file: TableFileDto }>(`/api/files/${encodeURIComponent(fileId)}/complete`, { method: "POST", body: "{}", ...(signal ? { signal } : {}) }),
+    remove: (fileId: string) => request<{ ok: true }>(`/api/files/${encodeURIComponent(fileId)}`, { method: "DELETE" }),
+  },
   listMemories: () => request<{ memories: MemoryDto[] }>("/api/memories"),
   addMemory: (content: string) => request<{ memory: MemoryDto }>("/api/memories", { method: "POST", body: JSON.stringify({ content }) }),
   /** Edit the text and/or pin ("always use") a memory. */
@@ -161,6 +181,7 @@ export const api = {
         webSearch: { keyConfigured: boolean; usedToday: number };
         github?: { configured: boolean };
         githubActions?: { configured: boolean };
+        tables?: { rowsReadToday: number };
       }>(
         "/api/admin/settings",
       ),

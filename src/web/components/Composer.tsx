@@ -1,9 +1,11 @@
-import { ArrowUp, Check, LoaderCircle, Mic, Paperclip, Settings2, Square, Telescope, Wrench, X } from "lucide-react";
+import { ArrowUp, Check, FileSpreadsheet, LoaderCircle, Mic, Paperclip, Settings2, Square, Telescope, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import type { SpeechLanguage, ToolInfoDto } from "../../shared/types";
 import { api, ApiError } from "../api/client";
 import { useMenuLayout } from "../hooks/useMenuLayout";
+import { TABLE_ACCEPT } from "../../shared/tables";
 import { imageFiles, type PendingImage } from "../lib/images";
+import type { PendingTable } from "../lib/tables";
 import { canRecord, RecordingError, VoiceRecorder } from "../lib/voice";
 import { TOOL_ICONS } from "./ToolActivity";
 
@@ -31,6 +33,15 @@ interface Props {
     onAdd: (files: File[]) => void;
     onRemove: (id: string) => void;
   };
+  /** Spreadsheets waiting to be sent (v0.14.0). Omit when spreadsheets are switched off. */
+  tables?: {
+    items: PendingTable[];
+    /** Most per message. */
+    max: number;
+    /** Any file that isn't an image goes here (it explains files it can't take). */
+    onAdd: (files: File[]) => void;
+    onRemove: (id: string) => void;
+  };
   /** Microphone button: the recognised text is added to the message box. Omit to hide it. */
   voice?: { maxSeconds: number; language: SpeechLanguage; onError: (message: string) => void };
 }
@@ -50,6 +61,7 @@ export function Composer({
   controls,
   autoFocus,
   attachments,
+  tables,
   voice,
 }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -74,10 +86,26 @@ export function Composer({
 
   const images = attachments?.items ?? [];
   const preparing = attachments?.preparing ?? 0;
+  const sheets = tables?.items ?? [];
+  const sheetsBusy = sheets.some((t) => t.status !== "ready");
   const tooLong = value.length > MAX_CHARS;
-  const hasContent = value.trim().length > 0 || images.length > 0;
-  const canSend = !streaming && !disabled && hasContent && !tooLong && preparing === 0 && !micBusy;
-  const full = images.length + preparing >= (attachments?.max ?? 0);
+  const hasContent = value.trim().length > 0 || images.length > 0 || sheets.some((t) => t.status === "ready");
+  const canSend = !streaming && !disabled && hasContent && !tooLong && preparing === 0 && !sheetsBusy && !micBusy;
+  const imagesFull = !attachments || images.length + preparing >= attachments.max;
+  const sheetsFull = !tables || sheets.length >= tables.max;
+  const full = imagesFull && sheetsFull;
+  const canAttach = Boolean(attachments || tables);
+  const accept = [attachments ? "image/*" : "", tables ? TABLE_ACCEPT : ""].filter(Boolean).join(",");
+  const attachLabel = attachments && tables ? "Attach images or a spreadsheet" : tables ? "Attach a spreadsheet" : "Attach images";
+
+  /** Images go to the image list; everything else to the spreadsheets (which explain files they can't take). */
+  const addFiles = (list: FileList | File[] | null | undefined) => {
+    const files = Array.from(list ?? []);
+    const pictures = attachments ? imageFiles(files) : [];
+    const others = files.filter((f) => !pictures.includes(f));
+    if (pictures.length > 0) attachments?.onAdd(pictures);
+    if (others.length > 0 && tables) tables.onAdd(others);
+  };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -87,15 +115,13 @@ export function Composer({
   };
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!attachments) return;
-    const files = imageFiles(e.clipboardData.files);
-    if (files.length === 0) return;
-    attachments.onAdd(files);
+    if (!canAttach || e.clipboardData.files.length === 0) return;
+    addFiles(e.clipboardData.files);
     if (!e.clipboardData.getData("text/plain")) e.preventDefault();
   };
 
   const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
-  const dropHandlers = attachments
+  const dropHandlers = canAttach
     ? {
         onDragOver: (e: DragEvent<HTMLDivElement>) => {
           if (!hasFiles(e)) return;
@@ -110,8 +136,7 @@ export function Composer({
           if (!hasFiles(e)) return;
           e.preventDefault();
           setDragging(false);
-          const files = imageFiles(e.dataTransfer.files);
-          if (files.length > 0) attachments.onAdd(files);
+          addFiles(e.dataTransfer.files);
         },
       }
     : {};
@@ -130,6 +155,13 @@ export function Composer({
           dragging ? "border-[var(--accent)]" : "border-[var(--border)]"
         } ${hero ? "shadow-[var(--shadow-lg)]" : "shadow-[var(--shadow-md)]"}`}
       >
+        {sheets.length > 0 ? (
+          <ul className="flex flex-wrap gap-2 px-4 pt-3" aria-label="Attached spreadsheets">
+            {sheets.map((t) => (
+              <SheetChip key={t.id} item={t} onRemove={() => tables?.onRemove(t.id)} />
+            ))}
+          </ul>
+        ) : null}
         {images.length > 0 || preparing > 0 ? (
           <ul className="flex flex-wrap gap-2 px-4 pt-3" aria-label="Attached images">
             {images.map((img, i) => (
@@ -161,7 +193,7 @@ export function Composer({
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
-          placeholder={dragging ? "Drop images to attach" : (placeholder ?? "Send a message…")}
+          placeholder={dragging ? `Drop ${attachments && tables ? "images or a spreadsheet" : tables ? "a spreadsheet" : "images"} to attach` : (placeholder ?? "Send a message…")}
           aria-label="Message"
           className={`block w-full resize-none bg-transparent px-5 leading-relaxed outline-none placeholder:text-[var(--text-faint)] thin-scroll ${
             hero ? "max-h-60 min-h-[56px] pt-4 text-[16px]" : "max-h-60 min-h-[28px] pt-3.5 text-[15px]"
@@ -169,28 +201,38 @@ export function Composer({
           disabled={disabled}
         />
         <div className="flex items-center gap-1 px-2.5 pb-2.5 pt-1">
-          {attachments ? (
+          {canAttach ? (
             <>
               <button
                 type="button"
                 onClick={() => fileInput.current?.click()}
                 disabled={disabled || full}
                 className={iconButton}
-                aria-label="Attach images"
-                title={full ? `Up to ${attachments.max} images per message` : `Attach images (up to ${attachments.max})`}
+                aria-label={attachLabel}
+                title={
+                  full
+                    ? "Nothing more can be attached to this message"
+                    : [
+                        attachments && !imagesFull ? `images (up to ${attachments.max})` : "",
+                        tables && !sheetsFull ? "a spreadsheet: CSV or Excel" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" or ")
+                        .replace(/^/, "Attach ")
+                }
               >
                 <Paperclip size={17} />
               </button>
               <input
                 ref={fileInput}
                 type="file"
-                accept="image/*"
+                accept={accept}
                 multiple
                 hidden
                 onChange={(e) => {
-                  const files = imageFiles(e.target.files);
+                  const files = Array.from(e.target.files ?? []);
                   e.target.value = "";
-                  if (files.length > 0) attachments.onAdd(files);
+                  addFiles(files);
                 }}
               />
             </>
@@ -238,6 +280,45 @@ export function Composer({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/** A spreadsheet in the message box: reading, uploading (with a bar) or ready (rows and sheets). */
+function SheetChip({ item, onRemove }: { item: PendingTable; onRemove: () => void }) {
+  const status =
+    item.status === "reading"
+      ? "Reading…"
+      : item.status === "uploading"
+        ? `Uploading ${Math.round(item.progress * 100)}%`
+        : `${(item.rows ?? 0).toLocaleString()} row${item.rows === 1 ? "" : "s"}${item.sheets && item.sheets > 1 ? ` · ${item.sheets} sheets` : ""}`;
+  return (
+    <li className="relative flex h-16 max-w-[16rem] items-center gap-2.5 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)] py-2 pl-2.5 pr-7">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
+        {item.status === "ready" ? <FileSpreadsheet size={17} /> : <LoaderCircle size={16} className="animate-spin" />}
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] font-medium" title={item.name}>
+          {item.name}
+        </span>
+        <span className="block text-xs text-[var(--text-soft)]" role={item.status === "ready" ? undefined : "status"}>
+          {status}
+        </span>
+      </span>
+      {item.status === "uploading" ? (
+        <span className="absolute inset-x-0 bottom-0 h-0.5 bg-[var(--border)]" aria-hidden>
+          <span className="block h-full bg-[var(--accent)] transition-[width]" style={{ width: `${Math.round(item.progress * 100)}%` }} />
+        </span>
+      ) : null}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+        aria-label={`Remove ${item.name}`}
+        title="Remove"
+      >
+        <X size={12} />
+      </button>
+    </li>
   );
 }
 

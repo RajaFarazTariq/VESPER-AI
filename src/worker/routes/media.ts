@@ -5,6 +5,8 @@ import type { AppEnv } from "../app-env";
 import { getAppSettings } from "../db/app-settings";
 import { addSpeechSeconds, speechSecondsToday } from "../db/users";
 import { getConfig, type Env } from "../env";
+import { TABLE_LIMITS } from "../../shared/tables";
+import { tablesAllowed } from "./files";
 import { AppError, badRequest } from "../lib/errors";
 import { MAX_IMAGES_PER_MESSAGE } from "../lib/images";
 import { MAX_AUDIO_BASE64_CHARS, MAX_RECORDING_SECONDS, SpeechError, speechAvailable, TRANSCRIBE_BODY_LIMIT, transcribe } from "../lib/speech";
@@ -42,6 +44,13 @@ export function featuresFor(env: Env, settings: AppSettingsDto, admin: boolean):
     answerCheck: { enabled: settings.answerCheckEnabled, perDay: settings.answerChecksPerDay },
     github: { available: getConfig(env).githubAppEnabled && (admin || settings.githubForUsers) },
     githubActions: { available: getConfig(env).githubActionsAppEnabled && (admin || settings.githubActionsForUsers) },
+    tables: {
+      enabled: tablesAllowed(settings),
+      perDay: settings.tablesPerDay,
+      perChat: TABLE_LIMITS.perChat,
+      maxRows: TABLE_LIMITS.rows,
+      maxMegabytes: TABLE_LIMITS.fileBytes / (1024 * 1024),
+    },
   };
 }
 

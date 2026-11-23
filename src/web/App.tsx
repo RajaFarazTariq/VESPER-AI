@@ -1,4 +1,4 @@
-import { ArrowDown, Menu, Mic, Paperclip, Sparkles, SquarePen, Telescope } from "lucide-react";
+import { ArrowDown, FileSpreadsheet, Menu, Mic, Paperclip, Sparkles, SquarePen, Telescope } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ConversationDto, FeaturesDto, ModelsResponse, PublicConfigDto, ToolInfoDto, UserDto, UserSettings } from "../shared/types";
 import { api, ApiError } from "./api/client";
@@ -12,7 +12,9 @@ import { Sidebar } from "./components/Sidebar";
 import { Toasts, type Toast } from "./components/Toasts";
 import { TOOL_ICONS } from "./components/ToolActivity";
 import { useChat } from "./hooks/useChat";
+import { tableKind } from "../shared/tables";
 import { ImageError, prepareImage, type PendingImage } from "./lib/images";
+import { messageFile, readInBackground, tableErrorMessage, uploadTables, type PendingTable } from "./lib/tables";
 import { explainOllamaError, listOllamaModels } from "./lib/ollama";
 import { canSpeak, speak, stopSpeaking } from "./lib/voice";
 import { VesperMark } from "./components/VesperMark";
@@ -133,6 +135,9 @@ function ChatApp({
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<PendingImage[]>([]);
   const [preparing, setPreparing] = useState(0);
+  /** Spreadsheets waiting in the message box (v0.14.0), and how to stop reading or uploading each one. */
+  const [tableFiles, setTableFiles] = useState<PendingTable[]>([]);
+  const tableJobs = useRef(new Map<string, AbortController>());
   const [features, setFeatures] = useState<FeaturesDto | null>(null);
   /** Deep research for the next message (turns itself off after sending). */
   const [researchMode, setResearchMode] = useState(false);
@@ -225,6 +230,70 @@ function ChatApp({
     },
     [selection, maxImages, attachments.length, preparing, toast],
   );
+  // Spreadsheets (v0.14.0): read in the background, uploaded, then sent with the message.
+  const tablesOn = Boolean(features?.tables?.enabled);
+  const maxTables = 1;
+  const chatFiles = useMemo(() => chat.messages.reduce((n, m) => n + (m.files?.length ?? 0), 0), [chat.messages]);
+  const patchTable = useCallback(
+    (id: string, patch: Partial<PendingTable>) => setTableFiles((list) => list.map((t) => (t.id === id ? { ...t, ...patch } : t))),
+    [],
+  );
+  const addTables = useCallback(
+    (files: File[]) => {
+      const sheets = files.filter((f) => tableKind(f.name));
+      const other = files.find((f) => !tableKind(f.name));
+      if (other) toast(`"${other.name}" can't be attached. Attach ${imagesOn ? "images or " : ""}a spreadsheet (CSV, Excel or OpenDocument).`);
+      if (!features?.tables?.enabled || sheets.length === 0) return;
+      if (selection.startsWith("ollama:")) {
+        toast("Spreadsheets work with the cloud models only. Choose Auto or another cloud model to attach one.");
+        return;
+      }
+      if (tableFiles.length >= maxTables || sheets.length > maxTables) {
+        toast("Attach one spreadsheet per message.");
+        if (tableFiles.length >= maxTables) return;
+      }
+      if (chatFiles + tableFiles.length >= features.tables.perChat) {
+        toast(`A chat can have up to ${features.tables.perChat} spreadsheets. Start a new chat to add more.`);
+        return;
+      }
+      const file = sheets[0]!;
+      const id = `${Date.now()}-${Math.random()}`;
+      const controller = new AbortController();
+      tableJobs.current.set(id, controller);
+      setTableFiles((list) => [...list, { id, name: file.name, status: "reading", progress: 0 }]);
+      void (async () => {
+        try {
+          const read = await readInBackground(file, () => {}, controller.signal);
+          patchTable(id, { status: "uploading", rows: read.tables.reduce((n, t) => n + t.rows, 0), sheets: read.tables.length });
+          const saved = await uploadTables(
+            read,
+            (fileId) => patchTable(id, { fileId }),
+            (progress) => patchTable(id, { progress }),
+            controller.signal,
+          );
+          patchTable(id, { status: "ready", fileId: saved.id, progress: 1 });
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          const message = tableErrorMessage(error);
+          if (message) toast(message);
+          setTableFiles((list) => list.filter((t) => t.id !== id));
+        } finally {
+          tableJobs.current.delete(id);
+        }
+      })();
+    },
+    [features, imagesOn, selection, tableFiles.length, chatFiles, patchTable, toast],
+  );
+  /** Remove spreadsheets from the message box: stop their reading or upload, and delete what was uploaded. */
+  const dropTables = useCallback((items: PendingTable[]) => {
+    for (const t of items) {
+      tableJobs.current.get(t.id)?.abort();
+      if (t.fileId) void api.files.remove(t.fileId).catch(() => {});
+    }
+    const ids = new Set(items.map((t) => t.id));
+    setTableFiles((list) => list.filter((t) => !ids.has(t.id)));
+  }, []);
+
   const activeTools = useMemo(() => {
     if (toolList === null) return null;
     if (!settings.toolsEnabled) return [];
@@ -285,11 +354,12 @@ function ChatApp({
       setSelection(settings.defaultModel);
       setInput("");
       setAttachments([]);
+      dropTables(tableFiles);
       setResearchMode(false);
       setSidebarOpen(false);
       if (push && window.location.pathname !== "/") window.history.pushState(null, "", "/");
     },
-    [chat, settings.defaultModel],
+    [chat, settings.defaultModel, dropTables, tableFiles],
   );
 
   // URL routing: /c/<id> opens a conversation; back/forward work.
@@ -328,14 +398,20 @@ function ChatApp({
   const send = async (text = input) => {
     const message = text.trim();
     const images = imagesOn ? attachments : [];
+    const sheets = tablesOn ? tableFiles : [];
     const research = researchOn && researchMode;
-    if ((!message && images.length === 0) || chat.streaming || preparing > 0) return;
+    if ((!message && images.length === 0 && sheets.length === 0) || chat.streaming || preparing > 0) return;
+    if (sheets.some((t) => t.status !== "ready")) return;
     if (images.length > 0 && selection.startsWith("ollama:")) {
       toast("Images work with the cloud models only. Remove the images or choose a cloud model.");
       return;
     }
-    if (research && (images.length > 0 || !message)) {
-      toast("Deep research works with text questions only. Remove the images, or turn Research off.");
+    if (sheets.length > 0 && selection.startsWith("ollama:")) {
+      toast("Spreadsheets work with the cloud models only. Remove the spreadsheet or choose a cloud model.");
+      return;
+    }
+    if (research && (images.length > 0 || sheets.length > 0 || !message)) {
+      toast("Deep research works with text questions only. Remove the images or spreadsheet, or turn Research off.");
       return;
     }
     if (research && selection.startsWith("ollama:")) {
@@ -344,6 +420,7 @@ function ChatApp({
     }
     setInput("");
     setAttachments([]);
+    setTableFiles([]);
     setResearchMode(false);
     stopSpeaking();
     const accepted = await chat.send(
@@ -351,10 +428,12 @@ function ChatApp({
       selection,
       images.map(({ data, thumb }) => ({ data, thumb })),
       research,
+      sheets.map(messageFile),
     );
     if (!accepted) {
       setInput(message);
       setAttachments(images);
+      setTableFiles(sheets);
       setResearchMode(research);
     }
   };
@@ -379,6 +458,7 @@ function ChatApp({
   const mediaChips = [
     ...(researchOn ? [{ key: "research", label: "Deep research", Icon: Telescope }] : []),
     ...(imagesOn ? [{ key: "images", label: "Understands images", Icon: Paperclip }] : []),
+    ...(tablesOn ? [{ key: "tables", label: "Analyses spreadsheets", Icon: FileSpreadsheet }] : []),
     ...(features?.voice.speechToText ? [{ key: "voice", label: "Voice input", Icon: Mic }] : []),
   ];
 
@@ -408,6 +488,16 @@ function ChatApp({
             max: maxImages,
             onAdd: addImages,
             onRemove: (id: string) => setAttachments((list) => list.filter((a) => a.id !== id)),
+          },
+        }
+      : {}),
+    ...(tablesOn
+      ? {
+          tables: {
+            items: tableFiles,
+            max: maxTables,
+            onAdd: addTables,
+            onRemove: (id: string) => dropTables(tableFiles.filter((t) => t.id === id)),
           },
         }
       : {}),
