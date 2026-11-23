@@ -11,7 +11,7 @@
  * block and json_extract() reads a cell: '$[0]' is the spreadsheet row number, '$[k]' column k (1-based).
  */
 import { z } from "zod";
-import type { SourceDto, TableCell, TableColumnDto, TableColumnType } from "../../shared/types";
+import type { SourceDto, TableCell, TableColumnDto, TableColumnType, TableResultColumnDto, TableResultDto } from "../../shared/types";
 import { addTableRowsRead, conversationTables, tableRowsReadToday, type TableMeta } from "../db/tables";
 import { define, ToolInputError } from "./types";
 
@@ -19,10 +19,16 @@ export const TABLE_TOOL = "query_table";
 
 /** The model's result must stay under the agent's 8,000-character cut, with room for the wrapping. */
 const MAX_RESULT_CHARS = 7_000;
-const DEFAULT_GROUPS = 50;
-const MAX_GROUPS = 100;
+/**
+ * Result rows per calculation. The model sees the first ones (up to MAX_RESULT_CHARS); the user's chart, table and
+ * CSV download under the answer get them all (v0.14.1), up to MAX_KEPT_RESULT_CHARS.
+ */
+const DEFAULT_GROUPS = 100;
+const MAX_GROUPS = 500;
 const DEFAULT_ROWS = 20;
-const MAX_ROWS = 50;
+const MAX_ROWS = 200;
+/** The result kept with the answer, as JSON: later rows are left out beyond this (the card says how many are kept). */
+export const MAX_KEPT_RESULT_CHARS = 40_000;
 /** Rows mode without a column list shows at most this many columns. */
 const DEFAULT_ROW_COLUMNS = 12;
 
@@ -155,7 +161,8 @@ export const tableQuerySchema = z.preprocess(
     columns: z.array(columnName).max(30).optional(),
     sort_by: z.string().trim().max(200).optional(),
     descending: z.boolean().optional(),
-    limit: z.number().int().min(1).max(MAX_GROUPS).optional(),
+    // More than the most a calculation returns just means "all of it".
+    limit: z.preprocess((v) => (typeof v === "number" && v > MAX_GROUPS ? MAX_GROUPS : v), z.number().int().min(1)).optional(),
     describe: z.boolean().optional(),
   }),
 );
@@ -477,10 +484,8 @@ export interface TablePlan {
   params: (string | number)[];
   /** What is calculated, in plain words (shown under the answer). */
   text: string;
-  /** Result column labels. */
-  labels: string[];
-  /** Per result column: its type (to show yes/no as true/false and keep dates as written). */
-  types: (TableColumnType | "count")[];
+  /** The result's columns: labels, types (yes/no become true/false; dates stay as written), units, how they were made. */
+  columns: TableResultColumnDto[];
   groups: number;
   limit: number;
   notes: string[];
@@ -572,8 +577,16 @@ export function planTableQuery(t: TableMeta, args: TableQueryArgs): TablePlan {
       sql,
       params: p.values,
       text: `${metricText}${groupText}${filterText}`,
-      labels: [...groups.map((g) => g.label), ...metrics.map((m) => (m.ref === null ? "rows" : m.label))],
-      types: [...groups.map((g) => (g.by === "value" ? g.ref.type : "text")), ...metrics.map((m) => (m.op === "min" || m.op === "max" ? m.ref!.type : "count"))],
+      columns: [
+        // A date grouped by a period comes back as text in a fixed form ("2026-03", "2026-Q1", "1 Monday"…).
+        ...groups.map((g): TableResultColumnDto => ({ label: g.label, kind: "group", type: g.by === "value" ? g.ref.type : "text", by: g.by })),
+        ...metrics.map((m): TableResultColumnDto => {
+          // The lowest or highest value keeps its column's type (a date, a text); every other figure is a number.
+          const type = m.op === "min" || m.op === "max" ? m.ref!.type : "number";
+          const unit = type === "number" && m.op !== "count" && m.op !== "count_distinct" ? m.ref?.column?.unit : undefined;
+          return { label: m.ref === null ? "rows" : m.label, kind: "metric", type, op: m.op, ...(unit ? { unit } : {}) };
+        }),
+      ],
       groups: groups.length,
       limit,
       notes: [...new Set(notes)],
@@ -603,8 +616,17 @@ export function planTableQuery(t: TableMeta, args: TableQueryArgs): TablePlan {
     sql: `SELECT ${select.join(", ")} ${from} WHERE ${where} ORDER BY ${order} LIMIT ${limit}`,
     params: p.values,
     text: `rows${filters.length ? ` where ${filters.map((f) => f.text).join(" and ")}` : ""}${sortText}`,
-    labels: ["row", ...columns.map((c) => `${c.name}${unitOf(c.column)}`)],
-    types: ["number", ...columns.map((c) => c.type)],
+    columns: [
+      { label: "row", kind: "row", type: "number" },
+      ...columns.map(
+        (c): TableResultColumnDto => ({
+          label: `${c.name}${unitOf(c.column)}`,
+          kind: "column",
+          type: c.type,
+          ...(c.type === "number" && c.column?.unit ? { unit: c.column.unit } : {}),
+        }),
+      ),
+    ],
     groups: 0,
     limit,
     notes,
@@ -613,13 +635,31 @@ export function planTableQuery(t: TableMeta, args: TableQueryArgs): TablePlan {
 
 // ------------------------------------------------------------------ results
 
-/** A database value as the model sees it: tidy numbers, true/false for yes/no columns, "(empty)" for a blank group. */
-function cleanValue(v: unknown, type: TableColumnType | "count", group: boolean): TableCell {
-  if (v === null || v === undefined) return group ? "(empty)" : null;
+/** A database value as a cell: tidy numbers (12 significant digits), true/false for yes/no columns, null when empty. */
+function cleanValue(v: unknown, type: TableColumnType): TableCell {
+  if (v === null || v === undefined) return null;
   if (type === "boolean" && (v === 1 || v === 0)) return v === 1;
   if (typeof v === "number") return Number.isInteger(v) ? v : Number(v.toPrecision(12));
   if (typeof v === "string" || typeof v === "boolean") return v;
   return String(v);
+}
+
+/** The query's rows as cells, in the result's columns and order. */
+function resultValues(plan: TablePlan, rows: Record<string, unknown>[]): TableCell[][] {
+  return rows.map((row) =>
+    plan.columns.map((c, i) => {
+      if (plan.mode === "rows") return cleanValue(i === 0 ? row._row : row[`c${i - 1}`], c.type);
+      return cleanValue(i < plan.groups ? row[`g${i}`] : row[`a${i - plan.groups}`], c.type);
+    }),
+  );
+}
+
+/** Rows that matched the filters, and how many result rows there are in all (the query returns at most its limit). */
+function resultCounts(plan: TablePlan, rows: Record<string, unknown>[]): { matched: number; total: number } {
+  const first = rows[0];
+  const matched = first ? Number(first.matched ?? 0) : 0;
+  if (plan.mode === "rows") return { matched, total: matched };
+  return { matched, total: plan.groups > 0 ? (first ? Number(first.total_groups ?? 0) : 0) : rows.length };
 }
 
 export interface TableResult {
@@ -630,26 +670,17 @@ export interface TableResult {
 
 /** The model's view of the result, kept under the size the agent passes on (rows are dropped from the end if needed). */
 export function formatTableResult(t: TableMeta, plan: TablePlan, rows: Record<string, unknown>[]): TableResult {
-  const first = rows[0];
-  const matched = first ? Number(first.matched ?? 0) : 0;
-  const totalGroups = first ? Number(first.total_groups ?? 0) : 0;
-  const values = rows.map((row) => {
-    if (plan.mode === "rows") {
-      return plan.labels.map((_, i) => cleanValue(i === 0 ? row._row : row[`c${i - 1}`], plan.types[i]!, false));
-    }
-    const groupCells = Array.from({ length: plan.groups }, (_, i) => cleanValue(row[`g${i}`], plan.types[i]!, true));
-    const metricCells = plan.labels.slice(plan.groups).map((_, j) => cleanValue(row[`a${j}`], plan.types[plan.groups + j]!, false));
-    return [...groupCells, ...metricCells];
-  });
+  const { matched, total } = resultCounts(plan, rows);
+  // The model sees an empty group as "(empty)", so it can talk about it.
+  const values = resultValues(plan, rows).map((cells) => cells.map((v, i) => (v === null && i < plan.groups ? "(empty)" : v)));
   const base = {
     table: `${t.ref} · ${tableTitle(t)}`,
     calculation: plan.text,
     rows_in_table: t.rows,
     rows_matched: matched,
-    ...(plan.mode === "aggregate" && plan.groups > 0 ? { groups: totalGroups } : {}),
-    columns: plan.labels,
+    ...(plan.mode === "aggregate" && plan.groups > 0 ? { groups: total } : {}),
+    columns: plan.columns.map((c) => c.label),
   };
-  const total = plan.mode === "rows" ? matched : plan.groups > 0 ? totalGroups : values.length;
   let shown = values.length;
   const build = () => {
     const notes = [...plan.notes];
@@ -669,6 +700,34 @@ export function formatTableResult(t: TableMeta, plan: TablePlan, rows: Record<st
     content = build();
   }
   return { content, shown, matched };
+}
+
+/**
+ * The whole result for the user (v0.14.1): kept with the answer and shown under it as a chart or table with a CSV
+ * download. Exact values; an empty group stays null. Rows are left out from the end only beyond MAX_KEPT_RESULT_CHARS
+ * (`total` still says how many there are, so the card can say "the first N of M").
+ */
+export function tableResultDto(t: TableMeta, plan: TablePlan, rows: Record<string, unknown>[]): TableResultDto {
+  const { matched, total } = resultCounts(plan, rows);
+  const values = resultValues(plan, rows);
+  const base: TableResultDto = {
+    table: tableTitle(t),
+    title: plan.text,
+    mode: plan.mode,
+    columns: plan.columns,
+    rows: [],
+    total,
+    matched,
+    ...(plan.notes.length ? { notes: plan.notes } : {}),
+  };
+  let room = MAX_KEPT_RESULT_CHARS - JSON.stringify(base).length;
+  let kept = 0;
+  for (const cells of values) {
+    room -= JSON.stringify(cells).length + 1; // the row and its comma
+    if (room < 0) break;
+    kept++;
+  }
+  return { ...base, rows: values.slice(0, kept) };
 }
 
 // ------------------------------------------------------------------ the overview (system prompt and describe)
@@ -746,7 +805,8 @@ export const queryTable = define({
     "Filters: =, !=, >, >=, <, <=, between (value to value2), in / not_in (values), contains, not_contains, starts_with, is_blank, not_blank. " +
     "Text matching ignores upper/lower case. Dates are filtered with a year (2026), month (2026-03) or day (2026-03-05), each meaning the whole period. " +
     "Negative filters (!=, not_in, not_contains) keep empty cells. Use the column name _row for the spreadsheet row number. " +
-    "describe: true returns the table's full column overview.",
+    "describe: true returns the table's full column overview. " +
+    "The user sees each result in full under your answer, as a chart when it suits (dates in order as a line, other groups as bars) or a table, with a CSV download; you see the first part of a long result.",
   risk: "read",
   requiresMemory: false,
   // Offered only in chats that have a spreadsheet (and in the tool lists when the admin has spreadsheets on).
@@ -791,7 +851,10 @@ export const queryTable = define({
       columns: { type: "array", items: { type: "string" }, description: "Listing rows: the columns to show." },
       sort_by: { type: "string", description: "A column (listing rows), or a group or metric label such as \"sum of Amount\"." },
       descending: { type: "boolean", description: "Largest or latest first." },
-      limit: { type: "integer", description: `How many result rows (default ${DEFAULT_GROUPS} groups or ${DEFAULT_ROWS} listed rows).` },
+      limit: {
+        type: "integer",
+        description: `How many result rows (default ${DEFAULT_GROUPS} groups or ${DEFAULT_ROWS} listed rows; at most ${MAX_GROUPS} groups or ${MAX_ROWS} listed rows, e.g. for a list the user wants to download).`,
+      },
       describe: { type: "boolean", description: "Return the full column overview instead of calculating." },
     },
   },
@@ -831,6 +894,8 @@ export const queryTable = define({
       content: result.content,
       summary: `${t.ref}: ${plan.text} → ${result.shown} result row${result.shown === 1 ? "" : "s"} (${result.matched.toLocaleString("en-US")} matching rows)`,
       sources: [source(plan.text)],
+      // The whole result goes under the answer as a chart or table with a CSV download.
+      table: tableResultDto(t, plan, results),
     };
   },
 });

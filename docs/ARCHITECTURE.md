@@ -410,6 +410,51 @@ sequenceDiagram
   default 2,000,000, max 4,500,000): checked before each query (estimate 2 × rows) and counted after it with D1's
   own `meta.rows_read` (`rate_limits` key `tables:rows_read`). Writes are small: about 5 per block of 500 rows.
 
+### Charts and CSV downloads (v0.14.1)
+
+- **The whole result travels with the answer.** `query_table` also returns `table: TableResultDto`: the file › sheet,
+  what was calculated, the result columns (`kind` group / metric / row / column, the value `type`, how a date was
+  grouped `by`, the metric `op`, the source column's `unit`), the rows with exact values (an empty group is null),
+  `total` result rows and `matched` spreadsheet rows. The agent puts it on the tool step (like a GitHub change card),
+  so it is streamed, saved in `messages.tools` and shown again when the chat reopens. No migration. `presentTool`
+  keeps it for regular users (only the tool's inputs are hidden).
+- **More rows than the model sees.** A calculation returns up to 500 groups (default 100) or 200 listed rows (default
+  20); a bigger `limit` just means "all". The model still gets at most 7,000 characters (rows dropped from the end
+  with a note). The kept result is capped at 40,000 JSON characters per calculation (`MAX_KEPT_RESULT_CHARS`, rows
+  dropped from the end; `total` still says how many there are) and 120,000 per answer (`MAX_TABLE_RESULTS_CHARS`,
+  a later result keeps only its source chip). The point is to keep message rows small and chat loads fast on the free
+  plan's CPU limit.
+- **Which chart** (`web/lib/table-result.ts`, plain logic; `components/TableResultCard.tsx` draws it, no chart
+  library). One figure at a time (a picker when there are several; never two scales).
+  - A date grouped by year / quarter / month / week / day / hour, with the result complete or in date order → a line.
+    Every period between the first and last is filled in: 0 for count, count of different values and sum; a gap for
+    average, median, lowest and highest. Over 1,500 periods → table only.
+  - A ranking of periods ("top 5 months") or any other single grouping → bars in the result's order (number groups
+    in their own order when the result is complete; weekdays by name).
+  - A date period and one other value with up to 4 different values, complete → one line per value. Lines are ordered
+    by total for counts and sums, and there is a legend.
+  - A single figure, listed rows, three groupings → table only. A single-figure result gets no card (the answer has it).
+- **Drawing rules** (from a data-visualisation checklist):
+  - Thin marks: 2 px lines, bars ≤ 14 px with a rounded end, solid hairline gridlines in the border colours.
+  - Series colours in a fixed order (`--chart-1…4` in `styles.css`): VESPER violet, orange, aqua, yellow. Validated as
+    a set for colour-blind separation and lightness on the card surface, light and dark; aqua and yellow are under
+    3:1 on white, so there is always a legend or labels and a Table view.
+  - Text in the normal text colours. Axis numbers in full under 10,000, compact above.
+  - Area wash only for a single line that starts at 0. A line starts at 0 for counts and sums and for anything near
+    0; averages may zoom in.
+  - Hover/tap crosshair with a readout of every line, arrow keys with a spoken readout (`aria-live`), and a Table view
+    with every exact value.
+- **CSV** (`resultCsv`):
+  - A heading row, then exact values: numbers with "." and no separators, dates as 2026-03-05, times as
+    "2026-03-05 14:30", yes/no as Yes/No, weekdays by name, hours as 14:00, empty cells empty.
+  - Quoted when needed. Text starting with = + - @ (or a tab or line break) gets a leading apostrophe so Excel keeps
+    it as text (formula injection).
+  - CRLF line ends; saved with a byte-order mark so Excel reads Urdu correctly.
+  - File name "file - what was calculated.csv", made safe for Windows.
+- **The prompt** tells the model the results appear under its answer as charts or tables with a download. So "make a
+  chart" or "give me a file" means running the right calculation (group by month; list rows with a higher limit), not
+  drawing in text or saying it can't.
+
 ## 6. Security model
 
 | Threat | Control |
@@ -429,7 +474,7 @@ sequenceDiagram
 | Secret leakage | Keys only in Cloudflare secrets; `.env`/`.dev.vars` git-ignored; never returned by the API |
 | Data isolation | Every conversation query is scoped by `user_id`; foreign keys cascade on delete |
 | Dev login in prod | Requires `DEV_LOGIN=true` **and** a localhost hostname, which a workers.dev request can't have |
-| Spreadsheet content and queries (v0.14.0) | Files are read in the browser and re-checked on upload (cell types, row widths, sizes, row counts must match the overview); only the owner can add to, finish, send or delete an unsent file, and only their chats see its tables; SQL is built from fixed parts with column positions we control and every value bound, so neither the model nor cell text can change the query; column names and cell values are passed to the model as data; per-day file limit, per-chat/per-user caps, app-wide storage and daily read budget |
+| Spreadsheet content and queries (v0.14.0) | Files are read in the browser and re-checked on upload (cell types, row widths, sizes, row counts must match the overview); only the owner can add to, finish, send or delete an unsent file, and only their chats see its tables; SQL is built from fixed parts with column positions we control and every value bound, so neither the model nor cell text can change the query; column names and cell values are passed to the model as data; per-day file limit, per-chat/per-user caps, app-wide storage and daily read budget. Results under the answer (v0.14.1) are drawn as text nodes and SVG (never HTML from the file), and the CSV download keeps text that Excel could run as a formula (=, +, -, @) as plain text |
 | Unwanted GitHub changes (v0.13.0) | Separate Actions app with its own repo choice; only repos the user can write to (v0.13.1, checked at prepare and approve); tools only prepare; sending happens only from `POST /api/github-actions/:id/approve` by the change's owner, once (atomic claim), before it expires; card shows the exact text / every changed line; prompt forbids preparing changes because content asks for it; warnings for others' text and private-to-public; stale files refused; no existing branch, merge, delete or workflow file is ever touched |
 
 Prompt injection becomes the main risk once tools exist (Phase 5+). The plan for that: tool results are wrapped
@@ -465,11 +510,17 @@ tools are blocked once untrusted content is in context.
   several sheets, hidden sheets, 1900/1904 dates); exact sums, averages, medians, counts, filters and date grouping on
   a real local D1; listing rows; plain errors; SQL text in values and column names having no effect; 50,000 rows
   (timing and rows read); the prompt overview; the daily read budget; uploads, ownership, limits, the admin switch,
-  a full chat turn with a faked model, deletion with the chat and the clean-up of unsent files.
+  a full chat turn with a faked model, deletion with the chat and the clean-up of unsent files. v0.14.1: the kept
+  result (columns, exact rows, empty groups, units, the 40,000-character cap) and the per-answer cap through a chat
+  turn; which results get a card; the chart choice (lines with filled periods, gaps, rankings as bars, one line per
+  value, no chart where it wouldn't help); period filling; value, date and axis wording; the CSV (quoting, formula
+  guard, Urdu, CRLF) and its file name.
 - Tests never use real keys: `vitest.config.ts` blanks the provider and search keys even if `.dev.vars` has them.
 - Accuracy (real models, real search): `npm run accuracy` (see 5d); not part of `npm test`.
 - Manual/automated E2E: `wrangler dev` + `scripts/mock-llm.mjs` + a headless browser run (login, streaming,
-  reload persistence, regenerate, model picker, settings, rename, dark mode, stop, mobile drawer, sign-out).
+  reload persistence, regenerate, model picker, settings, rename, dark mode, stop, mobile drawer, sign-out). The mock
+  can call the table tool: "total … by region" (bars), "… by month" (a line), "… by month and region" (one line per
+  value), "… with the count" (two figures), "list …" (rows for a download).
 
 ## 8. Known limitations
 
@@ -491,9 +542,11 @@ tools are blocked once untrusted content is in context.
 - Voice: Whisper may write Urdu speech in Hindi script when the language is "Detect automatically" (users can pick
   Urdu in Settings → Voice). Read aloud depends on the voices installed on the device.
 - Spreadsheets: one header row per sheet (two-row headers and merged headers aren't combined); formulas count by
-  their last saved value; subtotal rows in the middle are only noted, not left out; no charts or downloads of results
-  yet; files go to cloud models only (not Ollama) and not to deep research. The knowledge base still takes CSV, not
-  Excel.
+  their last saved value; subtotal rows in the middle are only noted, not left out; files go to cloud models only
+  (not Ollama) and not to deep research. The knowledge base still takes CSV, not Excel.
+- Charts and downloads (v0.14.1) cover a calculation's result (up to 500 groups or 200 listed rows), not the whole
+  file; two value groupings (e.g. region × product) and three groupings are shown as a table, not a chart; the chart
+  type is chosen automatically (no pie charts by design: bars compare more exactly).
 
 ## 9. Roadmap
 

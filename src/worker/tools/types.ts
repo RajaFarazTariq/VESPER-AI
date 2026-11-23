@@ -1,6 +1,6 @@
 /** Shared tool types, in their own module so tool files and the registry don't import each other. */
 import type { z } from "zod";
-import type { GithubActionRefDto, SourceDto, UserSettings } from "../../shared/types";
+import type { GithubActionRefDto, SourceDto, TableResultDto, UserSettings } from "../../shared/types";
 import type { GithubWriter } from "./github-client";
 
 /** What happened so far in this answer (filled in by the agent loop), for tools that need to know. */
@@ -94,6 +94,8 @@ export interface ToolOutput {
   private?: boolean;
   /** A GitHub change was prepared and waits for the user's approval (shown as a card). */
   action?: GithubActionRefDto;
+  /** A spreadsheet calculation's whole result, shown under the answer as a chart or table (v0.14.1). */
+  table?: TableResultDto;
 }
 
 /** A tool the model may call. Parameters are plain JSON Schema (portable across providers). */

@@ -35,6 +35,15 @@
   --shadow-sm: 0 1px 2px rgb(20 20 40 / 0.05);
   --shadow-md: 0 4px 16px -4px rgb(30 25 80 / 0.1), 0 1px 3px rgb(20 20 40 / 0.06);
   --shadow-lg: 0 18px 48px -12px rgb(30 25 80 / 0.22), 0 2px 6px rgb(20 20 40 / 0.06);
+  /*
+   * Chart series (v0.14.1), always used in this order: violet (the accent), orange, aqua, yellow. Checked as a set on
+   * the card surface (--bg-elevated) for color-blind separation and lightness, in light and dark. Aqua and yellow are
+   * under 3:1 against white, so charts always have a legend or labels and a Table view.
+   */
+  --chart-1: #5b4cf0;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
   color-scheme: light;
 }
 
@@ -60,6 +69,10 @@
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-md: 0 6px 20px -6px rgb(0 0 0 / 0.6), 0 1px 3px rgb(0 0 0 / 0.4);
   --shadow-lg: 0 22px 56px -12px rgb(0 0 0 / 0.75), 0 2px 8px rgb(0 0 0 / 0.4);
+  --chart-1: #8d7fff;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
   color-scheme: dark;
 }
 

@@ -7,16 +7,42 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as XLSX from "xlsx";
 import { SseParser } from "../src/shared/sse";
 import { TABLE_LIMITS } from "../src/shared/tables";
-import { DEFAULT_SETTINGS, type ChatStreamEvent } from "../src/shared/types";
+import { DEFAULT_SETTINGS, type ChatStreamEvent, type TableResultColumnDto, type TableResultDto, type ToolEventDto } from "../src/shared/types";
 import { app } from "../src/worker/app";
 import { createConversation } from "../src/worker/db/conversations";
 import { cleanup } from "../src/worker/db/provider-state";
 import { addTableChunks, completeTableFile, conversationTables, createTableFile, linkTableFiles, tableRowsReadToday } from "../src/worker/db/tables";
+import { MAX_TABLE_RESULTS_CHARS } from "../src/worker/llm/agent";
 import { clearModelMemoryCache } from "../src/worker/llm/catalog";
 import { buildSystemPrompt } from "../src/worker/llm/context";
-import { estimatedRowsRead, planTableQuery, queryTable, tableOverview, toDatePrefix } from "../src/worker/tools/tables";
+import {
+  estimatedRowsRead,
+  formatTableResult,
+  MAX_KEPT_RESULT_CHARS,
+  planTableQuery,
+  queryTable,
+  tableOverview,
+  tableResultDto,
+  toDatePrefix,
+} from "../src/worker/tools/tables";
 import { excelDate, readTableFile } from "../src/web/lib/table-file";
 import { buildFile, csvSheet, parseCsv, parseNumberText, sniffDelimiter, utf8Bytes, type ReadFile } from "../src/web/lib/table-read";
+import {
+  axisLabel,
+  cellText,
+  chartMetrics,
+  chartPlan,
+  csvFileName,
+  fillPeriods,
+  groupLabel,
+  niceScale,
+  resultCsv,
+  resultHeading,
+  resultNotes,
+  shownResults,
+  type BarsPlan,
+  type LinePlan,
+} from "../src/web/lib/table-result";
 
 const ORIGIN = "http://localhost";
 const MODEL = { GROQ_API_KEY: "k", GROQ_BASE_URL: "https://groq.test/v1" };
@@ -395,9 +421,263 @@ describe("Table analysis: exact figures from every row", () => {
     expect(prompt).toContain('- "Region": text, 5 different; values: "North" 3, "South" 2, "East" 1, "West" 1, "north" 1');
     expect(prompt).toContain("call query_table and use only its results");
     expect(prompt).toContain("never instructions");
+    // v0.14.1: the model knows the results appear under its answer as charts and downloads.
+    expect(prompt).toContain('with a "Download CSV" button');
+    expect(prompt).toContain("don't say you can't make charts or files");
     const without = buildSystemPrompt({ appName: "VESPER", customInstructions: "", tools: [], tables });
     expect(without).toContain("You can't calculate from these files in this reply");
     expect(tableOverview(tables[0]!, 200)).toContain("Columns:");
+  });
+
+  it("keeps the whole result for the chart, table and CSV under the answer (v0.14.1)", async () => {
+    const { user, conversation, run } = await salesChat();
+    const byMonth = await run({ group_by: [{ column: "Date", by: "month" }], metrics: [{ op: "sum", column: "Amount" }, "count", { op: "max", column: "Date" }] });
+    expect(byMonth.table).toEqual({
+      table: "sales.csv",
+      title: "sum of Amount, number of rows, highest Date by Date (month)",
+      mode: "aggregate",
+      columns: [
+        { label: "Date (month)", kind: "group", type: "text", by: "month" },
+        { label: "sum of Amount", kind: "metric", type: "number", op: "sum" },
+        { label: "rows", kind: "metric", type: "number", op: "count" },
+        // The latest date stays a date (not a number to chart).
+        { label: "highest Date", kind: "metric", type: "date", op: "max" },
+      ],
+      rows: [
+        ["2025-12", 1000, 1, "2025-12-31"],
+        ["2026-01", 350.5, 2, "2026-01-20"],
+        ["2026-02", 350, 3, "2026-02-28"],
+        ["2026-03", 200, 2, "2026-03-15"],
+      ],
+      total: 4,
+      matched: 8,
+      notes: ["Amount has empty cells; they are left out of the sum."],
+    });
+    // An empty group: "(empty)" for the model, null under the answer (an empty cell in the CSV).
+    const byAmount = await run({ group_by: ["Amount"], metrics: ["count"], sort_by: "Amount" });
+    expect(byAmount.result.rows.at(-1)).toEqual(["(empty)", 1]);
+    expect(byAmount.table!.rows.at(-1)).toEqual([null, 1]);
+    // Listing rows: the spreadsheet row number first; a limit above the most just means all of them.
+    const listed = await run({ columns: ["Date", "Paid"], limit: 10_000 });
+    expect(listed.table!.columns).toEqual([
+      { label: "row", kind: "row", type: "number" },
+      { label: "Date", kind: "column", type: "date" },
+      { label: "Paid", kind: "column", type: "boolean" },
+    ]);
+    expect(listed.table!.rows).toHaveLength(8);
+    expect(listed.table!.rows[0]).toEqual([2, "2026-01-05", true]);
+    expect(listed.table).toMatchObject({ mode: "rows", total: 8, matched: 8, title: "rows" });
+
+    // Units come along for the chart and CSV; a long result keeps the rows that fit and says how many there are.
+    const table = (await conversationTables(env.DB, user.id, conversation.id))[0]!;
+    const priced = { ...table, columns: table.columns.map((c) => (c.name === "Amount" ? { ...c, unit: "$" } : c)) };
+    const plan = planTableQuery(priced, { group_by: [{ column: "Region" }], metrics: [{ op: "avg", column: "Amount" }, { op: "count_distinct", column: "Amount" }] });
+    expect(plan.columns.slice(1)).toEqual([
+      { label: "average Amount ($)", kind: "metric", type: "number", op: "avg", unit: "$" },
+      { label: "different Amount", kind: "metric", type: "number", op: "count_distinct" },
+    ]);
+    const rowsPlan = planTableQuery(table, { columns: ["Region"], limit: 200 });
+    const fake = Array.from({ length: 200 }, (_, i) => ({ _row: i + 2, c0: `${"x".repeat(900)}${i}`, matched: 5_000 }));
+    const kept = tableResultDto(table, rowsPlan, fake);
+    expect(kept.rows.length).toBeGreaterThan(30);
+    expect(kept.rows.length).toBeLessThan(50);
+    expect(kept).toMatchObject({ total: 5_000, matched: 5_000 });
+    expect(JSON.stringify(kept).length).toBeLessThanOrEqual(MAX_KEPT_RESULT_CHARS);
+    expect(kept.rows.at(-1)).toEqual([kept.rows.length + 1, `${"x".repeat(900)}${kept.rows.length - 1}`]);
+    // The model's own view stays under its limit.
+    expect(formatTableResult(table, rowsPlan, fake).content.length).toBeLessThanOrEqual(7_000);
+  });
+});
+
+/** A finished table-analysis step carrying a result. */
+const step = (table: TableResultDto, extra: Partial<ToolEventDto> = {}): ToolEventDto => ({ id: "s", name: "query_table", label: "Table analysis", args: {}, status: "done", summary: null, table, ...extra });
+const col = (c: Partial<TableResultColumnDto> & Pick<TableResultColumnDto, "label" | "kind">): TableResultColumnDto => ({ type: "number", ...c });
+const MONTH = col({ label: "Date (month)", kind: "group", type: "text", by: "month" });
+const REGION = col({ label: "Region", kind: "group", type: "text", by: "value" });
+const SUM = col({ label: "sum of Amount ($)", kind: "metric", op: "sum", unit: "$" });
+const AVG = col({ label: "average Amount ($)", kind: "metric", op: "avg", unit: "$" });
+const result = (columns: TableResultColumnDto[], rows: TableResultDto["rows"], extra: Partial<TableResultDto> = {}): TableResultDto => ({
+  table: "sales.xlsx",
+  title: "sum of Amount by Date (month)",
+  mode: "aggregate",
+  columns,
+  rows,
+  total: rows.length,
+  matched: 100,
+  ...extra,
+});
+
+describe("results under the answer: charts, tables and CSV (v0.14.1)", () => {
+  it("shows each calculation once, and only when there's more than one figure", () => {
+    const months = result([MONTH, SUM], [["2026-01", 1], ["2026-02", 2]]);
+    const single = result([SUM], [[3]], { title: "sum of Amount" });
+    const listed = result([col({ label: "row", kind: "row" })], [[2]], { mode: "rows", title: "rows" });
+    const again = { ...months, rows: [["2026-01", 1], ["2026-02", 5]] as TableResultDto["rows"] };
+    const shown = shownResults([
+      step(months),
+      step(single),
+      step(listed),
+      step(months, { status: "error" }),
+      { ...step(months), name: "web_search" },
+      step(again),
+    ]);
+    // A single figure is already in the answer; the same calculation twice shows the later one.
+    expect(shown).toEqual([listed, again]);
+    expect(shownResults(null)).toEqual([]);
+  });
+
+  it("draws dates in order as a line: empty months count as 0 for sums and are gaps for averages", () => {
+    const rows: TableResultDto["rows"] = [
+      ["2025-11", 1000, 500],
+      ["2026-02", 350, 175],
+      [null, 20, 20],
+    ];
+    const r = result([MONTH, SUM, AVG], rows);
+    expect(chartMetrics(r)).toEqual([1, 2]);
+    const sums = chartPlan(r, 1, "en-GB") as LinePlan;
+    expect(sums.kind).toBe("line");
+    expect(sums.points.map((p) => [p.key, p.label, p.short])).toEqual([
+      ["2025-11", "November 2025", "Nov 25"],
+      ["2025-12", "December 2025", "Dec 25"],
+      ["2026-01", "January 2026", "Jan 26"],
+      ["2026-02", "February 2026", "Feb 26"],
+    ]);
+    expect(sums.series).toEqual([{ name: null, values: [1000, 0, 0, 350] }]);
+    expect(sums.notes).toEqual(["One group has no date, so it isn't in the chart (see Table)."]);
+    expect((chartPlan(r, 2) as LinePlan).series[0]!.values).toEqual([500, null, null, 175]);
+    // Part of a long result still in date order: a line over what is there. A ranking ("top months"): bars in its order.
+    expect(chartPlan(result([MONTH, SUM], [["2026-03", 1], ["2026-01", 2]], { total: 2 }), 1)!.kind).toBe("line");
+    const top = chartPlan(result([MONTH, SUM], [["2026-03", 9], ["2026-01", 5], ["2026-07", 4]], { total: 12 }), 1, "en-GB") as BarsPlan;
+    expect(top.items).toEqual([
+      { label: "March 2026", value: 9 },
+      { label: "January 2026", value: 5 },
+      { label: "July 2026", value: 4 },
+    ]);
+    // Days over many years would be too many points: the table only.
+    expect(chartPlan(result([col({ label: "Date (day)", kind: "group", type: "text", by: "day" }), SUM], [["2020-01-01", 1], ["2026-01-01", 2]]), 1)).toBeNull();
+  });
+
+  it("uses bars for other groupings, one line per value for a date and a few values, and no chart where it wouldn't help", () => {
+    const regions = chartPlan(result([REGION, SUM], [["West", 1000], ["North", -25.5], [null, null]]), 1) as BarsPlan;
+    expect(regions).toEqual({
+      kind: "bars",
+      items: [
+        { label: "West", value: 1000 },
+        { label: "North", value: -25.5 },
+        { label: "(empty)", value: null },
+      ],
+      notes: [],
+    });
+    // Number groups (e.g. quantities) in their own order when the result has them all; weekdays by name.
+    const units = chartPlan(result([col({ label: "Units", kind: "group", by: "value" }), SUM], [[3, 1], [1, 5], [2, 4]]), 1) as BarsPlan;
+    expect(units.items.map((i) => i.label)).toEqual(["1", "2", "3"]);
+    const weekdays = chartPlan(result([col({ label: "Date (weekday)", kind: "group", type: "text", by: "weekday" }), SUM], [["1 Monday", 1], ["2 Tuesday", 2]]), 1) as BarsPlan;
+    expect(weekdays.items.map((i) => i.label)).toEqual(["Monday", "Tuesday"]);
+
+    const split = result(
+      [MONTH, REGION, SUM],
+      [
+        ["2026-01", "North", 10],
+        ["2026-01", "South", 30],
+        ["2026-03", "North", 5],
+      ],
+    );
+    const lines = chartPlan(split, 2) as LinePlan;
+    expect(lines.points.map((p) => p.key)).toEqual(["2026-01", "2026-02", "2026-03"]);
+    // Biggest total first; a month with no rows counts as 0.
+    expect(lines.series).toEqual([
+      { name: "South", values: [30, 0, 0] },
+      { name: "North", values: [10, 0, 5] },
+    ]);
+    const many = result([MONTH, REGION, SUM], ["A", "B", "C", "D", "E"].map((name, i) => [`2026-0${i + 1}`, name, i]));
+    expect(chartPlan(many, 2)).toBeNull();
+    expect(chartPlan({ ...split, total: 9 }, 2)).toBeNull();
+    // A single figure, listed rows, a date's latest value: no chart.
+    expect(chartPlan(result([REGION, SUM], [["West", 1]]), 1)).toBeNull();
+    expect(chartMetrics(result([col({ label: "row", kind: "row" })], [[2], [3]], { mode: "rows" }))).toEqual([]);
+    expect(chartMetrics(result([REGION, col({ label: "highest Date", kind: "metric", type: "date", op: "max" })], [["a", "2026-01-01"], ["b", "2026-02-01"]]))).toEqual([]);
+  });
+
+  it("fills in every period between the first and last", () => {
+    expect(fillPeriods(["2025-Q4", "2026-Q2"], "quarter")).toEqual(["2025-Q4", "2026-Q1", "2026-Q2"]);
+    expect(fillPeriods(["2026-02-23", "2026-03-09"], "week")).toEqual(["2026-02-23", "2026-03-02", "2026-03-09"]);
+    expect(fillPeriods(["2024-02-28", "2024-03-01"], "day")).toEqual(["2024-02-28", "2024-02-29", "2024-03-01"]);
+    expect(fillPeriods(["09", "11"], "hour")).toEqual(["09", "10", "11"]);
+    expect(fillPeriods(["2024", "2026"], "year")).toEqual(["2024", "2025", "2026"]);
+    // Weeks that don't line up, or keys in another form: used as they are.
+    expect(fillPeriods(["2026-02-23", "2026-03-04"], "week")).toBeNull();
+    expect(fillPeriods(["March"], "month")).toBeNull();
+    expect(fillPeriods(["2000-01", "2200-01"], "month")).toBe("too_many");
+  });
+
+  it("writes values plainly: units, dates, periods, yes/no, round axis steps", () => {
+    const money = col({ label: "sum of Amount ($)", kind: "metric", unit: "$" });
+    expect(cellText(1234.5678, money, "table", "en-US")).toBe("1,234.5678");
+    expect(cellText(1234.5678, money, "chart", "en-US")).toBe("$1,234.57");
+    expect(cellText(-45.5, money, "chart", "en-US")).toBe("-$45.50");
+    expect(cellText(45, col({ label: "average Rate (%)", kind: "metric", unit: "%" }), "chart", "en-US")).toBe("45%");
+    expect(cellText(1200, col({ label: "sum of Cost (PKR)", kind: "metric", unit: "PKR" }), "chart", "en-US")).toBe("1,200 PKR");
+    expect(cellText(0.012345, col({ label: "average Share", kind: "metric" }), "chart", "en-US")).toBe("0.0123");
+    expect(cellText(2026, col({ label: "Year", kind: "group", by: "value" }), "table", "en-US")).toBe("2026");
+    expect(cellText(true, col({ label: "Paid", kind: "column", type: "boolean" }), "table")).toBe("Yes");
+    expect(cellText("2026-03-05T14:30:00", col({ label: "Time", kind: "column", type: "date" }), "table", "en-GB")).toBe("5 Mar 2026, 14:30");
+    expect(cellText(null, REGION, "table")).toBe("(empty)");
+    const by = (b: TableResultColumnDto["by"]) => col({ label: "Date", kind: "group", type: "text", by: b });
+    expect(groupLabel("2026-Q1", by("quarter"), "long")).toBe("Q1 2026");
+    expect(groupLabel("2026-03-02", by("week"), "long", "en-GB")).toBe("Week of 2 Mar 2026");
+    expect(groupLabel("2026-03-02", by("day"), "short", "en-GB")).toBe("2 Mar");
+    expect(groupLabel("7 Sunday", by("weekday"), "long")).toBe("Sunday");
+    expect(groupLabel("09", by("hour"), "short")).toBe("09:00");
+    expect(niceScale(0, 1000).ticks).toEqual([0, 250, 500, 750, 1000]);
+    expect(niceScale(-30, 70).ticks).toEqual([-50, -25, 0, 25, 50, 75]);
+    expect(niceScale(5, 5).ticks).toEqual([4.5, 4.75, 5, 5.25, 5.5]);
+    expect(axisLabel(20_000, 40_000, "$", "en-US")).toBe("$20K");
+    expect(axisLabel(2_500, 5_000, undefined, "en-US")).toBe("2,500");
+    expect(resultNotes(result([REGION, SUM], [["a", 1], ["b", 2]], { total: 5, notes: ["Amount has empty cells; they are left out of the sum."] }), "en-US")).toEqual([
+      "Showing the first 2 of 5 groups.",
+      "Amount has empty cells; they are left out of the sum.",
+    ]);
+    expect(resultHeading(result([REGION, SUM], [["a", 1]], { matched: 1_234 }), "en-US")).toEqual({ title: "Sum of Amount by Date (month)", detail: "sales.xlsx · from 1,234 rows" });
+  });
+
+  it("writes a CSV that opens correctly in Excel: exact values, quoted text, no formulas", () => {
+    const r: TableResultDto = {
+      table: "sales.xlsx › Q1 / Q2",
+      title: 'rows where Region = "North", sorted by Amount',
+      mode: "rows",
+      columns: [
+        col({ label: "row", kind: "row" }),
+        col({ label: "Customer", kind: "column", type: "text" }),
+        col({ label: "Amount ($)", kind: "column", unit: "$" }),
+        col({ label: "Paid", kind: "column", type: "boolean" }),
+        col({ label: "Time", kind: "column", type: "date" }),
+      ],
+      rows: [
+        [2, 'Ali, "Shop"', -1234.5, true, "2026-03-05T14:30"],
+        [3, "=HYPERLINK(\"http://x\")", 0.1, false, "2026-03-06"],
+        [4, "-5 units", null, null, null],
+        [5, "علی\nلاہور", 1e3, true, "2026-03-07"],
+      ],
+      total: 4,
+      matched: 4,
+    };
+    expect(resultCsv(r)).toBe(
+      [
+        "Row,Customer,Amount ($),Paid,Time",
+        '2,"Ali, ""Shop""",-1234.5,Yes,2026-03-05 14:30',
+        "3,\"'=HYPERLINK(\"\"http://x\"\")\",0.1,No,2026-03-06",
+        "4,'-5 units,,,",
+        '5,"علی\nلاہور",1000,Yes,2026-03-07',
+        "",
+      ].join("\r\n"),
+    );
+    const grouped = result(
+      [col({ label: "Date (weekday)", kind: "group", type: "text", by: "weekday" }), col({ label: "Date (hour)", kind: "group", type: "text", by: "hour" }), SUM, col({ label: "rows", kind: "metric", op: "count" })],
+      [["1 Monday", "09", 5, 2], [null, null, 1, 1]],
+    );
+    expect(resultCsv(grouped)).toBe("Date (weekday),Date (hour),Sum of Amount ($),Number of rows\r\nMonday,09:00,5,2\r\n,,1,1\r\n");
+    expect(csvFileName(r)).toBe("sales - Q1 Q2 - rows where Region = North , sorted by Amount.csv");
+    expect(csvFileName(result([SUM], [[1]], { table: "a.csv", title: "x".repeat(300) }))).toBe(`a - ${"x".repeat(116)}.csv`);
   });
 });
 
@@ -451,10 +731,32 @@ describe("spreadsheet uploads and chats", () => {
     const done = stream.find((e) => e.type === "done") as Extract<ChatStreamEvent, { type: "done" }>;
     expect(done.message.tools![0]!.sources).toEqual([{ title: "sales.csv", location: "sum of Amount by Region · where Date in 2026", kind: "table" }]);
     expect(done.message.checkable).toBe(true);
+    // v0.14.1: the whole result comes with the answer (a regular user too: only the tool's inputs are hidden) and is saved.
+    const result = {
+      table: "sales.csv",
+      title: "sum of Amount by Region · where Date in 2026",
+      mode: "aggregate",
+      columns: [
+        { label: "Region", kind: "group", type: "text", by: "value" },
+        { label: "sum of Amount", kind: "metric", type: "number", op: "sum" },
+      ],
+      rows: [
+        ["North", 525.25],
+        ["South", 300.5],
+        ["north", 74.75],
+        ["East", null],
+      ],
+      total: 4,
+      matched: 7,
+      notes: ["Amount has empty cells; they are left out of the sum."],
+    };
+    expect(done.message.tools![0]!.args).toEqual({});
+    expect(done.message.tools![0]!.table).toEqual(result);
     const conversationId = (stream.find((e) => e.type === "conversation") as any).conversation.id;
     const saved = await call(`/api/conversations/${conversationId}`, { cookie: ann.cookie });
     expect(saved.json.conversation.title).toBe("Sales by region in 2026?");
     expect(saved.json.messages[0].files).toEqual([{ id, name: "sales.csv", sheets: 1, rows: 8 }]);
+    expect(saved.json.messages[1].tools[0].table).toEqual(result);
     // The same file can't be sent again; deleting the chat deletes the file and its rows.
     const again = await call("/api/chat", { method: "POST", body: JSON.stringify({ message: "Again", files: [id] }), cookie: ann.cookie });
     expect(again.json.error.code).toBe("file_not_ready");
@@ -500,6 +802,35 @@ describe("spreadsheet uploads and chats", () => {
     expect((await call("/api/media/features", { cookie: ann.cookie })).json.tables.enabled).toBe(false);
     expect((await call("/api/tools", { cookie: ann.cookie })).json.tools.map((t: any) => t.name)).not.toContain("query_table");
     expect((await call("/api/admin/users", { cookie: admin.cookie })).json.users.find((u: any) => u.login === "ann").todayTables).toBe(2);
+  });
+
+  it("keeps the results saved with one answer within a size cap (v0.14.1)", async () => {
+    const ann = await login("ann");
+    // 200 rows of long text: each listing is kept up to its own cap, and the answer keeps three of them.
+    const lines = ["Note", ...Array.from({ length: 200 }, (_, i) => `${"n".repeat(900)}${i}`)];
+    const { id } = await upload(ann.cookie, csvFile("notes.csv", lines.join("\n")));
+    let requests = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      requests++;
+      if (requests > 1) return answer("Here are the notes.");
+      const calls = [0, 1, 2, 3].map((i) => ({
+        index: i,
+        id: `call_${i}`,
+        type: "function",
+        function: { name: "query_table", arguments: JSON.stringify({ columns: ["Note"], limit: 200, filters: [{ column: "_row", op: ">", value: i + 1 }] }) },
+      }));
+      return sse([{ choices: [{ delta: { tool_calls: calls } }] }]);
+    });
+    const chat = await call("/api/chat", { method: "POST", body: JSON.stringify({ message: "List the notes", files: [id] }), cookie: ann.cookie });
+    const done = events(chat.text).find((e) => e.type === "done") as Extract<ChatStreamEvent, { type: "done" }>;
+    const steps = done.message.tools!.filter((t) => t.name === "query_table");
+    expect(steps).toHaveLength(4);
+    expect(steps.map((t) => Boolean(t.table))).toEqual([true, true, true, false]);
+    expect(steps[3]!.sources).toHaveLength(1);
+    const kept = steps.slice(0, 3).map((t) => JSON.stringify(t.table).length);
+    expect(kept.every((n) => n > 30_000 && n <= MAX_KEPT_RESULT_CHARS)).toBe(true);
+    expect(kept.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(MAX_TABLE_RESULTS_CHARS);
+    expect(steps[0]!.table!.total).toBe(200);
   });
 
   it("removes files that were never sent after a day", async () => {

@@ -23,12 +23,19 @@ function readBody(req) {
 
 function pickTool(text, names, system = "") {
   // Spreadsheets (v0.14.0): "total …" sums the first number column by the first text column of the chat's first table.
-  if (names.includes("query_table") && /\b(?:total|sum|average|how many|by)\b/i.test(text)) {
+  // v0.14.1: "… by month" groups by the first date column's month ("by month and <text column>": one line per value);
+  // "list …" lists rows (up to 200) for the download.
+  if (names.includes("query_table") && /\b(?:total|sum|average|how many|by|list)\b/i.test(text)) {
     const number = /- "([^"]+)": number/.exec(system)?.[1];
     const label = /- "([^"]+)": text/.exec(system)?.[1];
+    const date = /- "([^"]+)": date/.exec(system)?.[1];
+    if (/^list\b/i.test(text.trim())) return { name: "query_table", args: { limit: 200 } };
     if (number) {
       const op = /\baverage\b/i.test(text) ? "avg" : "sum";
-      return { name: "query_table", args: { ...(label ? { group_by: [{ column: label }] } : {}), metrics: [{ op, column: number }] } };
+      const groups = [];
+      if (date && /\bmonth\b/i.test(text)) groups.push({ column: date, by: "month" });
+      if (label && (groups.length === 0 || text.toLowerCase().includes(label.toLowerCase()))) groups.push({ column: label });
+      return { name: "query_table", args: { ...(groups.length ? { group_by: groups } : {}), metrics: [{ op, column: number }, ...(/\bcount\b/i.test(text) ? ["count"] : [])] } };
     }
   }
   const time = /time in ([A-Za-z_]+\/[A-Za-z_]+)/i.exec(text);
