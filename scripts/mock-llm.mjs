@@ -21,7 +21,16 @@ function readBody(req) {
   });
 }
 
-function pickTool(text, names) {
+function pickTool(text, names, system = "") {
+  // Spreadsheets (v0.14.0): "total …" sums the first number column by the first text column of the chat's first table.
+  if (names.includes("query_table") && /\b(?:total|sum|average|how many|by)\b/i.test(text)) {
+    const number = /- "([^"]+)": number/.exec(system)?.[1];
+    const label = /- "([^"]+)": text/.exec(system)?.[1];
+    if (number) {
+      const op = /\baverage\b/i.test(text) ? "avg" : "sum";
+      return { name: "query_table", args: { ...(label ? { group_by: [{ column: label }] } : {}), metrics: [{ op, column: number }] } };
+    }
+  }
   const time = /time in ([A-Za-z_]+\/[A-Za-z_]+)/i.exec(text);
   if (time && names.includes("current_datetime")) return { name: "current_datetime", args: { timezone: time[1] } };
   const remember = /remember (?:that )?(.+)/i.exec(text);
@@ -78,7 +87,8 @@ const server = createServer(async (req, res) => {
       if (lastMessage?.role === "tool") {
         return streamText(res, `Done. The tool returned: ${lastMessage.content}`);
       }
-      const call = pickTool(String(last), toolNames);
+      const system = String((body.messages ?? []).find((m) => m.role === "system")?.content ?? "");
+      const call = pickTool(String(last), toolNames, system);
       if (call) {
         res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
         const args = JSON.stringify(call.args);

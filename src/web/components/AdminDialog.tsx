@@ -222,7 +222,8 @@ function UserRow({
             {user.todaySpeechSeconds > 0 ? ` · ${Math.ceil(user.todaySpeechSeconds / 60)} min voice` : ""}
             {user.todayResearch > 0 ? ` · ${user.todayResearch} research run${user.todayResearch === 1 ? "" : "s"}` : ""}
             {user.todayAnswerChecks > 0 ? ` · ${user.todayAnswerChecks} answer check${user.todayAnswerChecks === 1 ? "" : "s"}` : ""}
-            {user.todayGithubActions ? ` · ${user.todayGithubActions} GitHub change${user.todayGithubActions === 1 ? "" : "s"}` : ""} · {user.conversations} chat
+            {user.todayGithubActions ? ` · ${user.todayGithubActions} GitHub change${user.todayGithubActions === 1 ? "" : "s"}` : ""}
+            {user.todayTables ? ` · ${user.todayTables} spreadsheet${user.todayTables === 1 ? "" : "s"}` : ""} · {user.conversations} chat
             {user.conversations === 1 ? "" : "s"} · last sign-in {formatDate(user.lastLoginAt)} · joined {formatDate(user.createdAt)}
           </p>
         </div>
@@ -316,6 +317,9 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const [githubConfigured, setGithubConfigured] = useState(false);
   const [actionsConfigured, setActionsConfigured] = useState(false);
   const [actionsText, setActionsText] = useState("");
+  const [tablesText, setTablesText] = useState("");
+  const [tableRowsText, setTableRowsText] = useState("");
+  const [tableRowsRead, setTableRowsRead] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -338,6 +342,9 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         setGithubConfigured(Boolean(r.github?.configured));
         setActionsConfigured(Boolean(r.githubActions?.configured));
         setActionsText(String(r.settings.githubActionsPerDay));
+        setTablesText(String(r.settings.tablesPerDay));
+        setTableRowsText(String(r.settings.tablesRowsPerDay));
+        setTableRowsRead(r.tables?.rowsReadToday ?? 0);
       },
       (e: unknown) => setError(errorText(e, "Could not load settings.")),
     );
@@ -361,6 +368,10 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const checksValid = checksText.trim() !== "" && Number.isInteger(checksPerDay) && checksPerDay >= 0 && checksPerDay <= 100;
   const actionsPerDay = Number(actionsText);
   const actionsValid = actionsText.trim() !== "" && Number.isInteger(actionsPerDay) && actionsPerDay >= 0 && actionsPerDay <= 100;
+  const tablesPerDay = Number(tablesText);
+  const tablesValid = tablesText.trim() !== "" && Number.isInteger(tablesPerDay) && tablesPerDay >= 0 && tablesPerDay <= 1_000;
+  const tableRows = Number(tableRowsText);
+  const tableRowsValid = tableRowsText.trim() !== "" && Number.isInteger(tableRows) && tableRows >= 0 && tableRows <= 4_500_000;
   const next: AppSettingsDto = {
     ...draft,
     defaultDailyLimit: limitValid ? limit : draft.defaultDailyLimit,
@@ -373,6 +384,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
     researchSearchReserve: researchKeepValid ? researchKeep : draft.researchSearchReserve,
     answerChecksPerDay: checksValid ? checksPerDay : draft.answerChecksPerDay,
     githubActionsPerDay: actionsValid ? actionsPerDay : draft.githubActionsPerDay,
+    tablesPerDay: tablesValid ? tablesPerDay : draft.tablesPerDay,
+    tablesRowsPerDay: tableRowsValid ? tableRows : draft.tablesRowsPerDay,
   };
   // Research can use the day's searches above the ones kept for normal chat.
   const researchSearches = next.webSearchDailyLimit - next.researchSearchReserve;
@@ -397,6 +410,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       setResearchKeepText(String(settings.researchSearchReserve));
       setChecksText(String(settings.answerChecksPerDay));
       setActionsText(String(settings.githubActionsPerDay));
+      setTablesText(String(settings.tablesPerDay));
+      setTableRowsText(String(settings.tablesRowsPerDay));
       onNotice("App settings saved.", "info");
     } catch (e) {
       setError(errorText(e, "Could not save settings."));
@@ -613,6 +628,43 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       </div>
       <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
         <Toggle
+          checked={draft.tablesEnabled}
+          onChange={(tablesEnabled) => setDraft({ ...draft, tablesEnabled })}
+          label="Spreadsheets (CSV and Excel)"
+          hint="Paperclip in the message box: attach a CSV or Excel file (up to 10 MB and 50,000 rows; 5 per chat) and ask questions about it. The file is read in the user's browser and its rows are kept with the chat (deleted with it). Figures are calculated by the database over every row; the AI only sees the column overview, 3 example rows and the results."
+        />
+        <label className="ml-12 flex flex-wrap items-center gap-2 text-xs text-[var(--text-soft)]">
+          Spreadsheets per user per day
+          <input
+            value={tablesText}
+            onChange={(e) => setTablesText(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            aria-label="Spreadsheets per user per day"
+            className={`w-20 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)] ${tablesValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+          />
+          <span>(admins unlimited; each user keeps up to 20)</span>
+        </label>
+        <label className="ml-12 flex flex-wrap items-center gap-2 text-xs text-[var(--text-soft)]">
+          Rows read for calculations per day (whole app)
+          <input
+            value={tableRowsText}
+            onChange={(e) => setTableRowsText(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            aria-label="Rows read for spreadsheet calculations per day"
+            className={`w-28 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)] ${tableRowsValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+          />
+          <span>
+            Used today: {tableRowsRead.toLocaleString()} of {saved.tablesRowsPerDay.toLocaleString()}
+          </span>
+        </label>
+        <p className="ml-12 text-xs text-[var(--text-soft)]">
+          Cloudflare's free database allows 5 million rows read a day for the whole app, and stops every request once they're used, so
+          calculations get their own share (at most 4,500,000). A question reads each row of its table about twice: about 100,000 for a
+          50,000-row file, 5,000 for a 2,500-row one. Resets at 00:00 UTC.
+        </p>
+      </div>
+      <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
+        <Toggle
           checked={draft.voiceEnabled}
           onChange={(voiceEnabled) => setDraft({ ...draft, voiceEnabled })}
           label="Voice"
@@ -659,7 +711,20 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         <button
           type="button"
           onClick={() => void save()}
-          disabled={!dirty || !limitValid || !searchValid || !imagesValid || !speechValid || !researchRunsValid || !researchKeepValid || !checksValid || saving}
+          disabled={
+            !dirty ||
+            !limitValid ||
+            !searchValid ||
+            !imagesValid ||
+            !speechValid ||
+            !researchRunsValid ||
+            !researchKeepValid ||
+            !checksValid ||
+            !actionsValid ||
+            !tablesValid ||
+            !tableRowsValid ||
+            saving
+          }
           className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-text)] disabled:opacity-40"
         >
           {saving ? "Saving…" : "Save"}

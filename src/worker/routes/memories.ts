@@ -63,5 +63,7 @@ export const toolRoutes = new Hono<AppEnv>().use(requireUser).get("/", async (c)
   const [settings, knowledgeReady] = await Promise.all([getAppSettings(c.env.DB, config), hasSearchableKnowledge(c.env.DB)]);
   const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, settings);
   const github = githubAllowed(c.env, c.get("user"), settings) && (await githubConnected(c.env.DB, c.get("user").id));
-  return c.json({ tools: toolInfo({ web, knowledgeReady, github }).filter((t) => t.available && !settings.disabledTools.includes(t.name)) });
+  // Table analysis is listed while spreadsheets are on (it's offered in chats that have one).
+  const tables = settings.tablesEnabled;
+  return c.json({ tools: toolInfo({ web, knowledgeReady, github, tables }).filter((t) => t.available && !settings.disabledTools.includes(t.name)) });
 });

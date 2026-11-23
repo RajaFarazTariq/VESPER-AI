@@ -7,6 +7,7 @@ import { CalcError, evaluate } from "./calculator";
 import { searchKnowledge } from "./knowledge";
 import { GITHUB_TOOLS } from "./github";
 import { GITHUB_ACTION_TOOLS } from "./github-actions";
+import { queryTable } from "./tables";
 import { define, ToolInputError, type AgentTool, type ToolServerState, type WebToolContext } from "./types";
 import { WEB_TOOLS } from "./web";
 
@@ -138,6 +139,8 @@ export const ALL_TOOLS: AgentTool[] = [
   forget,
   ...WEB_TOOLS,
   searchKnowledge,
+  // Exact figures from spreadsheets attached to the chat (v0.14.0).
+  queryTable,
   ...GITHUB_TOOLS,
   // Prepare GitHub changes the user approves on a card (v0.13.0).
   ...GITHUB_ACTION_TOOLS,

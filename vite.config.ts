@@ -13,6 +13,8 @@ export default defineConfig({
     sourcemap: false,
     chunkSizeWarningLimit: 900,
   },
+  // The spreadsheet reader runs in a module worker (v0.14.0).
+  worker: { format: "es" },
   server: {
     port: 5173,
     // During development the API runs in `wrangler dev` on port 8787.

@@ -34,6 +34,8 @@ export interface ToolContext {
   conversationId?: string;
   /** Set by the agent loop: what this answer has done so far. */
   turn?: TurnState;
+  /** Spreadsheet calculations (v0.14.0): the app-wide daily budget of rows the database may read for them. */
+  tables?: { rowsPerDay: number };
 }
 
 /** What the GitHub tools need from the per-user GitHub client (tools/github-client.ts). */
@@ -57,6 +59,8 @@ export interface ToolServerState {
   github?: boolean;
   /** This user has a working connection for GitHub changes (v0.13.0). */
   githubActions?: boolean;
+  /** Spreadsheets (v0.14.0): in a chat, it has one; in the tool lists, the admin has spreadsheets switched on. */
+  tables?: boolean;
 }
 
 export interface WebToolContext {

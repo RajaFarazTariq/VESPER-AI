@@ -1,5 +1,6 @@
 import type { ModelInfo, ProviderId } from "../../shared/types";
 import { githubActionCleanup } from "./github";
+import { tableFileCleanup } from "./tables";
 
 export interface ProviderHealth {
   cooldownUntil: number;
@@ -109,5 +110,7 @@ export async function cleanup(db: D1Database): Promise<void> {
     db.prepare("DELETE FROM github_cache WHERE expires_at < ?1").bind(now),
     // GitHub changes: undecided ones expire after 24 hours, the log after 90 days (v0.13.0).
     ...githubActionCleanup(db, now),
+    // Spreadsheets added but never sent are removed after 24 hours (v0.14.0).
+    ...tableFileCleanup(db, now),
   ]);
 }

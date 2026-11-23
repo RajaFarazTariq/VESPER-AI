@@ -4,6 +4,7 @@ import type { AppEnv } from "../app-env";
 import { appSettingsSchema, getAppSettings, updateAppSettings, webSearchesToday } from "../db/app-settings";
 import { feedbackSummary, listFeedback } from "../db/feedback";
 import { hasSearchableKnowledge } from "../db/knowledge";
+import { tableRowsReadToday } from "../db/tables";
 import { deleteUserSessions } from "../db/sessions";
 import { deleteUser, getUserById, getUserForAdmin, listUsersForAdmin, roleOf, updateUser } from "../db/users";
 import { getConfig } from "../env";
@@ -57,22 +58,25 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .get("/settings", async (c) => {
     const config = getConfig(c.env);
-    const [settings, searchesUsed, knowledgeReady] = await Promise.all([
+    const [settings, searchesUsed, knowledgeReady, tableRowsRead] = await Promise.all([
       getAppSettings(c.env.DB, config),
       webSearchesToday(c.env.DB),
       hasSearchableKnowledge(c.env.DB),
+      tableRowsReadToday(c.env.DB),
     ]);
     const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, settings);
     return c.json({
       settings,
       // GitHub tools are listed as available so they can be switched off for everyone (each user still connects).
-      tools: toolInfo({ web, knowledgeReady, github: config.githubAppEnabled, githubActions: config.githubActionsAppEnabled }),
+      tools: toolInfo({ web, knowledgeReady, github: config.githubAppEnabled, githubActions: config.githubActionsAppEnabled, tables: true }),
       github: { configured: config.githubAppEnabled },
       githubActions: { configured: config.githubActionsAppEnabled },
       webSearch: {
         keyConfigured: Boolean(web.tavilyApiKey),
         usedToday: Math.min(searchesUsed, settings.webSearchDailyLimit),
       },
+      // Spreadsheet calculations (v0.14.0): rows the database read for them today, whole app.
+      tables: { rowsReadToday: tableRowsRead },
     });
   })
 

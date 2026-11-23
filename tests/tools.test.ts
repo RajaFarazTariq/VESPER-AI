@@ -362,8 +362,9 @@ describe("tool-call streaming helpers", () => {
 describe("tool settings", () => {
   it("respects the master switch, per-tool switches and the memory switch", () => {
     // Without a search key, web search isn't offered; without documents, the knowledge base isn't; without the user's
-    // GitHub connection (v0.12.0), the GitHub tools aren't; with all three, every tool is.
-    const all = ALL_TOOLS.map((t) => t.name);
+    // GitHub connection (v0.12.0), the GitHub tools aren't; outside a chat with a spreadsheet (v0.14.0), Table analysis
+    // isn't; with all of them, every tool is.
+    const all = ALL_TOOLS.map((t) => t.name).filter((n) => n !== "query_table");
     const noGithub = all.filter((n) => !n.startsWith("github_"));
     expect(enabledTools({ ...DEFAULT_SETTINGS }).map((t) => t.name)).toEqual(noGithub.filter((n) => n !== "web_search" && n !== "search_knowledge"));
     const web = { userAgent: "test", tavilyApiKey: "k", webSearchDailyLimit: 30 };
@@ -374,6 +375,9 @@ describe("tool settings", () => {
     expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, github: true }).map((t) => t.name)).toEqual(all.filter((n) => !changes.includes(n)));
     expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, githubActions: true }).map((t) => t.name)).toEqual([...noGithub, ...changes]);
     expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, github: true, githubActions: true }).map((t) => t.name)).toEqual(all);
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, github: true, githubActions: true, tables: true }).map((t) => t.name)).toEqual(
+      ALL_TOOLS.map((t) => t.name),
+    );
     expect(all.filter((n) => n.startsWith("github_"))).toEqual(["github_repo", "github_file", "github_search", "github_issues", "github_pr_changes", ...changes]);
     expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web: { ...web, webSearchDailyLimit: 0 } }).map((t) => t.name)).not.toContain("web_search");
     expect(enabledTools({ ...DEFAULT_SETTINGS, toolsEnabled: false })).toEqual([]);

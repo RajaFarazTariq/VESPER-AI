@@ -14,6 +14,7 @@ import {
   GitPullRequest,
   GitPullRequestArrow,
   CircleDot,
+  FileSpreadsheet,
   Library,
   ListChecks,
   Loader2,
@@ -40,6 +41,7 @@ export const TOOL_ICONS: Record<string, typeof Wrench> = {
   wikipedia: BookOpen,
   currency: Coins,
   search_knowledge: Library,
+  query_table: FileSpreadsheet, // exact figures from an attached spreadsheet (v0.14.0)
   answer_check: ShieldCheck, // admin-only number check
   research_plan: Telescope, // deep research: planning the searches
   context_summary: ScrollText, // a long chat's older part kept as short notes
@@ -88,7 +90,7 @@ export function SourceList({ sources, more = [] }: { sources: SourceDto[]; more?
             className={`inline-flex max-w-[18rem] items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--text-soft)] ${faint}`}
           >
             <span className="shrink-0 font-medium">{i + 1}</span>
-            <FileText size={11} className="shrink-0" />
+            {s.kind === "table" ? <FileSpreadsheet size={11} className="shrink-0" /> : <FileText size={11} className="shrink-0" />}
             <span className="truncate">{labels[i]}</span>
           </span>
         );
@@ -151,6 +153,7 @@ const PLAIN: Record<string, [running: string, done: string]> = {
   wikipedia: ["Looking it up on Wikipedia…", "Looked it up on Wikipedia"],
   currency: ["Checking exchange rates…", "Checked exchange rates"],
   search_knowledge: ["Searching the knowledge base…", "Searched the knowledge base"],
+  query_table: ["Calculating from the spreadsheet…", "Calculated from the spreadsheet"],
   fact_check: ["Checking the facts against the sources…", "Checked the facts against the sources"],
   github_repo: ["Looking at the repository…", "Looked at the repository"],
   github_file: ["Reading code…", "Read code"],

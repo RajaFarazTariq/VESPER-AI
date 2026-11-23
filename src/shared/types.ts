@@ -42,6 +42,8 @@ export interface AdminUserDto extends UserDto {
   githubActionsConnected?: boolean;
   /** GitHub changes they approved today that went through (v0.13.0). */
   todayGithubActions?: number;
+  /** Spreadsheets (CSV/Excel) they added today (v0.14.0). */
+  todayTables?: number;
   conversations: number;
   github: boolean;
   google: boolean;
@@ -100,6 +102,16 @@ export interface AppSettingsDto {
   githubActionsForUsers: boolean;
   /** Approved GitHub changes each user may make per UTC day (admins unlimited). */
   githubActionsPerDay: number;
+  /** Spreadsheets (CSV and Excel) in chat: attach a file and ask questions; exact figures are calculated (v0.14.0). */
+  tablesEnabled: boolean;
+  /** Spreadsheets each user may add per UTC day (admins unlimited). */
+  tablesPerDay: number;
+  /**
+   * Spreadsheet rows the database may read for calculations per UTC day, for the whole app. Cloudflare's free D1
+   * allows 5 million rows read a day for everything, and every database request fails once that is used up, so
+   * calculations get their own share (a question reads each row of its table about once or twice).
+   */
+  tablesRowsPerDay: number;
 }
 
 /** What the chat screen may offer right now (admin switches + whether a capable service is set up). */
@@ -120,6 +132,11 @@ export interface FeaturesDto {
   github: { available: boolean };
   /** Settings → Connections → GitHub changes: the Actions app is set up and this account may use it (v0.13.0). */
   githubActions: { available: boolean };
+  /**
+   * Spreadsheets in chat (v0.14.0): the admin's switch, with the Table analysis tool not switched off for everyone.
+   * The limits are shown in the message box and checked again by the server.
+   */
+  tables: { enabled: boolean; perDay: number; perChat: number; maxRows: number; maxMegabytes: number };
 }
 
 // ------------------------------------------------------------------ Connections: GitHub, read-only (v0.12.0)
@@ -284,8 +301,85 @@ export interface SourceDto {
   title: string;
   /** http(s) link. Absent for knowledge-base files. */
   url?: string;
-  /** Where in a document, e.g. "page 12" (knowledge-base sources). */
+  /** Where in a document, e.g. "page 12" (knowledge-base sources), or what was calculated from a spreadsheet. */
   location?: string;
+  /** "table": a calculation on a spreadsheet the user attached (v0.14.0); always listed under the answer. */
+  kind?: "table";
+}
+
+// ------------------------------------------------------------------ Spreadsheets in chat (data analysis, v0.14.0)
+
+export type TableFileKind = "csv" | "tsv" | "xlsx" | "xlsm" | "xls" | "ods";
+export type TableColumnType = "number" | "date" | "text" | "boolean";
+/** One stored cell: numbers, dates as "YYYY-MM-DD" (or "YYYY-MM-DDTHH:MM:SS"), text, true/false, or null when empty. */
+export type TableCell = string | number | boolean | null;
+
+/** One column of an attached spreadsheet, with an overview worked out over every row when the file was read. */
+export interface TableColumnDto {
+  name: string;
+  type: TableColumnType;
+  /** Empty cells, including values that didn't fit the column's type (see `invalid`). */
+  blanks: number;
+  /** How many different values (exact). */
+  distinct: number;
+  /** Number and date columns: the lowest and highest value. */
+  min?: number | string;
+  max?: number | string;
+  /** Number columns: "%" (45% is stored as 45) or a currency such as "$", "€" or "PKR". */
+  unit?: string;
+  /** Date columns: some values have a time of day (then every value is stored as YYYY-MM-DDTHH:MM:SS). */
+  hasTime?: boolean;
+  /** Date columns read as day/month/year or month/day/year, when the file's dates were written with slashes. */
+  dateOrder?: "dmy" | "mdy";
+  /** Text and yes/no columns with few different values: every value with how often it appears (most common first). */
+  top?: { value: string; count: number }[];
+  /** Text columns with many different values: a few examples. */
+  examples?: string[];
+  /** Values that didn't fit the column's type and were left empty, e.g. "abc" in a number column. */
+  invalid?: number;
+}
+
+/** One sheet (or a CSV file) as the browser read it: its overview, sent before its rows. */
+export interface TableSheetInput {
+  /** The sheet's name (Excel and OpenDocument); null for CSV. */
+  sheet: string | null;
+  rows: number;
+  /** Spreadsheet row numbers of the first and last data row (the header row comes before them). */
+  firstRow: number;
+  lastRow: number;
+  columns: TableColumnDto[];
+  /** Plain-language notes about how the file was read (e.g. a "Total" row left out). */
+  notes: string[];
+  /** A few example rows (cells in column order). */
+  samples: TableCell[][];
+  /** How many blocks of rows will be uploaded. */
+  chunks: number;
+}
+
+/** A spreadsheet the user added (one per file; each non-empty sheet is a table). */
+export interface TableFileDto {
+  id: string;
+  name: string;
+  kind: TableFileKind;
+  status: "uploading" | "ready";
+  tables: { id: string; sheet: string | null; rows: number; columns: number }[];
+  createdAt: number;
+}
+
+/** One block of rows for upload: each row is [spreadsheet row number, cell 1, cell 2, …]. */
+export interface TableChunkInput {
+  seq: number;
+  rows: TableCell[][];
+}
+
+/** A spreadsheet attached to a user message, shown as a chip on the message. */
+export interface MessageFileDto {
+  id: string;
+  name: string;
+  /** Tables read from it (sheets with data). */
+  sheets: number;
+  /** Data rows in all its tables. */
+  rows: number;
 }
 
 // ------------------------------------------------------------------ Knowledge base (admin panel → Knowledge)
@@ -375,6 +469,8 @@ export interface MessageDto {
   tools: ToolEventDto[] | null;
   /** Small previews (JPEG data URLs) of images attached to a user message. The full images are not kept. */
   images?: string[] | null;
+  /** Spreadsheets attached to a user message (v0.14.0). */
+  files?: MessageFileDto[] | null;
   /** The user's 👍/👎 on this answer (assistant messages only). */
   feedback?: MessageFeedbackDto | null;
   /** The answer used sources that were kept, so it can be checked against them ("Check this answer", v0.11.0). */

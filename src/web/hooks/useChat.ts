@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatImageInput, ChatStreamEvent, ConversationDto, MessageDto } from "../../shared/types";
+import type { ChatImageInput, ChatStreamEvent, ConversationDto, MessageDto, MessageFileDto } from "../../shared/types";
 import { api, ApiError, streamChat, type ChatRequestBody } from "../api/client";
 import { providerLabel } from "../lib/format";
 import { explainOllamaError, streamOllamaChat } from "../lib/ollama";
@@ -111,7 +111,7 @@ export function useChat(options: Options) {
 
   /** Cloud providers: stream through our API. Returns false if the message was rejected outright. */
   const runRemote = useCallback(
-    async (body: ChatRequestBody): Promise<boolean> => {
+    async (body: ChatRequestBody, files: MessageFileDto[] = []): Promise<boolean> => {
       const tempUserId = `local-user-${Date.now()}`;
       const assistantId = `local-assistant-${Date.now()}`;
       let before: UiMessage[] = [];
@@ -126,8 +126,8 @@ export function useChat(options: Options) {
         const base = body.regenerate ? withoutTrailingAssistant(prev) : prev;
         const images = body.images?.map((i) => i.thumb) ?? null;
         const user: UiMessage[] =
-          body.message || images
-            ? [{ ...placeholder(tempUserId), role: "user", content: body.message ?? "", images, streaming: false }]
+          body.message || images || files.length
+            ? [{ ...placeholder(tempUserId), role: "user", content: body.message ?? "", images, files: files.length ? files : null, streaming: false }]
             : [];
         return [...base, ...user, placeholder(assistantId)];
       });
@@ -301,15 +301,17 @@ export function useChat(options: Options) {
   );
 
   const send = useCallback(
-    (text: string, model: string, images: ChatImageInput[] = [], research = false) => {
+    (text: string, model: string, images: ChatImageInput[] = [], research = false, files: MessageFileDto[] = []) => {
       const body = {
         ...(conversationId ? { conversationId } : {}),
         message: text,
         model,
         ...(images.length ? { images } : {}),
         ...(research ? { research: true } : {}),
+        // Spreadsheets go with cloud models only (the message box checks this before sending).
+        ...(files.length ? { files: files.map((f) => f.id) } : {}),
       };
-      return model.startsWith("ollama:") ? runLocal(body) : runRemote(body);
+      return model.startsWith("ollama:") ? runLocal(body) : runRemote(body, files);
     },
     [conversationId, runLocal, runRemote],
   );

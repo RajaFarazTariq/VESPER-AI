@@ -8,6 +8,7 @@ import { executeRoute, type RouteError, type RouteTarget, type RouterEvents } fr
 import type { ChatMessage, Provider, ToolCall, ToolSpec } from "./types";
 import { packEvidence } from "./verify";
 import { GITHUB_TOOL_NAMES } from "../tools/github";
+import { TABLE_TOOL } from "../tools/tables";
 
 /** Model ↔ tool rounds per user message. Every round is one request against a free quota. */
 export const MAX_TOOL_ROUNDS = 5;
@@ -23,7 +24,7 @@ const PAIRED_KNOWLEDGE_RESULTS = 3;
  * Look-up tools whose results an answer quotes numbers from; after them the number check runs (admin-only).
  * (The calculator alone doesn't trigger it, but its results count as evidence.)
  */
-const CHECKED_TOOLS = new Set(["web_search", "read_page", "wikipedia", "search_knowledge", "weather", "currency"]);
+const CHECKED_TOOLS = new Set(["web_search", "read_page", "wikipedia", "search_knowledge", "weather", "currency", TABLE_TOOL]);
 /** Tools whose results are kept with the answer for "Check this answer" (v0.11.0), when a look-up tool was used. */
 const KEPT_TOOLS = new Set([...CHECKED_TOOLS, ...GITHUB_TOOL_NAMES, "calculator", "current_datetime"]);
 /**
@@ -103,6 +104,7 @@ async function runTool(
         title: s.title.slice(0, 200),
         ...(s.url ? { url: s.url.slice(0, 2000) } : {}),
         ...(s.location ? { location: s.location.slice(0, 120) } : {}),
+        ...(s.kind ? { kind: s.kind } : {}),
       }));
     return {
       event: {

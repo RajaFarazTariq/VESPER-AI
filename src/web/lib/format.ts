@@ -143,7 +143,8 @@ export function answerSources(tools: ToolEventDto[] | null | undefined, answer: 
   const shown: SourceDto[] = [];
   const unused: SourceDto[] = [];
   for (const { source, fromResults } of all) {
-    if (!cited.has(source)) continue; // a document page the answer doesn't cite
+    // A calculation on the user's spreadsheet is always listed: it shows what the figures cover (v0.14.0).
+    if (!cited.has(source) && source.kind !== "table") continue; // a document page the answer doesn't cite
     if (source.url && fromResults && linksAny && !isLinked(source)) unused.push(source);
     else shown.push(source);
   }
