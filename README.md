@@ -9,7 +9,7 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.15.0**.
+Current version: **0.15.1**.
 
 - [What VESPER does](#what-vesper-does)
 - [How VESPER is different](#how-vesper-is-different)
@@ -145,9 +145,10 @@ choices:
   events, sending email, or both. This is separate from signing in with Google.
 - Ask "what's on my calendar this week?" or "when am I free for an hour on Thursday?". Free time is worked out by the
   server from your events, in your time zone: events shown as free and invitations you declined don't count.
-- Ask "add a meeting with sara@example.com tomorrow at 3" or "email Ali that the report is ready". VESPER prepares it
+- Ask "add a meeting with sara@example.com tomorrow at 3" (or "…and remind me 30 minutes before") or "email Ali that
+  the report is ready". VESPER prepares it
   on a card with exactly what will happen:
-  - an event: time, place, guests, Meet link, and any clash with your calendar;
+  - an event: time, place, guests, Meet link, reminders, and any clash with your calendar;
   - an email: recipients, subject and text, which you can still edit.
 
   Nothing is added or sent until you press **Approve**; guests get Google's invitation only then. Cards expire after
@@ -228,7 +229,7 @@ What happens when you send a message:
 | API | Cloudflare Workers, Hono, zod validation, Server-Sent Events for streaming |
 | Database | Cloudflare D1 (SQLite) with add-only migrations |
 | AI | Groq, Google Gemini, OpenRouter (`:free` only), Mistral, Cloudflare Workers AI; Ollama optional |
-| Tests | Vitest running inside the Workers runtime with a real local D1 (294 tests) |
+| Tests | Vitest running inside the Workers runtime with a real local D1 (298 tests) |
 | Delivery | GitHub Actions: checks on every pull request, deploy on merge to `main` |
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -502,6 +503,11 @@ losing data; a test applies every migration over existing data to check nothing 
   `https://<your-app>/api/connections/github-actions/callback`.
 - **A change says a file "changed on GitHub after VESPER prepared this"**: someone changed it meanwhile; nothing was
   sent. Ask VESPER to prepare it again.
+- **Times look 5 hours off inside Google Calendar**: your Google Calendar's own time zone is different from yours
+  (e.g. UTC). VESPER adds events at the right moment; change Google Calendar → Settings → General → Time zone to see
+  your local times there.
+- **"Part of this answer couldn't be done"**: the free AI service that finished the answer couldn't use tools (the
+  others were busy), so a step such as a second event wasn't prepared. Ask again for what's missing.
 - **Google asks to reconnect**: while VESPER's Google app is in testing, Google ends the connection every 7 days;
   reconnect in Settings → Connections. **"Gmail (or Google Calendar) isn't switched on"**: the administrator needs to
   enable that API in Google Cloud.

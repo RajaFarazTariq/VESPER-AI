@@ -73,7 +73,7 @@ export class WorkersAiProvider implements Provider {
     try {
       result = await (this.ai as unknown as AiRunner).run(request.model, {
         // Plain text only: image questions are routed to Gemini/OpenRouter, never here.
-        messages: flattenToolMessages(request.messages).map((m) => ("images" in m ? { role: m.role, content: m.content } : m)),
+        messages: flattenToolMessages(request.messages, false).map((m) => ("images" in m ? { role: m.role, content: m.content } : m)),
         stream: true,
         max_tokens: request.maxTokens,
       });

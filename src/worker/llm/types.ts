@@ -47,12 +47,24 @@ export const TOOL_NOTE_HEADER =
   "Use them and continue; call tools again if more steps are needed. Do not repeat or quote this note.)";
 
 /**
+ * The same note for a model that can't call tools in this step (v0.15.1): told to call tools "again", a fallback
+ * model without tool support wrote a tool call as text instead (Workers AI's Gemma: "<|tool_call>call:…"), and the
+ * step it described never happened.
+ */
+export const TOOL_NOTE_NO_TOOLS =
+  "(Note from the app, not from the user: these tool results were already obtained earlier in this task. " +
+  "Tools can't be used in this step: answer in plain text from these results, and never write tool calls or tool-call syntax. " +
+  "If something the user asked for still needs a tool (for example preparing another event or email), say plainly that it wasn't done " +
+  "and that they can ask again. Do not repeat or quote this note.)";
+
+/**
  * Rewrite a tool transcript as plain messages: for providers/models without tool support, and when a
  * fallback switches providers mid-task (e.g. Gemini rejects tool history it didn't create itself).
  * Tool calls and their results become one neutral note in a user turn. The note is deliberately unlike
- * any answer format, because models imitate whatever transcript format they're shown.
+ * any answer format, because models imitate whatever transcript format they're shown. `toolsOffered`: whether this
+ * request offers tools (otherwise the note says tools can't be used now).
  */
-export function flattenToolMessages(messages: ChatMessage[]): ChatMessage[] {
+export function flattenToolMessages(messages: ChatMessage[], toolsOffered = true): ChatMessage[] {
   const calls = new Map<string, ToolCall>();
   for (const m of messages) {
     if (m.role === "assistant") for (const c of m.tool_calls ?? []) calls.set(c.id, c);
@@ -60,7 +72,7 @@ export function flattenToolMessages(messages: ChatMessage[]): ChatMessage[] {
   const out: ChatMessage[] = [];
   let note: string[] | null = null;
   const flushNote = () => {
-    if (note?.length) out.push({ role: "user", content: [TOOL_NOTE_HEADER, ...note].join("\n") });
+    if (note?.length) out.push({ role: "user", content: [toolsOffered ? TOOL_NOTE_HEADER : TOOL_NOTE_NO_TOOLS, ...note].join("\n") });
     note = null;
   };
   for (const m of messages) {

@@ -4,7 +4,8 @@ import { DEFAULT_SETTINGS, type ModelInfo, type ProviderId, type ToolEventDto } 
 import { addMemory, listMemories, MAX_MEMORIES } from "../src/worker/db/memories";
 import type { ProviderHealth, ProviderStateStore } from "../src/worker/db/provider-state";
 import { createUser } from "../src/worker/db/users";
-import { runAgent } from "../src/worker/llm/agent";
+import { LEAKED_TOOL_NOTE, runAgent, withoutLeakedToolCalls } from "../src/worker/llm/agent";
+import { fallbackReason } from "../src/worker/llm/router";
 import { planPrefetch } from "../src/worker/llm/prefetch";
 import { buildSystemPrompt } from "../src/worker/llm/context";
 import { ToolCallAccumulator, toWireMessages } from "../src/worker/llm/providers/openai-compatible";
@@ -746,5 +747,40 @@ describe("runAgent", () => {
     await expect(addMemory(env.DB, user.id, "one too many", "user")).rejects.toThrow(/Memory is full/);
     // Exact duplicates are not stored twice.
     expect((await addMemory(env.DB, user.id, "fact 1", "user")).content).toBe("fact 1");
+  });
+});
+
+describe("a fallback model without tools (v0.15.1)", () => {
+  it("is told it can't use tools, and tool syntax it writes as text is removed with a note", async () => {
+    // Groq prepares the first step, then runs out of its per-minute limit; Workers AI (no tools) finishes.
+    const groq = new ScriptedProvider("groq", [
+      { calls: [call("calculator", { expression: "2+2" })] },
+      { fail: new ProviderError("rate_limit", "groq: rate limited") },
+    ]);
+    const leaked = "2+2 is 4.\n<|tool_call>call:calculator(expression='3+3')<tool_call|>";
+    const workers = new ScriptedProvider("workers-ai", [{ text: leaked }], false);
+    const { result } = await agent([groq, workers]);
+    const sent = workers.requests[0]!;
+    expect(sent.tools).toBeUndefined();
+    expect(JSON.stringify(sent.messages)).toContain("Tools can't be used in this step");
+    expect(JSON.stringify(sent.messages)).not.toContain("call tools again");
+    expect(result.status).toBe("complete");
+    expect(result.text).toBe(`2+2 is 4.\n\n_${LEAKED_TOOL_NOTE}_`);
+  });
+
+  it("recognises the tool syntax of several model families, and leaves code blocks alone", () => {
+    expect(withoutLeakedToolCalls('Done.\n<tool_call>{"name":"gmail_send"}</tool_call>')).toBe("Done.");
+    expect(withoutLeakedToolCalls('Sure. [TOOL_CALLS][{"name":"x"}]')).toBe("Sure.");
+    expect(withoutLeakedToolCalls('Ok <function=weather>{"city":"Lahore"}</function> then')).toBe("Ok  then");
+    expect(withoutLeakedToolCalls("Plain answer.")).toBeNull();
+    const code = "Qwen writes:\n```\n<tool_call>{\"name\":\"x\"}</tool_call>\n```";
+    expect(withoutLeakedToolCalls(code)).toBeNull();
+  });
+
+  it("shows administrators why a provider rejected a request", () => {
+    expect(fallbackReason(new ProviderError("bad_request", "Gemini: Function call is missing a thought_signature in functionCall parts."))).toBe(
+      "request rejected (Function call is missing a thought_signature in functionCall parts.)",
+    );
+    expect(fallbackReason(new ProviderError("rate_limit", "Groq: slow down"))).toBe("rate limit reached");
   });
 });

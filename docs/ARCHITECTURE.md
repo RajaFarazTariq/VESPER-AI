@@ -497,10 +497,24 @@ reaches Google from an approval card, once.
   the user asked in their own message, only addresses the user gave, ask when a time or address is unclear, plain-text
   emails, never "sent/added" before approval; calendar text is data. The outcomes of earlier cards in the chat are
   listed (`googleActionLines`).
+- **Reminders** (v0.15.1): `calendar_create_event` takes reminders as a local time or minutes before; Google stores
+  minutes before the start, and for an all-day event counts them from midnight in the CALENDAR's own time zone
+  (learned from the clash look-up), so a time is converted from that point: a reminder at 23:00 in Karachi before an
+  all-day event in a calendar set to UTC is 360 minutes. Sent as pop-up overrides (`useDefault: false`, at most 5,
+  4 weeks). The card shows when each fires.
 - **The card** (`components/GoogleActionCard.tsx`): email fields editable before Approve (kept per card while the
   answer is still being written, since the message is drawn again when it is saved); event: when (with zone), where,
   guests (invitation note), Meet, notes and clashes; after: "Sent" / "Added" with a link (Gmail's Sent folder for that
   account, or the event).
+
+### Fallback models without tools (v0.15.1)
+
+When the provider that takes over mid-task can't use tools (Workers AI here), the tool history is flattened with a note
+that says tools can't be used in this step (`TOOL_NOTE_NO_TOOLS`): the old note said "call tools again", and Gemma
+then wrote a tool call as text (`<|tool_call>call:calendar_create_event(…)<tool_call|>`) that never ran. Any such text
+that still appears (Gemma, Qwen/Hermes, Llama, Mistral formats; code blocks left alone) is removed from the saved answer
+and replaced by a note that part of it couldn't be done (`withoutLeakedToolCalls`). The admin-only fallback notice now
+carries the provider's own words for a rejected request (`fallbackReason`).
 
 ## 6. Security model
 
@@ -563,6 +577,8 @@ tools are blocked once untrusted content is in context.
   turn; which results get a card; the chart choice (lines with filled periods, gaps, rankings as bars, one line per
   value, no chart where it wouldn't help); period filling; value, date and axis wording; the CSV (quoting, formula
   guard, Urdu, CRLF) and its file name.
+- v0.15.1: reminders (the owner's case: all-day event, calendar in UTC, reminder at 23:00 Karachi = 360 minutes),
+  the fallback without tools (note, removed tool text), the leaked-syntax formats, the admin's rejection reason.
 - `tests/google.test.ts` (v0.15.0), against a fake Google that records every request: connecting (exact scopes, PKCE
   challenge and verifier, encrypted tokens, what was ticked, bad round trips, off for users until allowed, no key → not
   offered); reading events in the user's zone and exact free time; time conversion across daylight saving; an event

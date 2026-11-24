@@ -82,6 +82,8 @@ interface FakeEvent {
 
 class FakeGoogle {
   grantedScope = BOTH;
+  /** The calendar's own time zone (Google returns it with every event list). */
+  calendarZone = TZ;
   refresh: "ok" | "invalid_grant" = "ok";
   tokenRequests: URLSearchParams[] = [];
   revoked: string[] = [];
@@ -148,7 +150,7 @@ class FakeGoogle {
           return end > from && s < to && (!q || e.summary.toLowerCase().includes(q));
         })
         .sort((a, b) => this.span(a)[0] - this.span(b)[0]);
-      return json({ timeZone: TZ, items });
+      return json({ timeZone: this.calendarZone, items });
     }
     if (url.href === "https://gmail.googleapis.com/gmail/v1/users/me/messages/send") {
       this.authHeaders.push(new Headers(init?.headers).get("authorization") ?? "");
@@ -446,6 +448,36 @@ describe("events and emails wait for Approve", () => {
     await env.DB.prepare("UPDATE google_actions SET expires_at = ?1 WHERE id = ?2").bind(Date.now() - 1, second).run();
     await cleanup(env.DB);
     expect(await env.DB.prepare("SELECT status, payload FROM google_actions WHERE id = ?1").bind(second).first()).toEqual({ status: "expired", payload: null });
+  });
+
+  it("puts reminders on the event, at the moment asked for, even when the calendar uses another time zone (v0.15.1)", async () => {
+    const owner = await login("octocat");
+    await connect(owner.cookie);
+    // The owner's live test: a birthday on 26 Dec (all day), reminder at 23:00 the evening before, in Karachi; the
+    // Google Calendar itself is set to UTC, where Google counts an all-day event's reminders from midnight UTC.
+    google.calendarZone = "UTC";
+    const birthday = await run("calendar_create_event", { title: "Sister's birthday", start: "2026-12-26", reminders: ["2026-12-25T23:00"] }, ctxFor(owner.id));
+    const card = (await call(`/api/google-actions/${birthday.google!.id}`, { cookie: owner.cookie })).json.action;
+    expect(card.event).toMatchObject({ allDay: true, calendarTimeZone: "UTC", reminders: [{ at: "2026-12-25T23:00", minutes: 360 }] });
+    // An all-day event is the same days everywhere: no time zone in its log line.
+    expect(card.target).toBe("Sat 26 Dec 2026, all day");
+    await post(`/api/google-actions/${birthday.google!.id}/approve`, {}, owner.cookie);
+    expect(google.inserted[0]!.body).toMatchObject({
+      start: { date: "2026-12-26" },
+      end: { date: "2026-12-27" },
+      reminders: { useDefault: false, overrides: [{ method: "popup", minutes: 360 }] },
+    });
+    // A timed event: minutes before its start ("30" or a local time), longest first; after the start is refused.
+    google.calendarZone = TZ;
+    const meeting = await run("calendar_create_event", { title: "Review", start: "2026-12-07T15:00", reminders: ["30", "2026-12-07T14:00"] }, ctxFor(owner.id));
+    const timed = (await call(`/api/google-actions/${meeting.google!.id}`, { cookie: owner.cookie })).json.action.event;
+    expect(timed.reminders).toEqual([
+      { at: "2026-12-07T14:00", minutes: 60 },
+      { at: "2026-12-07T14:30", minutes: 30 },
+    ]);
+    await expect(run("calendar_create_event", { title: "Late", start: "2026-12-07T15:00", reminders: ["2026-12-07T16:00"] }, ctxFor(owner.id))).rejects.toThrow(
+      /at the start or before it/,
+    );
   });
 });
 

@@ -537,10 +537,10 @@ describe("results under the answer: charts, tables and CSV (v0.14.1)", () => {
     const sums = chartPlan(r, 1, "en-GB") as LinePlan;
     expect(sums.kind).toBe("line");
     expect(sums.points.map((p) => [p.key, p.label, p.short])).toEqual([
-      ["2025-11", "November 2025", "Nov 25"],
-      ["2025-12", "December 2025", "Dec 25"],
-      ["2026-01", "January 2026", "Jan 26"],
-      ["2026-02", "February 2026", "Feb 26"],
+      ["2025-11", "November 2025", "Nov 2025"],
+      ["2025-12", "December 2025", "Dec 2025"],
+      ["2026-01", "January 2026", "Jan 2026"],
+      ["2026-02", "February 2026", "Feb 2026"],
     ]);
     expect(sums.series).toEqual([{ name: null, values: [1000, 0, 0, 350] }]);
     expect(sums.notes).toEqual(["One group has no date, so it isn't in the chart (see Table)."]);

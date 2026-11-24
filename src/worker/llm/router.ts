@@ -72,6 +72,21 @@ export function cooldownFor(error: ProviderError): number | null {
   }
 }
 
+/**
+ * The reason shown in the fallback notice, which only administrators see: for a rejected request or a missing model,
+ * the provider's own words too (v0.15.1), e.g. "request rejected (Function call is missing a thought_signature)".
+ */
+export function fallbackReason(error: ProviderError): string {
+  const base = describeError(error);
+  if (error.kind !== "bad_request" && error.kind !== "not_found") return base;
+  const detail = error.message
+    .replace(/^[^:]{1,40}:\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+  return detail ? `${base} (${detail})` : base;
+}
+
 export function describeError(error: ProviderError): string {
   switch (error.kind) {
     case "rate_limit":
@@ -247,7 +262,7 @@ export async function executeRoute(input: {
       const previous = failures[failures.length - 1];
       await input.events.fallback(
         previous?.target ?? input.plan[index - 1]!,
-        previous ? describeError(previous.error) : "unavailable",
+        previous ? fallbackReason(previous.error) : "unavailable",
       );
     }
     await input.events.attempt(target);
@@ -262,7 +277,7 @@ export async function executeRoute(input: {
         const native = useTools && !hasForeignToolCalls(input.messages, provider.id);
         const stream = await provider.stream({
           model: target.model,
-          messages: native ? input.messages : flattenToolMessages(input.messages),
+          messages: native ? input.messages : flattenToolMessages(input.messages, useTools),
           maxTokens: input.maxTokens,
           signal: input.signal,
           ...(useTools ? { tools: input.tools } : {}),
