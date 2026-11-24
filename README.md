@@ -9,7 +9,7 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.14.1**.
+Current version: **0.15.0**.
 
 - [What VESPER does](#what-vesper-does)
 - [How VESPER is different](#how-vesper-is-different)
@@ -42,6 +42,9 @@ question needs a look-up, fetches what it needs and cites it:
 - **Your code**: each user can connect their own GitHub (read-only) and ask about files, issues and pull requests.
 - **Changes you approve**: VESPER can prepare a GitHub issue, comment or pull request; it shows the exact change on a
   card and sends it only when you press Approve.
+- **Your calendar and email**: connect Google to ask what's on your calendar and when you're free (worked out exactly),
+  and let VESPER prepare calendar events and emails. Each one is shown on a card (an email can still be edited) and
+  added or sent only when you press Approve. VESPER can't read your inbox.
 - **Checking answers**: one click rates an answer's key claims against the sources it used.
 - **Remembering you**: notes you ask it to keep (preferences, projects), which you can see, pin, edit and delete.
 - **Images and voice**: attach screenshots or photos, speak your question, or have answers read aloud.
@@ -137,6 +140,24 @@ choices:
 - The AI provider gets the column overview, three example rows and the results, not the whole file. The rows are kept
   with the chat and deleted with it; a file you remove before sending is deleted at once, one never sent after a day.
 
+**Google Calendar and Gmail (with your approval)**
+- Settings → Connections → **Connect Google**: pick your Google account and tick what VESPER may use: your calendar's
+  events, sending email, or both. This is separate from signing in with Google.
+- Ask "what's on my calendar this week?" or "when am I free for an hour on Thursday?". Free time is worked out by the
+  server from your events, in your time zone: events shown as free and invitations you declined don't count.
+- Ask "add a meeting with sara@example.com tomorrow at 3" or "email Ali that the report is ready". VESPER prepares it
+  on a card with exactly what will happen:
+  - an event: time, place, guests, Meet link, and any clash with your calendar;
+  - an email: recipients, subject and text, which you can still edit.
+
+  Nothing is added or sent until you press **Approve**; guests get Google's invitation only then. Cards expire after
+  24 hours.
+- The card warns about addresses you never typed in the chat, and when the answer also read your calendar, files or
+  code.
+- VESPER asks Google for the narrowest permissions: events on calendars you own, and sending email. It can't read your
+  inbox. While VESPER's Google app is in testing, only its test users can connect, and Google ends the connection every
+  7 days (reconnect in Settings).
+
 **Your GitHub (read-only)**
 - Each user connects their own GitHub in **Settings → Connections** and picks which repositories VESPER may read.
 - Ask VESPER to explain a repository, read a file (with line numbers), search the code, list or open issues and pull
@@ -207,7 +228,7 @@ What happens when you send a message:
 | API | Cloudflare Workers, Hono, zod validation, Server-Sent Events for streaming |
 | Database | Cloudflare D1 (SQLite) with add-only migrations |
 | AI | Groq, Google Gemini, OpenRouter (`:free` only), Mistral, Cloudflare Workers AI; Ollama optional |
-| Tests | Vitest running inside the Workers runtime with a real local D1 (282 tests) |
+| Tests | Vitest running inside the Workers runtime with a real local D1 (294 tests) |
 | Delivery | GitHub Actions: checks on every pull request, deploy on merge to `main` |
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -369,15 +390,17 @@ only when the admin turns on **Local models for users**.
 - **Under each answer**: copy, read aloud, 👍/👎, **Check** (when the answer used sources) and regenerate.
 - **GitHub changes**: ask for an issue, a comment or a pull request; read the card under the answer, then **Approve**
   or **Reject**.
-- **Settings**: General (default model, your own instructions), Tools, Memory, Voice, Connections (GitHub reading and
-  GitHub changes) and Appearance (light, dark or system).
+- **Calendar and email**: connect Google in Settings → Connections. Ask about your calendar, or for an event or an
+  email; check the card (edit an email if needed), then **Approve** or **Reject**.
+- **Settings**: General (default model, your own instructions), Tools, Memory, Voice, Connections (GitHub reading,
+  GitHub changes, Google Calendar and Gmail) and Appearance (light, dark or system).
 
 **Administrators** (the accounts in `ADMIN_EMAILS` / `ADMIN_GITHUB_USERS`) also get the **Admin panel**:
 - **Users**: usage per day, personal limits, block or delete.
 - **App settings**: sign-ups, daily limits, instructions for the assistant, tools for everyone, web search cap,
   trusted/blocked websites, images, spreadsheets (with the daily share of database reads for calculations and
-  today's use), voice, deep research, answer checks, local models, GitHub for users, and GitHub changes for users with
-  a daily limit.
+  today's use), voice, deep research, answer checks, local models, GitHub for users, GitHub changes for users with
+  a daily limit, and Google Calendar and Gmail for users with daily limits for emails and events.
 - **Models**: which models users may pick, with friendly names.
 - **Knowledge**: folders, documents and web pages for the knowledge base.
 - **Feedback**: 👍/👎 ratings with the question, answer and sources.
@@ -410,9 +433,10 @@ losing data; a test applies every migration over existing data to check nothing 
 │  ├─ shared/           types and the streaming parser shared by server and browser
 │  ├─ worker/           Cloudflare Worker (Hono)
 │  │  ├─ routes/        auth, chat (streaming), conversations, models, settings, memories, media,
-│  │  │                 feedback, knowledge, admin, answer-check, connections, github-actions, files
+│  │  │                 feedback, knowledge, admin, answer-check, connections, github-actions, google-actions, files
 │  │  ├─ llm/           providers, fallback router, agent loop, prompts, research, answer checks
-│  │  ├─ tools/         calculator, date/time, memory, web tools, knowledge base, table analysis, GitHub (read; changes with approval)
+│  │  ├─ tools/         calculator, date/time, memory, web tools, knowledge base, table analysis, GitHub (read; changes with approval),
+│  │  │                 Google Calendar and Gmail (events and emails with approval)
 │  │  ├─ db/            D1 queries
 │  │  ├─ lib/           security helpers (encryption, sensitive-data check, presentation)
 │  │  └─ middleware/    sign-in, origin checks, rate limits
@@ -445,9 +469,14 @@ losing data; a test applies every migration over existing data to check nothing 
   owner. Calculations are database queries built from fixed parts with every value passed separately, so text in a
   question or a cell can't change what runs. Column names and cell values are passed to the model as data, never as
   instructions.
-- **What leaves the server**: your messages (and any file text or code VESPER reads for an answer, and for
-  spreadsheets their column overview, three example rows and the calculated results) go to the AI provider that writes
-  the answer. A 👍/👎 sends a copy of that question and answer to the administrator's feedback
+- **Google Calendar and Gmail**: access stored encrypted (its own key), limited to events on calendars you own and
+  sending email (no inbox access). The assistant can only prepare an event or an email; it is added or sent from the
+  approval card, exactly as shown (or as you edited it), once, by its owner only, within the daily limits. The prepared
+  text is kept only until you decide (at most 24 hours); afterwards a log line (subject or title, who or when, outcome)
+  stays 90 days. Calendar text is passed to the model as data, never as instructions.
+- **What leaves the server**: your messages (and any file text or code VESPER reads for an answer, for spreadsheets
+  their column overview, three example rows and the calculated results, and the calendar events it reads and the
+  emails it prepares) go to the AI provider that writes the answer. A 👍/👎 sends a copy of that question and answer to the administrator's feedback
   list.
 
 ## Troubleshooting
@@ -473,6 +502,9 @@ losing data; a test applies every migration over existing data to check nothing 
   `https://<your-app>/api/connections/github-actions/callback`.
 - **A change says a file "changed on GitHub after VESPER prepared this"**: someone changed it meanwhile; nothing was
   sent. Ask VESPER to prepare it again.
+- **Google asks to reconnect**: while VESPER's Google app is in testing, Google ends the connection every 7 days;
+  reconnect in Settings → Connections. **"Gmail (or Google Calendar) isn't switched on"**: the administrator needs to
+  enable that API in Google Cloud.
 - **A spreadsheet is refused**: the message says why (over 10 MB or 50,000 rows, password-protected, or not a CSV,
   Excel or OpenDocument file). Remove what you don't need or save a copy as .xlsx or .csv.
 - **Numbers or dates read wrongly**: check the column in the file (one type per column works best). Dates like

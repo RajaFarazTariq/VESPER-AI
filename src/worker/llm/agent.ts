@@ -122,6 +122,8 @@ async function runTool(
         ...(output.action ? { action: output.action } : {}),
         // A spreadsheet calculation's whole result: the chart or table under the answer (v0.14.1).
         ...(output.table ? { table: output.table } : {}),
+        // A prepared email or calendar event: the card under the answer (v0.15.0).
+        ...(output.google ? { google: output.google } : {}),
       },
       content: output.content.slice(0, MAX_TOOL_RESULT_CHARS),
       ...(output.evidence ? { evidence: output.evidence } : {}),

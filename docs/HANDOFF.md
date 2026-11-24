@@ -3,21 +3,23 @@
 Read this first when resuming work. Last updated: **2026-11-24**. No secrets are stored here.
 
 ## ⏩ Quick resume (2026-11-24, end of session)
-- **Live:** v0.14.0 data analysis (spreadsheets in chat; PR #17, merge `a60b5ce`, CI and "Deploy to Cloudflare" green,
-  /api/health showed 0.14.0 on 2026-11-24). **v0.14.1 charts + CSV download: built 2026-11-24, handed to the owner to
-  push** on branch `release/v0.14.1-charts-csv`. Check https://ai-assistant.vesper-ai.workers.dev/api/health:
-  `0.14.1` means it was merged and deployed; if it still says `0.14.0`, ask whether the PR was merged.
-- **Owner's live tests still to do (he said "later"):** the v0.14.0 live test and the v0.14.1 live test (section 0).
-  Ask how they went; fix anything found in a v0.14.2.
+- **Live:** v0.14.1 charts + CSV download (PR #18, merge `fcbb551`; /api/health 0.14.1; the owner's live test with
+  Gemini showed the line chart, bars and correct totals). **v0.15.0 Google Calendar + Gmail (send only): built
+  2026-11-24, handed to the owner to push** on branch `release/v0.15.0-google`. Check
+  https://ai-assistant.vesper-ai.workers.dev/api/health: `0.15.0` means it was merged and deployed. Then the
+  owner's setup (section 0, "v0.15.0 setup", one step at a time), then the live test.
+- **Owner's live tests still to do:** v0.14.0 steps (b)–(g); v0.14.1 (Download CSV in Excel, Table switch, phone,
+  Check); v0.15.0 after setup.
+- **Small fixes noted for later (from the v0.14.1 live test):** "Jan 26" axis labels can read as a day (use "Jan 2026"
+  or the year at year changes); the AI added "$" to amounts without a currency (prompt: never add a unit the column
+  doesn't have).
 - **Owner decided (2026-11-24):** data analysis with the recommended defaults (10 MB / 50,000 rows / 100 columns per
   file, 10 files per user per day, 20 kept per user, 5 per chat, on for everyone), then "go with your recommendation"
   for v0.14.1 (charts + CSV download). He asks for work to be "perfect and accurate".
 - **GitHub set-up (unchanged):** "VESPER AI Reader" (read-only) and "VESPER AI Actions" (public since 2026-11-21);
   GitHub for users ON, GitHub changes for users ON (10/day). Test PR #15 and issue #14 are closed (owner, 2026-11-24).
-- **Next (owner to choose):** (1) Gmail + Google Calendar (drafts/events through the Approve/Reject card; Gmail access
-  is a Google "restricted" scope, so opening it to other users likely needs Google's app review, and in Testing mode
-  sign-ins expire every 7 days); (2) Excel files in the knowledge base (reuse the v0.14.0 reader); (3) fixes from the
-  live tests or testers.
+- **Next (owner to choose):** (1) the two small fixes above as v0.15.1; (2) Excel files in the knowledge base (reuse
+  the v0.14.0 reader); (3) Google: change/cancel events VESPER added; (4) fixes from the live tests or testers.
 - **How he works (details in section 2 and "How the owner wants each task run"):** numbered plan first, then report
   each step; plain words; dashboard tasks one step at a time; he runs all git himself; **git commands only for larger
   changes** (small fixes wait unless he asks); every release on its own branch + PR; no assistant/AI mentions in
@@ -25,8 +27,44 @@ Read this first when resuming work. Last updated: **2026-11-24**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-24)
 
-**v0.14.1 charts + CSV download built 2026-11-24, handed to the owner to push** (branch `release/v0.14.1-charts-csv`).
-Owner: "go with your recommendation". What was built (details in ARCHITECTURE 5j, "Charts and CSV downloads"):
+**v0.15.0 Google Calendar + Gmail built 2026-11-24, handed to the owner to push** (branch `release/v0.15.0-google`).
+Owner chose Gmail **send only** (reading the inbox needs Google's restricted scopes and a paid yearly assessment, and
+Google forbids passing mail to AI services that may train on it). Details: ARCHITECTURE 5k. What was built:
+1. **Connect Google** (Settings → Connections): separate OAuth on client "VESPER web" with PKCE, `access_type=offline`,
+   scopes `openid email calendar.events.owned gmail.send`; Google's tick boxes decide what's offered; tokens encrypted
+   with new secret `GOOGLE_TOKEN_KEY`; reconnect when Google ends it (7 days in testing); disconnect revokes.
+2. **Calendar reading**: `calendar_events` (the user's zone; declined / free / all-day marked) and `calendar_free_time`
+   (worked out by the server: busy events merged and subtracted from the day's hours).
+3. **Events and emails with approval**: `calendar_create_event` (clashes, guests → invitations only on Approve, Meet)
+   and `gmail_send` (editable on the card); cautions for addresses not typed, others' text, private data; at most 3 per
+   answer, 10 pending; 24 h expiry; log line 90 days; daily limits 20 + 20 (admin settings); admin switch
+   "Google Calendar and Gmail for users" **off** until the owner has tried it.
+4. **Migration `0014_google.sql`** (add-only), prompt rules, admin section + Users tab counts, tool icons and wording.
+5. **Tests**: 294 (12 new: 11 in `tests/google.test.ts`, which uses a fake Google, and the migration guard's check for
+   0014; the tool-list test updated). Also fixed: "refuses OpenRouter models that are not free" (tests/api.test.ts)
+   made a real internet request, which made it slow and sometimes time out; it is faked now. Headless Edge against
+   `wrangler dev` + `scripts/mock-llm.mjs` (now also a fake Google under `/google`): connect through the real pages,
+   free time (correct: skipped the fake 10:00 standup and 14:00 call), event card with the clash → Approve → the fake
+   Google got 14:30 Asia/Karachi, 1 guest, sendUpdates=all; email edited on the card → the edited subject arrived
+   (UTF-8 encoded); phone light after reload; only the usual pre-login 401. Fixed during the check: edits made while
+   the answer was still being written were lost when the message was saved (now kept per card).
+6. Docs (README, ARCHITECTURE 5k, CONFIGURATION, this file), version 0.15.0.
+
+**v0.15.0 setup (owner, one step at a time; no billing anywhere):**
+1. Google Cloud → project **VESPER-AI** → APIs & Services → Library → enable **Gmail API**, then **Google Calendar API**.
+2. Google Auth Platform → Clients → **VESPER web** → Authorized redirect URIs → add
+   `https://ai-assistant.vesper-ai.workers.dev/api/connections/google/callback` → Save.
+3. Google Auth Platform → Data access → Add or remove scopes → add `…/auth/calendar.events.owned` and
+   `…/auth/gmail.send` → Update → Save (note which tier the console shows for each).
+4. On the PC: make a key with the PowerShell line in CONFIGURATION section 5; Cloudflare → Workers → ai-assistant →
+   Settings → Variables and Secrets → add **Secret** `GOOGLE_TOKEN_KEY` = that value → Deploy.
+5. Live test: Settings → Connections → Connect Google (pick the account, tick both) → "Connected as …"; ask "what's on
+   my calendar this week?" and "when am I free tomorrow for an hour?" (compare with Google Calendar); "add a test event
+   tomorrow at 15:00" → card → Approve → it appears in Google Calendar; "email <your other address> a test" → edit the
+   subject on the card → Approve → it arrives with the edited subject. Then decide on "for users".
+
+**v0.14.1 charts + CSV download (live since 2026-11-24, PR #18, merge `fcbb551`).** Owner: "go with your
+recommendation". What was built (details in ARCHITECTURE 5j, "Charts and CSV downloads"):
 1. **Whole result with the answer:** `query_table` returns `table` (TableResultDto: columns with kind/type/by/op/unit,
    exact rows, `total`, `matched`, notes); the agent puts it on the tool step, so it streams, is saved in
    `messages.tools` and comes back on reload. No migration. Up to 500 groups (default 100) or 200 listed rows (default
@@ -244,9 +282,10 @@ GitHub token (confirmed 2026-11-19). `.dev.vars` key lines were empty on 2026-11
 logo in light mode ✅ → README rewrite (PR #10) ✅ → v0.12.3 sign-in orbit animation (owner's request) ✅ → v0.12.4
 cleaner source chips + GitHub line links (PR #12) ✅ → v0.13.0 GitHub changes with approval, separate Actions app
 (PR #13) ✅, set up + live-tested ✅ → v0.13.1 write-access rule + search fix (PR #16) ✅ → v0.14.0 data analysis
-(PR #17) ✅ → v0.14.1 charts + CSV download (built 2026-11-24, to push). Proposed next (owner to choose): Gmail +
-Calendar (they can reuse the approval card for sending mail or creating events), Excel in the knowledge base.
-**Pending owner checks:** v0.14.1 live test (above, after the merge); v0.14.0 live test steps (b)–(g) (above); v0.13.0 setup + live test (above); v0.12.4 live check; GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
+(PR #17) ✅ → v0.14.1 charts + CSV download (PR #18) ✅ → v0.15.0 Google Calendar + Gmail send (built 2026-11-24, to
+push). Proposed next (owner to choose): two small v0.14.1 fixes, Excel in the knowledge base, changing/cancelling
+events.
+**Pending owner checks:** v0.15.0 setup + live test (section 0); v0.14.1 live test (Download CSV in Excel, Table, phone, Check); v0.14.0 live test steps (b)–(g) (above); v0.13.0 setup + live test (above); v0.12.4 live check; GitHub live test steps 2–4 (closed PRs list, review PR #9, Check), then switch on "GitHub for users"; v0.12.2 quick look in light and dark mode; v0.11.0 live test steps (b)–(d), v0.10.1 quick look at a table, v0.9.9 live research test, v0.9.10
 quick look, 👍/👎 (v0.9.7), 🎤 voice input (v0.9.6), branch-protection ticks.
 
 **v0.10.0 live test (owner, 2026-11-20):** ✔️ phone number refused with the reason; memories "planning a trip to
@@ -852,8 +891,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **GitHub changes with approval (v0.13.0)**: separate Actions app + connection; 3 prepare-only tools (issue, comment, PR from exact edits); approval card with the exact text / every changed line; Approve sends once (stale files refused, new `vesper/…` branch, never merges); warnings; limits (3/answer, 10 waiting, 24 h, daily per user); admin switch + limit; next answer knows outcomes; migration 0012 | ✅ live (v0.13.0, PR #13, merge `cacce3d`, deployed 2026-11-21; 255 tests); hidden until the Actions app is set up; live test pending |
 | **Write-access rule + GitHub search fix (v0.13.1)**: changes only in repos the user can write to (checked again at Approve); no automatic web search for messages about the user's GitHub code | ✅ live (v0.13.1, PR #16, merge `1370123`; confirmed 2026-11-24) |
 | **Spreadsheets in chat: data analysis (v0.14.0)**: CSV/Excel/ODS read in the browser (worker, SheetJS), rows in D1 per chat, `query_table` calculates in the database over every row, source chip says what was calculated, daily share of D1 reads, migration 0013 | ✅ live (v0.14.0, PR #17, merge `a60b5ce`; /api/health confirmed 2026-11-24); owner's live test pending |
-| **Charts + CSV download (v0.14.1)**: each calculation under the answer as a line/bars/table card with Chart/Table switch, figure picker, hover and keyboard readouts, and an exact, Excel-safe CSV download; up to 500 groups / 200 listed rows | 🔨 built 2026-11-24 (282 tests, typecheck, build, headless check); to push; then the live test in section 0 |
-| **Next: to propose** (Gmail + Calendar, Excel in the knowledge base) | ⏳ |
+| **Charts + CSV download (v0.14.1)**: each calculation under the answer as a line/bars/table card with Chart/Table switch, figure picker, hover and keyboard readouts, and an exact, Excel-safe CSV download; up to 500 groups / 200 listed rows | ✅ live (v0.14.1, PR #18, merge `fcbb551`); owner's live test with Gemini OK (chart, bars, totals) |
+| **Google Calendar + Gmail with approval (v0.15.0)**: connect Google (Calendar and/or sending email, PKCE, encrypted tokens), read the calendar and find free time exactly, events and emails prepared on cards (email editable) and added/sent only on Approve, daily limits, migration 0014 | 🔨 built 2026-11-24 (294 tests, typecheck, build, headless check with a fake Google); to push; then the setup + live test in section 0 |
+| **Next: to propose** (small v0.14.1 fixes, Excel in the knowledge base, change/cancel events) | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -893,7 +933,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 282 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 294 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
@@ -963,6 +1003,14 @@ Apply new migrations locally first: `npx wrangler d1 migrations apply DB --local
   `npx wrangler dev --port 8787 --local --var GROQ_API_KEY:mock --var GROQ_BASE_URL:http://127.0.0.1:8790/groq`, with
   `node scripts/mock-llm.mjs` running. On Windows, stopping the background command leaves wrangler's `node`/`workerd`
   children running: end the tree (`taskkill /PID <npx pid> /T /F`) and check that ports 8787/8790 are free.
+- **Headless chat checks:** while an answer streams, the Send button is a Stop button; wait for "Send message" to come
+  back before the next question (the mock streams long answers slowly). Click card buttons with `element.click()`:
+  a card at the very bottom can sit under the message box, where a simulated mouse click lands on the box.
+- **Local Google:** `wrangler dev … --var GOOGLE_CLIENT_ID:local-test --var GOOGLE_CLIENT_SECRET:local-test --var
+  GOOGLE_TOKEN_KEY:<random base64> --var GOOGLE_OAUTH_BASE_URL:http://127.0.0.1:8790/google --var
+  GOOGLE_TOKEN_URL:…/google/token --var GOOGLE_USERINFO_URL:…/google/userinfo --var GOOGLE_API_BASE_URL:…/google
+  --var GOOGLE_REVOKE_URL:…/google/revoke`; apply migrations to the local D1 first (`npx wrangler d1 migrations apply
+  ai-assistant --local`). Dev sign-in as `admin` is the admin.
 - **Headless downloads:** send `Browser.setDownloadBehavior` (`allow`, a download folder, `eventsEnabled`) on the
   browser's own DevTools connection (`/json/version`) and keep that connection open; closing it resets the setting.
 - **Code under `src/web/lib` that tests import must not use `document`/`window`**: the worker typecheck also reads the

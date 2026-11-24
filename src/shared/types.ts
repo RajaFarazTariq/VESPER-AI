@@ -44,6 +44,11 @@ export interface AdminUserDto extends UserDto {
   todayGithubActions?: number;
   /** Spreadsheets (CSV/Excel) they added today (v0.14.0). */
   todayTables?: number;
+  /** Connected Google Calendar and/or Gmail (v0.15.0). */
+  googleConnected?: boolean;
+  /** Emails sent and calendar events added today after their approval (v0.15.0). */
+  todayEmails?: number;
+  todayEvents?: number;
   conversations: number;
   github: boolean;
   google: boolean;
@@ -112,6 +117,15 @@ export interface AppSettingsDto {
    * calculations get their own share (a question reads each row of its table about once or twice).
    */
   tablesRowsPerDay: number;
+  /**
+   * Regular users may connect Google Calendar and Gmail (v0.15.0): VESPER reads their calendar, and prepares events
+   * and emails that they approve one by one. Admins always can when Google is set up.
+   */
+  googleForUsers: boolean;
+  /** Approved emails each user may send per UTC day (admins unlimited). */
+  emailsPerDay: number;
+  /** Approved calendar events each user may add per UTC day (admins unlimited). */
+  eventsPerDay: number;
 }
 
 /** What the chat screen may offer right now (admin switches + whether a capable service is set up). */
@@ -137,6 +151,8 @@ export interface FeaturesDto {
    * The limits are shown in the message box and checked again by the server.
    */
   tables: { enabled: boolean; perDay: number; perChat: number; maxRows: number; maxMegabytes: number };
+  /** Settings → Connections → Google: Google is set up and this account may use it (v0.15.0). */
+  google: { available: boolean };
 }
 
 // ------------------------------------------------------------------ Connections: GitHub, read-only (v0.12.0)
@@ -173,6 +189,88 @@ export interface ConnectionsDto {
   githubActions: GithubConnectionDto;
   /** The user's latest GitHub changes (newest first, up to 20), for the log under "Changes". */
   recentActions: GithubActionDto[];
+  /** Google Calendar and Gmail (v0.15.0). */
+  google: GoogleConnectionDto;
+  /** The user's latest emails and events prepared by VESPER (newest first, up to 20). */
+  recentGoogleActions: GoogleActionDto[];
+}
+
+// ------------------------------------------------------------------ Google Calendar and Gmail (v0.15.0)
+
+export interface GoogleConnectionDto {
+  /** Google is set up and this account may use it. */
+  available: boolean;
+  /** none: never connected (or disconnected); reconnect: Google ended the access (every 7 days while in testing). */
+  status: "none" | "connected" | "reconnect";
+  /** The Google account that was connected (it may differ from the one used to sign in). */
+  email: string | null;
+  /** What the user allowed on Google's screen. */
+  calendar: boolean;
+  gmailSend: boolean;
+}
+
+export type GoogleActionKind = "email" | "event";
+
+/** What a chat step carries: enough to draw the card's heading; the card loads the rest. */
+export interface GoogleActionRefDto {
+  id: string;
+  kind: GoogleActionKind;
+  /** The email's subject or the event's title. */
+  title: string;
+}
+
+export interface GoogleEmailPreviewDto {
+  to: string[];
+  cc: string[];
+  subject: string;
+  /** Plain text. */
+  body: string;
+  /** The Google account it is sent from. */
+  from: string;
+}
+
+export interface GoogleEventPreviewDto {
+  title: string;
+  /** "2026-12-02T10:00" (timed) or "2026-12-02" (all day), in `timeZone`. */
+  start: string;
+  /** Timed: the end time. All day: the LAST day (inclusive). */
+  end: string;
+  allDay: boolean;
+  timeZone: string;
+  /** The calendar's own time zone, when it differs from `timeZone`. */
+  calendarTimeZone: string | null;
+  location: string;
+  description: string;
+  /** Guests who get an invitation email from Google. */
+  attendees: string[];
+  /** Add a Google Meet link. */
+  meet: boolean;
+  /** Events already in the calendar at that time (up to 5). */
+  clashes: { title: string; start: string; end: string; allDay: boolean }[];
+  /** The Google account whose calendar it goes in. */
+  account: string;
+}
+
+/**
+ * pending: waiting for Approve/Reject. running: being sent. done: sent / added (resultUrl). failed: Google refused
+ * (error). rejected: the user said no. expired: not decided within 24 hours.
+ */
+export type GoogleActionStatus = "pending" | "running" | "done" | "failed" | "rejected" | "expired";
+
+export interface GoogleActionDto extends GoogleActionRefDto {
+  status: GoogleActionStatus;
+  /** Who it goes to ("to ann@example.com") or when the event is ("Tue 2 Dec, 10:00–11:00"): kept for the log. */
+  target: string;
+  /** Plain-language cautions shown on the card. */
+  warnings: string[];
+  /** Exactly what will be sent; null once decided. */
+  email: GoogleEmailPreviewDto | null;
+  event: GoogleEventPreviewDto | null;
+  resultUrl: string | null;
+  error: string | null;
+  createdAt: number;
+  expiresAt: number;
+  decidedAt: number | null;
 }
 
 export interface TranscriptionDto {
@@ -239,6 +337,8 @@ export interface ToolEventDto {
   action?: GithubActionRefDto;
   /** A spreadsheet calculation's whole result: the chart or table under the answer, with a CSV download (v0.14.1). */
   table?: TableResultDto;
+  /** An email or calendar event this step prepared, waiting for the user's approval (v0.15.0). */
+  google?: GoogleActionRefDto;
 }
 
 // ------------------------------------------------------------------ GitHub changes with approval (v0.13.0)

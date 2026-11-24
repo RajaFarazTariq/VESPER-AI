@@ -12,6 +12,7 @@ import type {
   FeedbackReason,
   FeedbackSummaryDto,
   GithubActionDto,
+  GoogleActionDto,
   KnowledgeChunkInput,
   KnowledgeCollectionDto,
   KnowledgeDocKind,
@@ -142,6 +143,18 @@ export const api = {
     request<{ action: GithubActionDto }>(`/api/github-actions/${encodeURIComponent(id)}/approve`, { method: "POST", body: "{}" }),
   rejectGithubAction: (id: string) =>
     request<{ action: GithubActionDto }>(`/api/github-actions/${encodeURIComponent(id)}/reject`, { method: "POST", body: "{}" }),
+  /** Google Calendar and Gmail (v0.15.0). Connecting is a normal link to /api/connections/google/start. */
+  disconnectGoogle: () => request<ConnectionsDto>("/api/connections/google/disconnect", { method: "POST", body: "{}" }),
+  /** An email or calendar event waiting for (or given) the user's decision. */
+  googleAction: (id: string) => request<{ action: GoogleActionDto }>(`/api/google-actions/${encodeURIComponent(id)}`),
+  /** Approve; for an email, the version the user may have edited on the card. */
+  approveGoogleAction: (id: string, email?: { to: string[]; cc: string[]; subject: string; body: string }) =>
+    request<{ action: GoogleActionDto }>(`/api/google-actions/${encodeURIComponent(id)}/approve`, {
+      method: "POST",
+      body: JSON.stringify(email ? { email } : {}),
+    }),
+  rejectGoogleAction: (id: string) =>
+    request<{ action: GoogleActionDto }>(`/api/google-actions/${encodeURIComponent(id)}/reject`, { method: "POST", body: "{}" }),
   /** "Check this answer" (v0.11.0): the answer's key claims rated against its sources (saved; asking again is free). */
   checkAnswer: (messageId: string) =>
     request<{ verification: VerificationDto }>(`/api/answer-check/${encodeURIComponent(messageId)}`, { method: "POST", body: "{}" }),
@@ -181,6 +194,7 @@ export const api = {
         webSearch: { keyConfigured: boolean; usedToday: number };
         github?: { configured: boolean };
         githubActions?: { configured: boolean };
+        google?: { configured: boolean };
         tables?: { rowsReadToday: number };
       }>(
         "/api/admin/settings",

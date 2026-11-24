@@ -2,6 +2,9 @@ import {
   BookOpen,
   Bookmark,
   BookmarkMinus,
+  CalendarClock,
+  CalendarDays,
+  CalendarPlus,
   Calculator,
   ChevronRight,
   CircleAlert,
@@ -18,6 +21,7 @@ import {
   Library,
   ListChecks,
   Loader2,
+  Mail,
   MessageSquare,
   ScrollText,
   Search,
@@ -55,6 +59,11 @@ export const TOOL_ICONS: Record<string, typeof Wrench> = {
   github_create_issue: CircleDot,
   github_comment: MessageSquare,
   github_open_pr: GitPullRequestArrow,
+  // Google Calendar and Gmail (v0.15.0): reading, and events and emails prepared for the user's approval.
+  calendar_events: CalendarDays,
+  calendar_free_time: CalendarClock,
+  calendar_create_event: CalendarPlus,
+  gmail_send: Mail,
 };
 
 /**
@@ -160,6 +169,10 @@ const PLAIN: Record<string, [running: string, done: string]> = {
   github_search: ["Searching the code…", "Searched the code"],
   github_issues: ["Reading issues…", "Read issues"],
   github_pr_changes: ["Reading the pull request…", "Read the pull request"],
+  calendar_events: ["Reading your calendar…", "Read your calendar"],
+  calendar_free_time: ["Finding free time…", "Found free time"],
+  calendar_create_event: ["Preparing the event…", "Prepared an event for your approval"],
+  gmail_send: ["Preparing the email…", "Prepared an email for your approval"],
 };
 
 function PlainToolLine({ tool }: { tool: ToolEventDto }) {

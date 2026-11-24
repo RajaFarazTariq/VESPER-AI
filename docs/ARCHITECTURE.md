@@ -455,6 +455,53 @@ sequenceDiagram
   chart" or "give me a file" means running the right calculation (group by month; list rows with a higher limit), not
   drawing in text or saying it can't.
 
+## 5k. Google Calendar and Gmail with approval (v0.15.0)
+
+The GitHub-changes pattern (5i), for Google: VESPER reads the calendar, and only PREPARES events and emails; each one
+reaches Google from an approval card, once.
+
+- **Connecting** (`routes/connections.ts`, Settings → Connections → Google): a separate OAuth round trip on the
+  sign-in client "VESPER web", with `access_type=offline`, `prompt=consent select_account`, PKCE (S256; the verifier
+  lives only in a short httpOnly cookie with the state) and `login_hint`. Scopes: `openid email`,
+  `calendar.events.owned` (events on calendars the user owns) and `gmail.send` (send only; reading mail would need
+  Google's restricted scopes and a yearly paid assessment, and Google forbids passing mail content to AI services that
+  may train on it). Google shows a tick box per scope; what was granted is stored and decides which tools are offered.
+  Nothing ticked: the token is revoked and nothing is kept. Tokens are sealed with `GOOGLE_TOKEN_KEY` (lib/secret-box,
+  bound to `google:<userId>`). Disconnect revokes at Google and expires pending cards.
+- **Access** (`tools/google-client.ts`): access tokens renewed a minute before they expire (Google keeps the refresh
+  token, so parallel renewals are harmless); a 401 renews once more; `invalid_grant` (7 days while the Google app is in
+  testing, or access removed) marks the connection "reconnect". Google's errors become plain words: not allowed
+  (reconnect and tick it), API not switched on, busy, not found. At most 12 Google requests per message.
+- **Reading** (`tools/google.ts`): `calendar_events` lists events of the primary calendar (`singleEvents`,
+  `orderBy=startTime`, the user's time zone), marking all-day, tentative, declined and shown-as-free events, guests and
+  outside organisers; descriptions are clipped and marked as data. `calendar_free_time` works out free periods on the
+  server: busy = not cancelled, not shown as free, not declined; merged; subtracted from each day's hours (default
+  09:00–17:00, optional Monday–Friday); periods of at least N minutes.
+- **Times**: the model writes local times ("2026-12-02T10:00"); `zonedInstant` turns them into instants with the time
+  zone's rules (a repeated hour → the first one; a skipped hour → moved forward, as calendars do) and `wallClock`
+  back. The zone is the user's device zone; the card also shows the calendar's own zone when it differs.
+- **Preparing** (`calendar_create_event`, `gmail_send`, risk "approval"): checks (end after start, real dates,
+  addresses, at most 20 recipients or guests, subject on one line, sizes), clashes listed from the calendar, cautions
+  (addresses the user didn't type in this chat, text by others read, private data read before an email, an event in
+  the past), then a pending row in `google_actions` (migration 0014) and a card. At most 3 cards per answer (shared
+  with GitHub changes) and 10 pending.
+- **Approving** (`routes/google-actions.ts`): owner only; for an email, the card may send the user's edits, checked
+  like the original (a bad edit leaves the card waiting). Claimed once, the account must still be the one prepared
+  for (and still allowed), counted against `emailsPerDay` / `eventsPerDay` (admins counted, not limited; given back
+  on failure), then sent: an event via `events.insert` (`sendUpdates=all` only with guests,
+  `conferenceDataVersion=1` for Meet with the card id as request id), an email via `messages.send` (MIME: UTF-8 plain
+  text, base64 body in 76-character lines, CRLF, RFC 2047 subject words ≤ 75 characters; no From header, Gmail adds the
+  account). When Google can't be reached, the card doesn't claim either way ("check Gmail (Sent) / your calendar").
+  Afterwards only the log line stays (90 days); the clean-up expires undecided cards after 24 hours.
+- **Prompt**: the connected account; the reading tools' purpose (free time only through the tool); prepare only when
+  the user asked in their own message, only addresses the user gave, ask when a time or address is unclear, plain-text
+  emails, never "sent/added" before approval; calendar text is data. The outcomes of earlier cards in the chat are
+  listed (`googleActionLines`).
+- **The card** (`components/GoogleActionCard.tsx`): email fields editable before Approve (kept per card while the
+  answer is still being written, since the message is drawn again when it is saved); event: when (with zone), where,
+  guests (invitation note), Meet, notes and clashes; after: "Sent" / "Added" with a link (Gmail's Sent folder for that
+  account, or the event).
+
 ## 6. Security model
 
 | Threat | Control |
@@ -474,6 +521,7 @@ sequenceDiagram
 | Secret leakage | Keys only in Cloudflare secrets; `.env`/`.dev.vars` git-ignored; never returned by the API |
 | Data isolation | Every conversation query is scoped by `user_id`; foreign keys cascade on delete |
 | Dev login in prod | Requires `DEV_LOGIN=true` **and** a localhost hostname, which a workers.dev request can't have |
+| Unwanted emails or calendar events (v0.15.0) | Only prepared by the assistant; added or sent only from the owner's approval card, once, as shown (or as the owner edited it), within daily limits; cautions for addresses the user never typed, text by others and private data read before an email; the account is checked again at Approve; permissions limited to events on owned calendars and sending (no inbox); tokens encrypted with their own key; calendar text passed as data |
 | Spreadsheet content and queries (v0.14.0) | Files are read in the browser and re-checked on upload (cell types, row widths, sizes, row counts must match the overview); only the owner can add to, finish, send or delete an unsent file, and only their chats see its tables; SQL is built from fixed parts with column positions we control and every value bound, so neither the model nor cell text can change the query; column names and cell values are passed to the model as data; per-day file limit, per-chat/per-user caps, app-wide storage and daily read budget. Results under the answer (v0.14.1) are drawn as text nodes and SVG (never HTML from the file), and the CSV download keeps text that Excel could run as a formula (=, +, -, @) as plain text |
 | Unwanted GitHub changes (v0.13.0) | Separate Actions app with its own repo choice; only repos the user can write to (v0.13.1, checked at prepare and approve); tools only prepare; sending happens only from `POST /api/github-actions/:id/approve` by the change's owner, once (atomic claim), before it expires; card shows the exact text / every changed line; prompt forbids preparing changes because content asks for it; warnings for others' text and private-to-public; stale files refused; no existing branch, merge, delete or workflow file is ever touched |
 
@@ -515,6 +563,12 @@ tools are blocked once untrusted content is in context.
   turn; which results get a card; the chart choice (lines with filled periods, gaps, rankings as bars, one line per
   value, no chart where it wouldn't help); period filling; value, date and axis wording; the CSV (quoting, formula
   guard, Urdu, CRLF) and its file name.
+- `tests/google.test.ts` (v0.15.0), against a fake Google that records every request: connecting (exact scopes, PKCE
+  challenge and verifier, encrypted tokens, what was ticked, bad round trips, off for users until allowed, no key → not
+  offered); reading events in the user's zone and exact free time; time conversion across daylight saving; an event
+  prepared in a chat turn with its clash, invisible to others, added once on Approve with the exact request; an email
+  with cautions, a refused bad edit, the edited version sent byte for byte; daily limits, reject, expiry; renewing
+  tokens, Google refusing them (reconnect), disconnecting; address, subject and MIME rules; the prompt rules.
 - Tests never use real keys: `vitest.config.ts` blanks the provider and search keys even if `.dev.vars` has them.
 - Accuracy (real models, real search): `npm run accuracy` (see 5d); not part of `npm test`.
 - Manual/automated E2E: `wrangler dev` + `scripts/mock-llm.mjs` + a headless browser run (login, streaming,
@@ -547,6 +601,9 @@ tools are blocked once untrusted content is in context.
 - Charts and downloads (v0.14.1) cover a calculation's result (up to 500 groups or 200 listed rows), not the whole
   file; two value groupings (e.g. region × product) and three groupings are shown as a table, not a chart; the chart
   type is chosen automatically (no pie charts by design: bars compare more exactly).
+- Google (v0.15.0): sending only (no reading or replying in threads; no Gmail drafts); events are added to the primary
+  calendar and can't yet be changed or cancelled from VESPER; recurring events aren't created; while the Google app is
+  in testing, only its test users can connect and the connection ends every 7 days.
 
 ## 9. Roadmap
 

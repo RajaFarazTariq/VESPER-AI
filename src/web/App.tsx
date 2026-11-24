@@ -381,6 +381,20 @@ function ChatApp({
       toast(message, kind);
       setSettingsTab("connections");
     }
+    // Back from Google (v0.15.0), likewise.
+    const google = new URLSearchParams(window.location.search).get("google");
+    if (google) {
+      const outcomes: Record<string, [string, "info" | "error"]> = {
+        connected: ["Google connected. Ask about your calendar, or ask VESPER to prepare an event or an email.", "info"],
+        "none-allowed": ["Nothing was connected: tick Calendar and/or Gmail on Google's screen to allow them.", "error"],
+        denied: ["Google wasn't connected (you cancelled on Google).", "error"],
+        failed: ["Couldn't connect Google. Please try again.", "error"],
+        not_available: ["Google Calendar and Gmail aren't available for your account.", "error"],
+      };
+      const [message, kind] = outcomes[google] ?? outcomes.failed!;
+      toast(message, kind);
+      setSettingsTab("connections");
+    }
     const initial = conversationIdFromPath();
     if (initial) void openConversation(initial, false);
     else if (window.location.search) window.history.replaceState(null, "", "/");

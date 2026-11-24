@@ -64,6 +64,9 @@ export const appSettingsSchema = z.object({
   tablesEnabled: z.boolean(),
   tablesPerDay: z.number().int().min(0).max(1_000),
   tablesRowsPerDay: z.number().int().min(0).max(4_500_000),
+  googleForUsers: z.boolean(),
+  emailsPerDay: z.number().int().min(0).max(100),
+  eventsPerDay: z.number().int().min(0).max(100),
 });
 
 type Key = keyof AppSettingsDto;
@@ -106,6 +109,10 @@ export function defaultAppSettings(config: AppConfig): AppSettingsDto {
     tablesPerDay: 10,
     // 2 of D1's free 5 million rows read a day: about 20 questions on a 50,000-row file, or 400 on a 2,500-row one.
     tablesRowsPerDay: 2_000_000,
+    // Google Calendar and Gmail (v0.15.0): admins first; switch on for users after a live test.
+    googleForUsers: false,
+    emailsPerDay: 20,
+    eventsPerDay: 20,
   };
 }
 

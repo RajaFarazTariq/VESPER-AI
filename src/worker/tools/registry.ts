@@ -7,6 +7,7 @@ import { CalcError, evaluate } from "./calculator";
 import { searchKnowledge } from "./knowledge";
 import { GITHUB_TOOLS } from "./github";
 import { GITHUB_ACTION_TOOLS } from "./github-actions";
+import { GOOGLE_TOOLS } from "./google";
 import { queryTable } from "./tables";
 import { define, ToolInputError, type AgentTool, type ToolServerState, type WebToolContext } from "./types";
 import { WEB_TOOLS } from "./web";
@@ -144,6 +145,8 @@ export const ALL_TOOLS: AgentTool[] = [
   ...GITHUB_TOOLS,
   // Prepare GitHub changes the user approves on a card (v0.13.0).
   ...GITHUB_ACTION_TOOLS,
+  // Google Calendar (read; events with approval) and Gmail (send with approval) (v0.15.0).
+  ...GOOGLE_TOOLS,
 ];
 
 const isAvailable = (t: AgentTool, server: ToolServerState) => (t.isAvailable ? t.isAvailable(server) : true);

@@ -68,9 +68,19 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({
       settings,
       // GitHub tools are listed as available so they can be switched off for everyone (each user still connects).
-      tools: toolInfo({ web, knowledgeReady, github: config.githubAppEnabled, githubActions: config.githubActionsAppEnabled, tables: true }),
+      tools: toolInfo({
+        web,
+        knowledgeReady,
+        github: config.githubAppEnabled,
+        githubActions: config.githubActionsAppEnabled,
+        tables: true,
+        googleCalendar: config.googleConnectEnabled,
+        gmailSend: config.googleConnectEnabled,
+      }),
       github: { configured: config.githubAppEnabled },
       githubActions: { configured: config.githubActionsAppEnabled },
+      // Google Calendar and Gmail (v0.15.0): the sign-in client and GOOGLE_TOKEN_KEY are set.
+      google: { configured: config.googleConnectEnabled },
       webSearch: {
         keyConfigured: Boolean(web.tavilyApiKey),
         usedToday: Math.min(searchesUsed, settings.webSearchDailyLimit),

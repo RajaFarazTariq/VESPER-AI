@@ -1,12 +1,14 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import type { AppSettingsDto, ConnectionsDto, GithubConnectionDto, GithubInstallationDto } from "../../shared/types";
+import type { AppSettingsDto, ConnectionsDto, GithubConnectionDto, GithubInstallationDto, GoogleConnectionDto } from "../../shared/types";
 import type { AppEnv } from "../app-env";
 import { getAppSettings } from "../db/app-settings";
 import { deleteGithubConnection, expireGithubActions, getGithubConnection, listGithubActions, saveGithubConnection, type GithubAppKind } from "../db/github";
+import { deleteGoogleConnection, expireGoogleActions, getGoogleConnection, listGoogleActions, saveGoogleConnection } from "../db/google";
 import type { SessionUser } from "../db/users";
 import { getConfig, type Env } from "../env";
-import { randomToken, safeEqual } from "../lib/crypto";
+import { randomToken, safeEqual, sha256Base64Url } from "../lib/crypto";
+import { accountOf, GOOGLE_SCOPES, GoogleError, googleTokenOwner, googleTokenRequest } from "../tools/google-client";
 import { seal, unseal } from "../lib/secret-box";
 import { requireUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/security";
@@ -104,12 +106,138 @@ async function connectionStatus(c: Context<AppEnv>, kind: GithubAppKind, setting
 
 async function connections(c: Context<AppEnv>): Promise<ConnectionsDto> {
   const settings = await getAppSettings(c.env.DB, getConfig(c.env));
-  const [github, githubActions, recentActions] = await Promise.all([
+  const user = c.get("user");
+  const [github, githubActions, recentActions, google, recentGoogleActions] = await Promise.all([
     connectionStatus(c, "reader", settings),
     connectionStatus(c, "actions", settings),
-    listGithubActions(c.env.DB, c.get("user").id),
+    listGithubActions(c.env.DB, user.id),
+    googleStatus(c, settings),
+    googleAllowed(c.env, user, settings) ? listGoogleActions(c.env.DB, user.id) : Promise.resolve([]),
   ]);
-  return { github, githubActions, recentActions };
+  return { github, githubActions, recentActions, google, recentGoogleActions };
+}
+
+// ---------------------------------------------------------------- Google Calendar and Gmail (v0.15.0)
+
+/** Google is set up (sign-in client + GOOGLE_TOKEN_KEY) and this account may use it (admins always; users when allowed). */
+export const googleAllowed = (env: Env, user: Pick<SessionUser, "role">, settings: Pick<AppSettingsDto, "googleForUsers">) =>
+  getConfig(env).googleConnectEnabled && (user.role === "admin" || settings.googleForUsers);
+
+const GOOGLE_PATH = "/api/connections/google";
+const GOOGLE_COOKIE = "google_connect";
+const googleBack = (c: Context<AppEnv>, outcome: string) => c.redirect(`/?google=${encodeURIComponent(outcome)}`, 302);
+const googleCallbackUrl = (c: Context<AppEnv>) => `${new URL(c.req.url).origin}${GOOGLE_PATH}/callback`;
+
+async function googleStatus(c: Context<AppEnv>, settings: AppSettingsDto): Promise<GoogleConnectionDto> {
+  const available = googleAllowed(c.env, c.get("user"), settings);
+  const base: GoogleConnectionDto = { available, status: "none", email: null, calendar: false, gmailSend: false };
+  if (!available) return base;
+  const row = await getGoogleConnection(c.env.DB, c.get("user").id);
+  if (!row) return base;
+  const account = accountOf(row);
+  return { available, status: row.status, email: row.email, calendar: account.calendar, gmailSend: account.gmailSend };
+}
+
+/**
+ * Opens Google's consent screen (a normal link). It asks for Calendar events and sending email; Google shows a tick
+ * box for each, so the user can allow one or both. access_type=offline + prompt=consent: Google gives a refresh token
+ * every time. PKCE (S256) and a state cookie protect the round trip.
+ */
+async function googleStart(c: Context<AppEnv>) {
+  const user = c.get("user");
+  if (!googleAllowed(c.env, user, await getAppSettings(c.env.DB, getConfig(c.env)))) return googleBack(c, "not_available");
+  const state = randomToken(24);
+  const verifier = randomToken(48);
+  setCookie(c, GOOGLE_COOKIE, `${state}.${verifier}`, {
+    httpOnly: true,
+    secure: new URL(c.req.url).protocol === "https:",
+    sameSite: "Lax",
+    path: GOOGLE_PATH,
+    maxAge: 600,
+  });
+  const url = new URL(`${getConfig(c.env).googleOAuthBaseUrl}/o/oauth2/v2/auth`);
+  url.searchParams.set("client_id", c.env.GOOGLE_CLIENT_ID!.trim());
+  url.searchParams.set("redirect_uri", googleCallbackUrl(c));
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", GOOGLE_SCOPES.join(" "));
+  url.searchParams.set("access_type", "offline");
+  url.searchParams.set("prompt", "consent select_account");
+  url.searchParams.set("state", state);
+  url.searchParams.set("code_challenge", await sha256Base64Url(verifier));
+  url.searchParams.set("code_challenge_method", "S256");
+  if (user.email) url.searchParams.set("login_hint", user.email);
+  return c.redirect(url.toString(), 302);
+}
+
+async function googleCallback(c: Context<AppEnv>) {
+  const user = c.get("user");
+  const [expected, verifier] = (getCookie(c, GOOGLE_COOKIE) ?? "").split(".");
+  deleteCookie(c, GOOGLE_COOKIE, { path: GOOGLE_PATH });
+  if (c.req.query("error")) return googleBack(c, "denied");
+  const code = c.req.query("code");
+  const state = c.req.query("state");
+  if (!code || !state || !expected || !verifier || !safeEqual(state, expected)) return googleBack(c, "failed");
+  if (!googleAllowed(c.env, user, await getAppSettings(c.env.DB, getConfig(c.env)))) return googleBack(c, "not_available");
+  const config = getConfig(c.env);
+  const key = c.env.GOOGLE_TOKEN_KEY!.trim();
+  try {
+    const tokens = await googleTokenRequest(c.env, { code, redirectUri: googleCallbackUrl(c), verifier });
+    const granted = tokens.scopes ?? [];
+    const account = accountOf({ email: "", scopes: granted.join(" ") });
+    if (!account.calendar && !account.gmailSend) {
+      // Both boxes left unticked: nothing to connect; give the access back.
+      await revokeGoogle(c.env, tokens.refreshToken ?? tokens.accessToken);
+      return googleBack(c, "none-allowed");
+    }
+    if (!tokens.refreshToken) return googleBack(c, "failed");
+    const response = await fetch(config.googleUserinfoUrl, { headers: { Authorization: `Bearer ${tokens.accessToken}`, Accept: "application/json" } });
+    if (!response.ok) return googleBack(c, "failed");
+    const info = (await response.json()) as { sub?: unknown; email?: unknown };
+    if (typeof info.sub !== "string" || typeof info.email !== "string" || !info.email.includes("@")) return googleBack(c, "failed");
+    const owner = googleTokenOwner(user.id);
+    await saveGoogleConnection(c.env.DB, user.id, {
+      sub: info.sub,
+      email: info.email.trim().toLowerCase().slice(0, 254),
+      scopes: granted,
+      accessToken: await seal(key, tokens.accessToken, owner),
+      accessExpiresAt: tokens.accessExpiresAt,
+      refreshToken: await seal(key, tokens.refreshToken, owner),
+    });
+  } catch (error) {
+    // Never log tokens or codes: only what kind of failure it was.
+    console.warn(JSON.stringify({ msg: "google connect failed", kind: error instanceof GoogleError ? error.code : "error" }));
+    return googleBack(c, "failed");
+  }
+  return googleBack(c, "connected");
+}
+
+/** Ask Google to remove VESPER's access (best effort: the stored access is deleted either way). */
+async function revokeGoogle(env: Env, token: string): Promise<void> {
+  try {
+    await fetch(getConfig(env).googleRevokeUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token }).toString(),
+    });
+  } catch {
+    // ignore
+  }
+}
+
+/** Forget the connection, ask Google to revoke it, and cancel the emails and events still waiting for approval. */
+async function googleDisconnect(c: Context<AppEnv>) {
+  const user = c.get("user");
+  const row = await getGoogleConnection(c.env.DB, user.id);
+  if (row && getConfig(c.env).googleConnectEnabled) {
+    try {
+      await revokeGoogle(c.env, await unseal(c.env.GOOGLE_TOKEN_KEY!.trim(), row.refresh_token, googleTokenOwner(user.id)));
+    } catch {
+      // A token that can't be opened can't be revoked; it is deleted below.
+    }
+  }
+  await deleteGoogleConnection(c.env.DB, user.id);
+  await expireGoogleActions(c.env.DB, user.id, { all: true });
+  return c.json(await connections(c));
 }
 
 /** Opens GitHub's "Authorize" page for one of the two apps (a normal link, not an API call). */
@@ -217,4 +345,8 @@ export const connectionRoutes = new Hono<AppEnv>()
   // GitHub changes with approval (v0.13.0): the separate Actions app.
   .get("/github-actions/start", connectLimiter, (c) => start(c, "actions"))
   .get("/github-actions/callback", connectLimiter, (c) => callback(c, "actions"))
-  .post("/github-actions/disconnect", (c) => disconnect(c, "actions"));
+  .post("/github-actions/disconnect", (c) => disconnect(c, "actions"))
+  // Google Calendar and Gmail with approval (v0.15.0).
+  .get("/google/start", connectLimiter, (c) => googleStart(c))
+  .get("/google/callback", connectLimiter, (c) => googleCallback(c))
+  .post("/google/disconnect", (c) => googleDisconnect(c));

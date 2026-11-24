@@ -327,6 +327,8 @@ describe("chat", () => {
 
   it("refuses OpenRouter models that are not free", async () => {
     const cookie = await login();
+    // No real network (it made this test slow and flaky): any model list fetched comes back empty.
+    mockFetch(() => new Response(JSON.stringify({ data: [] }), { headers: { "content-type": "application/json" } }));
     const { response, json } = await call("/api/chat", {
       method: "POST",
       body: JSON.stringify({ message: "hi", model: "openrouter:openai/gpt-5" }),

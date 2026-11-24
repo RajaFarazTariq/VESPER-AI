@@ -54,6 +54,10 @@ export interface Env {
   /** That app's short name from its public link github.com/apps/<slug>. */
   GITHUB_ACTIONS_APP_SLUG?: string;
 
+  // --- Google Calendar and Gmail with approval (v0.15.0; uses the sign-in client GOOGLE_CLIENT_ID/SECRET) ---
+  /** Base64 of 32 random bytes: encrypts users' Google tokens in the database. Without it, Google isn't offered. */
+  GOOGLE_TOKEN_KEY?: string;
+
   // --- Optional tuning ---
   APP_NAME?: string;
   PROVIDER_ORDER?: string;
@@ -81,6 +85,9 @@ export interface Env {
   GOOGLE_OAUTH_BASE_URL?: string;
   GOOGLE_TOKEN_URL?: string;
   GOOGLE_USERINFO_URL?: string;
+  /** One base for the Calendar (/calendar/v3) and Gmail (/gmail/v1) APIs, for an offline fake Google. */
+  GOOGLE_API_BASE_URL?: string;
+  GOOGLE_REVOKE_URL?: string;
 }
 
 export interface AppConfig {
@@ -96,6 +103,8 @@ export interface AppConfig {
   githubAppEnabled: boolean;
   /** The Actions GitHub App (changes with approval, v0.13.0) is fully set up, likewise. */
   githubActionsAppEnabled: boolean;
+  /** Google Calendar and Gmail can be connected: the sign-in client is set up and GOOGLE_TOKEN_KEY is valid (v0.15.0). */
+  googleConnectEnabled: boolean;
   defaultDailyLimit: number;
   devLogin: boolean;
   maxContextChars: number;
@@ -108,6 +117,9 @@ export interface AppConfig {
   googleOAuthBaseUrl: string;
   googleTokenUrl: string;
   googleUserinfoUrl: string;
+  googleCalendarApiUrl: string;
+  googleGmailApiUrl: string;
+  googleRevokeUrl: string;
 }
 
 export const DEFAULT_PROVIDER_ORDER: ProviderId[] = ["groq", "gemini", "openrouter", "mistral", "workers-ai"];
@@ -164,6 +176,7 @@ export function getConfig(env: Env): AppConfig {
           env.GITHUB_ACTIONS_APP_CLIENT_SECRET?.trim() &&
           /^[a-z0-9-]{1,100}$/i.test(env.GITHUB_ACTIONS_APP_SLUG?.trim() ?? ""),
       ) && validSecretKey(env.GITHUB_TOKEN_KEY),
+    googleConnectEnabled: Boolean(env.GOOGLE_CLIENT_ID?.trim() && env.GOOGLE_CLIENT_SECRET?.trim()) && validSecretKey(env.GOOGLE_TOKEN_KEY),
     defaultDailyLimit: intVar(env.DEFAULT_DAILY_LIMIT, 30, 0, 100_000),
     devLogin: boolVar(env.DEV_LOGIN, false),
     maxContextChars: intVar(env.MAX_CONTEXT_CHARS, 16_000, 2_000, 400_000),
@@ -176,6 +189,9 @@ export function getConfig(env: Env): AppConfig {
     googleOAuthBaseUrl: (env.GOOGLE_OAUTH_BASE_URL || "https://accounts.google.com").replace(/\/+$/, ""),
     googleTokenUrl: env.GOOGLE_TOKEN_URL || "https://oauth2.googleapis.com/token",
     googleUserinfoUrl: env.GOOGLE_USERINFO_URL || "https://openidconnect.googleapis.com/v1/userinfo",
+    googleCalendarApiUrl: env.GOOGLE_API_BASE_URL ? `${env.GOOGLE_API_BASE_URL.replace(/\/+$/, "")}/calendar/v3` : "https://www.googleapis.com/calendar/v3",
+    googleGmailApiUrl: env.GOOGLE_API_BASE_URL ? `${env.GOOGLE_API_BASE_URL.replace(/\/+$/, "")}/gmail/v1` : "https://gmail.googleapis.com/gmail/v1",
+    googleRevokeUrl: env.GOOGLE_REVOKE_URL || "https://oauth2.googleapis.com/revoke",
   };
   configCache.set(env, config);
   return config;
