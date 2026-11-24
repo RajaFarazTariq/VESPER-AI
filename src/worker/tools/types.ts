@@ -1,7 +1,8 @@
 /** Shared tool types, in their own module so tool files and the registry don't import each other. */
 import type { z } from "zod";
-import type { GithubActionRefDto, SourceDto, TableResultDto, UserSettings } from "../../shared/types";
+import type { GithubActionRefDto, GoogleActionRefDto, SourceDto, TableResultDto, UserSettings } from "../../shared/types";
 import type { GithubWriter } from "./github-client";
+import type { GoogleAccess } from "./google-client";
 
 /** What happened so far in this answer (filled in by the agent loop), for tools that need to know. */
 export interface TurnState {
@@ -36,6 +37,13 @@ export interface ToolContext {
   turn?: TurnState;
   /** Spreadsheet calculations (v0.14.0): the app-wide daily budget of rows the database may read for them. */
   tables?: { rowsPerDay: number };
+  /** The user's Google access (Calendar and/or sending email), when connected and allowed (v0.15.0). */
+  google?: GoogleAccess;
+  /**
+   * What the user typed in this chat (their own messages), so a prepared email or invitation can point out addresses
+   * VESPER chose that the user never wrote (v0.15.0).
+   */
+  userText?: string;
 }
 
 /** What the GitHub tools need from the per-user GitHub client (tools/github-client.ts). */
@@ -61,6 +69,9 @@ export interface ToolServerState {
   githubActions?: boolean;
   /** Spreadsheets (v0.14.0): in a chat, it has one; in the tool lists, the admin has spreadsheets switched on. */
   tables?: boolean;
+  /** Google (v0.15.0): the user connected Google and allowed Calendar / sending email. */
+  googleCalendar?: boolean;
+  gmailSend?: boolean;
 }
 
 export interface WebToolContext {
@@ -96,6 +107,8 @@ export interface ToolOutput {
   action?: GithubActionRefDto;
   /** A spreadsheet calculation's whole result, shown under the answer as a chart or table (v0.14.1). */
   table?: TableResultDto;
+  /** An email or calendar event was prepared and waits for the user's approval (shown as a card, v0.15.0). */
+  google?: GoogleActionRefDto;
 }
 
 /** A tool the model may call. Parameters are plain JSON Schema (portable across providers). */

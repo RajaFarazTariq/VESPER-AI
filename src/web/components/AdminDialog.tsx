@@ -213,6 +213,7 @@ function UserRow({
             {user.github ? <Badge>GitHub</Badge> : null}
             {user.githubConnected ? <Badge>Repos connected</Badge> : null}
             {user.githubActionsConnected ? <Badge>GitHub changes</Badge> : null}
+            {user.googleConnected ? <Badge>Calendar/Gmail</Badge> : null}
           </div>
           <p className="truncate text-xs text-[var(--text-soft)]">{user.email ?? user.login}</p>
           <p className="mt-1 text-xs text-[var(--text-soft)]">
@@ -223,7 +224,9 @@ function UserRow({
             {user.todayResearch > 0 ? ` · ${user.todayResearch} research run${user.todayResearch === 1 ? "" : "s"}` : ""}
             {user.todayAnswerChecks > 0 ? ` · ${user.todayAnswerChecks} answer check${user.todayAnswerChecks === 1 ? "" : "s"}` : ""}
             {user.todayGithubActions ? ` · ${user.todayGithubActions} GitHub change${user.todayGithubActions === 1 ? "" : "s"}` : ""}
-            {user.todayTables ? ` · ${user.todayTables} spreadsheet${user.todayTables === 1 ? "" : "s"}` : ""} · {user.conversations} chat
+            {user.todayTables ? ` · ${user.todayTables} spreadsheet${user.todayTables === 1 ? "" : "s"}` : ""}
+            {user.todayEmails ? ` · ${user.todayEmails} email${user.todayEmails === 1 ? "" : "s"}` : ""}
+            {user.todayEvents ? ` · ${user.todayEvents} event${user.todayEvents === 1 ? "" : "s"}` : ""} · {user.conversations} chat
             {user.conversations === 1 ? "" : "s"} · last sign-in {formatDate(user.lastLoginAt)} · joined {formatDate(user.createdAt)}
           </p>
         </div>
@@ -318,6 +321,9 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const [actionsConfigured, setActionsConfigured] = useState(false);
   const [actionsText, setActionsText] = useState("");
   const [tablesText, setTablesText] = useState("");
+  const [googleConfigured, setGoogleConfigured] = useState(false);
+  const [emailsText, setEmailsText] = useState("");
+  const [eventsText, setEventsText] = useState("");
   const [tableRowsText, setTableRowsText] = useState("");
   const [tableRowsRead, setTableRowsRead] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -345,6 +351,9 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         setTablesText(String(r.settings.tablesPerDay));
         setTableRowsText(String(r.settings.tablesRowsPerDay));
         setTableRowsRead(r.tables?.rowsReadToday ?? 0);
+        setGoogleConfigured(Boolean(r.google?.configured));
+        setEmailsText(String(r.settings.emailsPerDay));
+        setEventsText(String(r.settings.eventsPerDay));
       },
       (e: unknown) => setError(errorText(e, "Could not load settings.")),
     );
@@ -372,6 +381,10 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const tablesValid = tablesText.trim() !== "" && Number.isInteger(tablesPerDay) && tablesPerDay >= 0 && tablesPerDay <= 1_000;
   const tableRows = Number(tableRowsText);
   const tableRowsValid = tableRowsText.trim() !== "" && Number.isInteger(tableRows) && tableRows >= 0 && tableRows <= 4_500_000;
+  const emailsPerDay = Number(emailsText);
+  const emailsValid = emailsText.trim() !== "" && Number.isInteger(emailsPerDay) && emailsPerDay >= 0 && emailsPerDay <= 100;
+  const eventsPerDay = Number(eventsText);
+  const eventsValid = eventsText.trim() !== "" && Number.isInteger(eventsPerDay) && eventsPerDay >= 0 && eventsPerDay <= 100;
   const next: AppSettingsDto = {
     ...draft,
     defaultDailyLimit: limitValid ? limit : draft.defaultDailyLimit,
@@ -386,6 +399,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
     githubActionsPerDay: actionsValid ? actionsPerDay : draft.githubActionsPerDay,
     tablesPerDay: tablesValid ? tablesPerDay : draft.tablesPerDay,
     tablesRowsPerDay: tableRowsValid ? tableRows : draft.tablesRowsPerDay,
+    emailsPerDay: emailsValid ? emailsPerDay : draft.emailsPerDay,
+    eventsPerDay: eventsValid ? eventsPerDay : draft.eventsPerDay,
   };
   // Research can use the day's searches above the ones kept for normal chat.
   const researchSearches = next.webSearchDailyLimit - next.researchSearchReserve;
@@ -412,6 +427,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       setActionsText(String(settings.githubActionsPerDay));
       setTablesText(String(settings.tablesPerDay));
       setTableRowsText(String(settings.tablesRowsPerDay));
+      setEmailsText(String(settings.emailsPerDay));
+      setEventsText(String(settings.eventsPerDay));
       onNotice("App settings saved.", "info");
     } catch (e) {
       setError(errorText(e, "Could not save settings."));
@@ -609,6 +626,38 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       </div>
       <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
         <Toggle
+          checked={draft.googleForUsers}
+          onChange={(googleForUsers) => setDraft({ ...draft, googleForUsers })}
+          label="Google Calendar and Gmail for users"
+          hint="Settings → Connections → Google: users connect their own Google account and tick what to allow (calendar events, sending email). VESPER reads their calendar and finds free time; it prepares events and emails that are shown on a card and added or sent only when the user approves them. It can't read anyone's inbox. Admins can always use it."
+        />
+        <label className="ml-12 flex flex-wrap items-center gap-2 text-xs text-[var(--text-soft)]">
+          Emails per user per day
+          <input
+            value={emailsText}
+            onChange={(e) => setEmailsText(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            aria-label="Emails per user per day"
+            className={`w-20 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)] ${emailsValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+          />
+          <span>Calendar events per user per day</span>
+          <input
+            value={eventsText}
+            onChange={(e) => setEventsText(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            aria-label="Calendar events per user per day"
+            className={`w-20 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)] ${eventsValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+          />
+          <span>(approved ones; admins unlimited; failed ones don't count)</span>
+        </label>
+        <p className={`ml-12 text-xs ${googleConfigured ? "text-[var(--text-soft)]" : "text-amber-600 dark:text-amber-400"}`}>
+          {googleConfigured
+            ? "Google is set up. While VESPER's Google app is in testing, only its test users can connect, and Google ends each connection after 7 days (users reconnect)."
+            : "Not set up yet: add GOOGLE_TOKEN_KEY in Cloudflare and switch on the Gmail and Calendar APIs in Google Cloud (see the configuration guide)."}
+        </p>
+      </div>
+      <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
+        <Toggle
           checked={draft.imagesEnabled}
           onChange={(imagesEnabled) => setDraft({ ...draft, imagesEnabled })}
           label="Image attachments"
@@ -723,6 +772,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
             !actionsValid ||
             !tablesValid ||
             !tableRowsValid ||
+            !emailsValid ||
+            !eventsValid ||
             saving
           }
           className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-text)] disabled:opacity-40"

@@ -22,6 +22,17 @@ function readBody(req) {
 }
 
 function pickTool(text, names, system = "") {
+  // Google (v0.15.0): free time, an event tomorrow at 14:30 (clashes with the fake "Client call"), an email.
+  const address = /[\w.+-]+@[\w-]+\.[\w.]+/.exec(text)?.[0];
+  if (names.includes("calendar_free_time") && /\bfree\b/i.test(text)) return { name: "calendar_free_time", args: { minutes: 60 } };
+  if (names.includes("calendar_create_event") && /\b(?:add|schedule|book)\b/i.test(text) && /\b(?:meeting|event)\b/i.test(text)) {
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    return { name: "calendar_create_event", args: { title: "Project review", start: `${tomorrow}T14:30`, minutes: 60, ...(address ? { attendees: [address] } : {}), meet: true } };
+  }
+  if (names.includes("gmail_send") && /\bemail\b/i.test(text) && address) {
+    return { name: "gmail_send", args: { to: [address], subject: "Project review tomorrow", body: "Hi Sara,\n\nCan we meet tomorrow at 14:30 to review the project?\n\nThanks" } };
+  }
+  if (names.includes("calendar_events") && /\bcalendar\b/i.test(text)) return { name: "calendar_events", args: {} };
   // Spreadsheets (v0.14.0): "total …" sums the first number column by the first text column of the chat's first table.
   // v0.14.1: "… by month" groups by the first date column's month ("by month and <text column>": one line per value);
   // "list …" lists rows (up to 200) for the download.
@@ -56,9 +67,66 @@ async function streamText(res, text) {
   res.end("data: [DONE]\n\n");
 }
 
+// ---------------------------------------------------------------- a fake Google (v0.15.0)
+// Point the app at it with GOOGLE_OAUTH_BASE_URL, GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL, GOOGLE_API_BASE_URL and
+// GOOGLE_REVOKE_URL under http://127.0.0.1:8790/google. Consent is granted at once (both permissions); the calendar
+// has two events tomorrow; inserted events and sent emails are logged here.
+
+/** "+05:00" for a time zone right now. */
+function zoneOffset(timeZone) {
+  const name = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value ?? "GMT";
+  return name === "GMT" ? "+00:00" : name.replace("GMT", "");
+}
+const localDate = (timeZone, plusDays = 0) => new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date(Date.now() + plusDays * 86_400_000));
+
+async function fakeGoogle(req, res, path, url) {
+  const json = (body, status = 200) => {
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
+  };
+  if (path === "/o/oauth2/v2/auth") {
+    const back = new URL(url.searchParams.get("redirect_uri"));
+    back.searchParams.set("code", "mock-code");
+    back.searchParams.set("state", url.searchParams.get("state") ?? "");
+    res.writeHead(302, { location: back.toString() });
+    return res.end();
+  }
+  if (path === "/token") {
+    const scope = "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.events.owned https://www.googleapis.com/auth/gmail.send";
+    return json({ access_token: `mock-access-${Date.now()}`, expires_in: 3599, refresh_token: "mock-refresh", scope, token_type: "Bearer" });
+  }
+  if (path === "/userinfo") return json({ sub: "mock-google-user", email: "tester@gmail.com", email_verified: true });
+  if (path === "/revoke") return json({});
+  if (path === "/calendar/v3/calendars/primary/events") {
+    const timeZone = url.searchParams.get("timeZone") || "UTC";
+    if (req.method === "POST") {
+      const body = JSON.parse((await readBody(req)) || "{}");
+      console.log(`[google] event added: ${body.summary} ${JSON.stringify(body.start)} guests=${(body.attendees ?? []).length} sendUpdates=${url.searchParams.get("sendUpdates")}`);
+      return json({ id: "mock-event", htmlLink: "https://www.google.com/calendar/event?eid=mock", ...body });
+    }
+    const day = localDate(timeZone, 1);
+    const offset = zoneOffset(timeZone);
+    const all = [
+      { summary: "Team standup", start: { dateTime: `${day}T10:00:00${offset}` }, end: { dateTime: `${day}T10:30:00${offset}` } },
+      { summary: "Client call", start: { dateTime: `${day}T14:00:00${offset}` }, end: { dateTime: `${day}T15:00:00${offset}` } },
+    ];
+    const from = Date.parse(url.searchParams.get("timeMin"));
+    const to = Date.parse(url.searchParams.get("timeMax"));
+    return json({ timeZone, items: all.filter((e) => Date.parse(e.end.dateTime) > from && Date.parse(e.start.dateTime) < to) });
+  }
+  if (path === "/gmail/v1/users/me/messages/send" && req.method === "POST") {
+    const raw = JSON.parse((await readBody(req)) || "{}").raw ?? "";
+    const head = Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8").split("\r\n\r\n")[0];
+    console.log(`[google] email sent:\n${head}`);
+    return json({ id: "mock-message", threadId: "mock-thread", labelIds: ["SENT"] });
+  }
+  return json({ error: { message: "not found" } }, 404);
+}
+
 const server = createServer(async (req, res) => {
   const [, provider = "mock", ...rest] = (req.url ?? "/").split("?")[0].split("/");
   const path = "/" + rest.join("/");
+  if (provider === "google") return fakeGoogle(req, res, path, new URL(req.url ?? "/", "http://127.0.0.1"));
 
   if (req.method === "GET" && path === "/models") {
     res.writeHead(200, { "content-type": "application/json" });

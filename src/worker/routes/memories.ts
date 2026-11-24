@@ -21,7 +21,8 @@ const updateSchema = z
 import { requireUser } from "../middleware/auth";
 import { toolInfo, webToolContext } from "../tools/registry";
 import { githubConnected } from "../tools/github-client";
-import { githubAllowed } from "./connections";
+import { githubAllowed, googleAllowed } from "./connections";
+import { googleConnection } from "../tools/google-client";
 
 export const memoryRoutes = new Hono<AppEnv>()
   .use(requireUser)
@@ -65,5 +66,11 @@ export const toolRoutes = new Hono<AppEnv>().use(requireUser).get("/", async (c)
   const github = githubAllowed(c.env, c.get("user"), settings) && (await githubConnected(c.env.DB, c.get("user").id));
   // Table analysis is listed while spreadsheets are on (it's offered in chats that have one).
   const tables = settings.tablesEnabled;
-  return c.json({ tools: toolInfo({ web, knowledgeReady, github, tables }).filter((t) => t.available && !settings.disabledTools.includes(t.name)) });
+  // Google (v0.15.0): the calendar and email tools are listed once connected, for what the user allowed.
+  const google = googleAllowed(c.env, c.get("user"), settings) ? await googleConnection(c.env.DB, c.get("user").id) : null;
+  return c.json({
+    tools: toolInfo({ web, knowledgeReady, github, tables, googleCalendar: google?.calendar === true, gmailSend: google?.gmailSend === true }).filter(
+      (t) => t.available && !settings.disabledTools.includes(t.name),
+    ),
+  });
 });

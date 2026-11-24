@@ -216,8 +216,11 @@ type AdminUserRow = UserRow & {
   today_answer_checks: number;
   today_github_actions: number;
   today_tables: number;
+  today_emails: number;
+  today_events: number;
   github_connected: number;
   github_actions_connected: number;
+  google_connected: number;
   conversations: number;
 };
 
@@ -230,8 +233,11 @@ export function toAdminUserDto(
     today_answer_checks?: number;
     today_github_actions?: number;
     today_tables?: number;
+    today_emails?: number;
+    today_events?: number;
     github_connected?: number;
     github_actions_connected?: number;
+    google_connected?: number;
     conversations?: number;
   },
   config: AppConfig,
@@ -249,6 +255,9 @@ export function toAdminUserDto(
     githubActionsConnected: row.github_actions_connected === 1,
     todayGithubActions: row.today_github_actions ?? 0,
     todayTables: row.today_tables ?? 0,
+    googleConnected: row.google_connected === 1,
+    todayEmails: row.today_emails ?? 0,
+    todayEvents: row.today_events ?? 0,
     conversations: row.conversations ?? 0,
     github: row.github_login !== null,
     google: row.google_sub !== null,
@@ -262,9 +271,10 @@ const ADMIN_LIST_SQL = `SELECT ${USER_COLUMNS.split(", ")
   .join(", ")}, COALESCE(d.messages, 0) AS today_messages, COALESCE(d.images, 0) AS today_images,
     COALESCE(d.speech_seconds, 0) AS today_speech, COALESCE(d.research_runs, 0) AS today_research,
     COALESCE(d.answer_checks, 0) AS today_answer_checks, COALESCE(d.github_actions, 0) AS today_github_actions,
-    COALESCE(d.tables, 0) AS today_tables,
+    COALESCE(d.tables, 0) AS today_tables, COALESCE(d.emails, 0) AS today_emails, COALESCE(d.events, 0) AS today_events,
     EXISTS (SELECT 1 FROM github_connections g WHERE g.user_id = u.id AND g.status = 'connected') AS github_connected,
     EXISTS (SELECT 1 FROM github_action_connections a WHERE a.user_id = u.id AND a.status = 'connected') AS github_actions_connected,
+    EXISTS (SELECT 1 FROM google_connections o WHERE o.user_id = u.id AND o.status = 'connected') AS google_connected,
     (SELECT COUNT(*) FROM conversations c WHERE c.user_id = u.id) AS conversations
   FROM users u LEFT JOIN user_usage_daily d ON d.user_id = u.id AND d.day = ?1`;
 
@@ -399,6 +409,27 @@ export async function refundDailyGithubAction(db: D1Database, userId: string, da
     .prepare("UPDATE user_usage_daily SET github_actions = MAX(0, github_actions - 1) WHERE user_id = ?1 AND day = ?2")
     .bind(userId, day)
     .run();
+}
+
+/**
+ * Google (v0.15.0): counts one approved email ("emails") or calendar event ("events") if it fits today's limit, before
+ * it is sent (two approvals at once can't both slip through); refundDailyGoogle gives it back when sending fails.
+ */
+export async function consumeDailyGoogle(db: D1Database, userId: string, column: "emails" | "events", limit: number): Promise<boolean> {
+  if (limit <= 0) return false;
+  const row = await db
+    .prepare(
+      `INSERT INTO user_usage_daily (user_id, day, messages, ${column}) VALUES (?1, ?2, 0, 1)
+       ON CONFLICT(user_id, day) DO UPDATE SET ${column} = ${column} + 1 WHERE ${column} < ?3
+       RETURNING ${column} AS n`,
+    )
+    .bind(userId, utcDay(), limit)
+    .first<{ n: number }>();
+  return row !== null;
+}
+
+export async function refundDailyGoogle(db: D1Database, userId: string, column: "emails" | "events", day: string): Promise<void> {
+  await db.prepare(`UPDATE user_usage_daily SET ${column} = MAX(0, ${column} - 1) WHERE user_id = ?1 AND day = ?2`).bind(userId, day).run();
 }
 
 /**

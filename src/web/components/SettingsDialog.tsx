@@ -107,7 +107,9 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
     // Local models (Ollama on the user's own computer): admins always; users only when the admin allows it.
     ...(features?.localModels ? ([["local", "Local models"]] as [Tab, string][]) : []),
     // The user's own GitHub (read-only, v0.12.0) and GitHub changes with approval (v0.13.0): when set up and allowed.
-    ...(features?.github?.available || features?.githubActions?.available ? ([["connections", "Connections"]] as [Tab, string][]) : []),
+    ...(features?.github?.available || features?.githubActions?.available || features?.google?.available
+      ? ([["connections", "Connections"]] as [Tab, string][])
+      : []),
     ["appearance", "Appearance"],
   ];
 

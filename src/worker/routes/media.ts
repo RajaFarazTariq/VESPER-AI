@@ -51,6 +51,7 @@ export function featuresFor(env: Env, settings: AppSettingsDto, admin: boolean):
       maxRows: TABLE_LIMITS.rows,
       maxMegabytes: TABLE_LIMITS.fileBytes / (1024 * 1024),
     },
+    google: { available: getConfig(env).googleConnectEnabled && (admin || settings.googleForUsers) },
   };
 }
 

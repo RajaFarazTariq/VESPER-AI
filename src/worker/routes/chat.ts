@@ -57,7 +57,9 @@ import { factCheckEvent, sourcesOfTools, verifyAnswer } from "../llm/verify";
 import { enabledTools, webToolContext, type AgentTool } from "../tools/registry";
 import { githubAccess, githubConnected, githubWriter } from "../tools/github-client";
 import { conversationGithubActions, expireGithubActions } from "../db/github";
-import { githubActionsAllowed, githubAllowed } from "./connections";
+import { conversationGoogleActions, expireGoogleActions } from "../db/google";
+import { googleAccess, googleConnection } from "../tools/google-client";
+import { githubActionsAllowed, githubAllowed, googleAllowed } from "./connections";
 import { tablesAllowed } from "./files";
 import { requireUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/security";
@@ -112,6 +114,18 @@ const chatLimiter = rateLimit(
   (c) => c.get("user").id,
 );
 
+/**
+ * What the user typed in this chat (their messages in the prompt). A prepared email or invitation points out the
+ * addresses VESPER chose that aren't in it (v0.15.0).
+ */
+function userTextOf(messages: { role: string; content: string }[]): string {
+  return messages
+    .filter((m) => m.role === "user")
+    .map((m) => m.content)
+    .join("\n")
+    .slice(-50_000);
+}
+
 /** Admins are counted (for the usage view) but never limited; everyone else gets their personal limit or the default. */
 async function enforceDailyLimit(db: D1Database, user: SessionUser, defaultLimit: number): Promise<void> {
   if (user.role === "admin") {
@@ -162,6 +176,8 @@ async function prepareTurn(
     summarize?: boolean;
     /** GitHub changes are offered: the prompt lists what happened to the ones prepared in this chat (v0.13.0). */
     githubChanges?: boolean;
+    /** Google is connected: the prompt names the account and lists the emails and events prepared in this chat (v0.15.0). */
+    google?: { email: string } | null;
   },
 ): Promise<{
   conversation: ConversationDto;
@@ -193,6 +209,7 @@ async function prepareTurn(
     if (!last || last.role !== "user") throw badRequest("There is no user message to regenerate a reply for.");
     userMessage = last;
     await expireGithubActions(db, user.id, { conversationId: conversation.id, since: last.createdAt });
+    await expireGoogleActions(db, user.id, { conversationId: conversation.id, since: last.createdAt });
   } else if (input.edit) {
     // Edit: the last user message gets the new text and the old reply is replaced.
     await deleteTrailingAssistantMessages(db, conversation.id);
@@ -200,6 +217,7 @@ async function prepareTurn(
     if (!edited) throw badRequest("There is no message to edit in this conversation.");
     userMessage = edited;
     await expireGithubActions(db, user.id, { conversationId: conversation.id, since: edited.createdAt });
+    await expireGoogleActions(db, user.id, { conversationId: conversation.id, since: edited.createdAt });
   } else {
     // Only the small previews are kept; the full images go to the model once.
     userMessage = await insertMessage(db, conversation.id, {
@@ -216,13 +234,14 @@ async function prepareTurn(
     conversation = { ...conversation, model: selection };
   }
 
-  const [history, memories, earlier, githubChanges, tables] = await Promise.all([
+  const [history, memories, earlier, githubChanges, tables, googleActions] = await Promise.all([
     listMessages(db, conversation.id, HISTORY_LIMIT),
     user.settings.memoryEnabled ? listMemories(db, user.id) : Promise.resolve(undefined),
     getConversationSummary(db, conversation.id),
     extras.githubChanges && !isNew ? conversationGithubActions(db, user.id, conversation.id) : Promise.resolve([]),
     // Spreadsheets in this chat (v0.14.0): their overviews go into the prompt.
     extras.research ? Promise.resolve([]) : conversationTables(db, user.id, conversation.id),
+    extras.google && !isNew ? conversationGoogleActions(db, user.id, conversation.id) : Promise.resolve([]),
   ]);
   // Memories: pinned ones plus those related to this message and the last few things the user said (v0.10.0).
   const about = history
@@ -245,6 +264,7 @@ async function prepareTurn(
       ...(summary ? { summary } : {}),
       ...(githubChanges.length ? { githubChanges } : {}),
       ...(tables.length ? { tables } : {}),
+      ...(extras.google ? { google: { account: extras.google.email, actions: googleActions } } : {}),
     });
 
   // Long chats: messages already covered by the running notes aren't sent again in full.
@@ -406,6 +426,8 @@ export const chatRoutes = new Hono<AppEnv>()
     // GitHub changes with approval (v0.13.0): offered when the Actions app is set up, allowed and connected.
     const githubActionsOn =
       !research && githubActionsAllowed(c.env, user, appSettings) && (await githubConnected(c.env.DB, user.id, "actions"));
+    // Google Calendar and Gmail with approval (v0.15.0): offered when set up, allowed and connected, per what the user allowed.
+    const google = !research && googleAllowed(c.env, user, appSettings) ? await googleConnection(c.env.DB, user.id) : null;
     // Spreadsheets (v0.14.0): the Table analysis tool is offered in chats that have one (while the admin allows it).
     const hasTables =
       newFiles.length > 0 || (body.conversationId !== undefined && (await conversationHasTables(c.env.DB, user.id, body.conversationId)));
@@ -415,6 +437,8 @@ export const chatRoutes = new Hono<AppEnv>()
       github: githubOn,
       githubActions: githubActionsOn,
       tables: hasTables && !research && tablesAllowed(appSettings),
+      googleCalendar: google?.calendar === true,
+      gmailSend: google?.gmailSend === true,
     });
     const timeZone = normalizeTimeZone(body.timeZone);
     let turn: Awaited<ReturnType<typeof prepareTurn>>;
@@ -429,6 +453,7 @@ export const chatRoutes = new Hono<AppEnv>()
         research,
         summarize: true,
         githubChanges: githubActionsOn,
+        google: google ? { email: google.email } : null,
       });
     } catch (error) {
       await settleResearch(null);
@@ -479,6 +504,7 @@ export const chatRoutes = new Hono<AppEnv>()
             : {}),
           conversationId: turn.conversation.id,
           tables: { rowsPerDay: appSettings.tablesRowsPerDay },
+          ...(google ? { google: googleAccess({ env: c.env, db: c.env.DB, userId: user.id, signal: abort.signal }), userText: userTextOf(turn.context) } : {}),
         };
         const events = {
           attempt: (t: { provider: ProviderId; model: string }) => send({ type: "attempt", provider: t.provider, model: t.model }),
@@ -553,6 +579,8 @@ export const chatRoutes = new Hono<AppEnv>()
           // Stopped before any output: nothing is saved, so changes prepared on the way have no card to approve them.
           const prepared = result.tools.flatMap((t) => (t.action ? [t.action.id] : []));
           if (prepared.length) await expireGithubActions(c.env.DB, user.id, { ids: prepared }).catch(() => {});
+          const googlePrepared = result.tools.flatMap((t) => (t.google ? [t.google.id] : []));
+          if (googlePrepared.length) await expireGoogleActions(c.env.DB, user.id, { ids: googlePrepared }).catch(() => {});
           return;
         }
 

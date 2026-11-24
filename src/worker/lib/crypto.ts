@@ -16,6 +16,11 @@ export async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** SHA-256 as base64url (an OAuth PKCE code challenge for a verifier). */
+export async function sha256Base64Url(value: string): Promise<string> {
+  return toBase64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value))));
+}
+
 /** Constant-time string comparison (for OAuth state and similar values). */
 export function safeEqual(a: string, b: string): boolean {
   const left = encoder.encode(a);
