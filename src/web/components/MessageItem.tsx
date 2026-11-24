@@ -36,6 +36,7 @@ import {
   providerLabel,
   tidyCitations,
 } from "../lib/format";
+import { documentSubtitle } from "../lib/attachments";
 import { canSpeak, speak, stopSpeaking, useSpeakingId } from "../lib/voice";
 import { CopyButton, Markdown } from "./Markdown";
 import { GithubActionCard } from "./GithubActionCard";
@@ -530,26 +531,18 @@ function UserMessage({ message, canEdit, onEdit }: { message: UiMessage; canEdit
 
   return (
     <div className="rise-in group flex flex-col items-end gap-1">
-      {message.files?.length ? (
-        <ul className="flex max-w-[85%] flex-wrap justify-end gap-2" aria-label="Attached spreadsheets">
-          {message.files.map((f) => (
-            <li
+      {message.files?.length || message.documents?.length ? (
+        <ul className="flex max-w-[85%] flex-wrap justify-end gap-2" aria-label="Attached files">
+          {(message.files ?? []).map((f) => (
+            <AttachedFile
               key={f.id}
-              className="flex max-w-[18rem] items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] py-2 pl-2.5 pr-3.5"
-            >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
-                <FileSpreadsheet size={16} />
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate text-[13px] font-medium" title={f.name}>
-                  {f.name}
-                </span>
-                <span className="block text-xs text-[var(--text-soft)]">
-                  {f.rows.toLocaleString()} row{f.rows === 1 ? "" : "s"}
-                  {f.sheets > 1 ? ` · ${f.sheets} sheets` : ""}
-                </span>
-              </span>
-            </li>
+              Icon={FileSpreadsheet}
+              name={f.name}
+              detail={`${f.rows.toLocaleString()} row${f.rows === 1 ? "" : "s"}${f.sheets > 1 ? ` · ${f.sheets} sheets` : ""}`}
+            />
+          ))}
+          {(message.documents ?? []).map((d) => (
+            <AttachedFile key={d.id} Icon={FileText} name={d.name} detail={documentSubtitle(d)} />
           ))}
         </ul>
       ) : null}
@@ -588,6 +581,23 @@ function UserMessage({ message, canEdit, onEdit }: { message: UiMessage; canEdit
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** A spreadsheet (v0.14.0) or document (v0.16.0) sent with a message: its name and what it holds. */
+function AttachedFile({ Icon, name, detail }: { Icon: typeof FileText; name: string; detail: string }) {
+  return (
+    <li className="flex max-w-[18rem] items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] py-2 pl-2.5 pr-3.5">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
+        <Icon size={16} />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] font-medium" title={name}>
+          {name}
+        </span>
+        <span className="block text-xs text-[var(--text-soft)]">{detail}</span>
+      </span>
+    </li>
   );
 }
 

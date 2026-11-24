@@ -25,7 +25,8 @@ export const messageFile = (t: PendingTable): MessageFileDto => ({ id: t.fileId!
 /** Dates like 03/04/2026 are read month-first only for US English browsers. */
 const preferMdy = () => /^en-us\b/i.test(globalThis.navigator?.language ?? "");
 
-class Aborted extends Error {}
+/** The user removed the file while it was being read or uploaded (also used by lib/documents.ts). */
+export class Aborted extends Error {}
 
 /** Read in the page itself (when a background worker can't be started). */
 async function readHere(file: File, onProgress: (message: string) => void): Promise<ReadFile> {
@@ -75,7 +76,7 @@ export function readInBackground(file: File, onProgress: (message: string) => vo
 }
 
 /** Send again after a network or server hiccup (blocks are stored once, so repeating is safe). */
-async function withRetry<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
+export async function withRetry<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
       return await work();

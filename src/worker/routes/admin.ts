@@ -5,6 +5,7 @@ import { appSettingsSchema, getAppSettings, updateAppSettings, webSearchesToday 
 import { feedbackSummary, listFeedback } from "../db/feedback";
 import { hasSearchableKnowledge } from "../db/knowledge";
 import { tableRowsReadToday } from "../db/tables";
+import { storageOverview } from "../db/storage";
 import { deleteUserSessions } from "../db/sessions";
 import { deleteUser, getUserById, getUserForAdmin, listUsersForAdmin, roleOf, updateUser } from "../db/users";
 import { getConfig } from "../env";
@@ -58,11 +59,12 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .get("/settings", async (c) => {
     const config = getConfig(c.env);
-    const [settings, searchesUsed, knowledgeReady, tableRowsRead] = await Promise.all([
+    const [settings, searchesUsed, knowledgeReady, tableRowsRead, storage] = await Promise.all([
       getAppSettings(c.env.DB, config),
       webSearchesToday(c.env.DB),
       hasSearchableKnowledge(c.env.DB),
       tableRowsReadToday(c.env.DB),
+      storageOverview(c.env.DB),
     ]);
     const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, settings);
     return c.json({
@@ -74,6 +76,7 @@ export const adminRoutes = new Hono<AppEnv>()
         github: config.githubAppEnabled,
         githubActions: config.githubActionsAppEnabled,
         tables: true,
+        documents: true,
         googleCalendar: config.googleConnectEnabled,
         gmailSend: config.googleConnectEnabled,
       }),
@@ -87,6 +90,8 @@ export const adminRoutes = new Hono<AppEnv>()
       },
       // Spreadsheet calculations (v0.14.0): rows the database read for them today, whole app.
       tables: { rowsReadToday: tableRowsRead },
+      // Storage meter (v0.16.0): the database's size against the free plan's 500 MB, and each file feature's text.
+      storage,
     });
   })
 

@@ -364,9 +364,11 @@ describe("tool settings", () => {
   it("respects the master switch, per-tool switches and the memory switch", () => {
     // Without a search key, web search isn't offered; without documents, the knowledge base isn't; without the user's
     // GitHub connection (v0.12.0), the GitHub tools aren't; outside a chat with a spreadsheet (v0.14.0), Table analysis
-    // isn't; without Google (v0.15.0), the calendar and email tools aren't; with all of them, every tool is.
+    // isn't; without Google (v0.15.0), the calendar and email tools aren't; outside a chat with a document (v0.16.0),
+    // the document tools aren't; with all of them, every tool is.
     const googleTools = ["calendar_events", "calendar_free_time", "calendar_create_event", "gmail_send"];
-    const all = ALL_TOOLS.map((t) => t.name).filter((n) => n !== "query_table" && !googleTools.includes(n));
+    const documentTools = ["search_documents", "read_document"];
+    const all = ALL_TOOLS.map((t) => t.name).filter((n) => n !== "query_table" && !googleTools.includes(n) && !documentTools.includes(n));
     const noGithub = all.filter((n) => !n.startsWith("github_"));
     expect(enabledTools({ ...DEFAULT_SETTINGS }).map((t) => t.name)).toEqual(noGithub.filter((n) => n !== "web_search" && n !== "search_knowledge"));
     const web = { userAgent: "test", tavilyApiKey: "k", webSearchDailyLimit: 30 };
@@ -377,11 +379,13 @@ describe("tool settings", () => {
     expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, github: true }).map((t) => t.name)).toEqual(all.filter((n) => !changes.includes(n)));
     expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, githubActions: true }).map((t) => t.name)).toEqual([...noGithub, ...changes]);
     expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, github: true, githubActions: true }).map((t) => t.name)).toEqual(all);
-    expect(
-      enabledTools({ ...DEFAULT_SETTINGS }, [], { web, knowledgeReady: true, github: true, githubActions: true, tables: true, googleCalendar: true, gmailSend: true }).map(
-        (t) => t.name,
-      ),
-    ).toEqual(ALL_TOOLS.map((t) => t.name));
+    const everything = { web, knowledgeReady: true, github: true, githubActions: true, tables: true, googleCalendar: true, gmailSend: true, documents: true };
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], everything).map((t) => t.name)).toEqual(ALL_TOOLS.map((t) => t.name));
+    // The document tools come right after Table analysis, and only in chats with a document.
+    const names = ALL_TOOLS.map((t) => t.name);
+    expect(names.slice(names.indexOf("query_table"), names.indexOf("query_table") + 3)).toEqual(["query_table", ...documentTools]);
+    expect(enabledTools({ ...DEFAULT_SETTINGS }, [], { ...everything, documents: false }).map((t) => t.name)).not.toContain("read_document");
+    expect(enabledTools({ ...DEFAULT_SETTINGS, disabledTools: ["read_document"] }, [], { documents: true }).map((t) => t.name)).toContain("search_documents");
     // Google: the calendar tools need Calendar allowed, the email tool needs sending allowed.
     const offered = (server: { googleCalendar?: boolean; gmailSend?: boolean }) => enabledTools({ ...DEFAULT_SETTINGS }, [], server).map((t) => t.name).filter((n) => googleTools.includes(n));
     expect(offered({ googleCalendar: true })).toEqual(["calendar_events", "calendar_free_time", "calendar_create_event"]);

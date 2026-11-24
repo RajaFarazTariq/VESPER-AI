@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  BookOpenText,
   Bookmark,
   BookmarkMinus,
   CalendarClock,
@@ -12,6 +13,7 @@ import {
   CloudSun,
   Coins,
   FileCode,
+  FileSearch,
   FileText,
   FolderGit2,
   GitPullRequest,
@@ -29,9 +31,11 @@ import {
   ShieldCheck,
   Telescope,
   Wrench,
+  X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { SourceDto, ToolEventDto } from "../../shared/types";
+import { useMenuLayout } from "../hooks/useMenuLayout";
 import { chipLabels } from "../lib/format";
 
 export const TOOL_ICONS: Record<string, typeof Wrench> = {
@@ -64,6 +68,9 @@ export const TOOL_ICONS: Record<string, typeof Wrench> = {
   calendar_free_time: CalendarClock,
   calendar_create_event: CalendarPlus,
   gmail_send: Mail,
+  // Documents the user attached to the chat (v0.16.0): find passages, or read a document in order.
+  search_documents: FileSearch,
+  read_document: BookOpenText,
 };
 
 /**
@@ -92,6 +99,8 @@ export function SourceList({ sources, more = [] }: { sources: SourceDto[]; more?
             <span className="shrink-0 font-medium">{i + 1}</span>
             <span className="truncate">{labels[i]}</span>
           </a>
+        ) : s.kind === "document" && s.excerpt ? (
+          <DocumentSourceChip key={`doc:${s.title}|${s.location ?? ""}`} source={s} number={i + 1} label={labels[i]!} faint={faint} />
         ) : (
           <span
             key={`doc:${s.title}|${s.location ?? ""}`}
@@ -116,6 +125,121 @@ export function SourceList({ sources, more = [] }: { sources: SourceDto[]; more?
         </button>
       ) : null}
     </div>
+  );
+}
+
+const POPOVER_WIDTH = 320;
+
+/**
+ * A passage of a document the user attached to the chat (v0.16.0): the chip opens a small panel with the start of
+ * the passage the answer used, so the user can see what it says without the file. Escape, a click outside or the
+ * close button closes it; focus then goes back to the chip.
+ */
+function DocumentSourceChip({ source, number, label, faint }: { source: SourceDto; number: number; label: string; faint: string }) {
+  const [open, setOpen] = useState(false);
+  const [shift, setShift] = useState(0);
+  const root = useRef<HTMLSpanElement>(null);
+  const chip = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const id = useId();
+  // Opens below the chip, or above it when there's more room there (measured inside the scrolling chat).
+  const layout = useMenuLayout(root, open, "down", 200);
+  const place = source.location ? `${source.title}, ${source.location}` : source.title;
+
+  const close = (refocus: boolean) => {
+    setOpen(false);
+    if (refocus) chip.current?.focus();
+  };
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    // Keep the panel on screen: move it left when the chip is near the right edge (phones).
+    const rect = root.current?.getBoundingClientRect();
+    if (rect) {
+      const width = Math.min(POPOVER_WIDTH, window.innerWidth - 32);
+      setShift(Math.min(0, window.innerWidth - 16 - width - rect.left));
+    }
+    panel.current?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (root.current && !root.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Focus goes back to the chip only when it was in the chip or the panel (not when typing elsewhere).
+      close(Boolean(root.current?.contains(document.activeElement)));
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <span
+      ref={root}
+      className="relative inline-flex max-w-[18rem]"
+      // Tabbing on past the panel closes it (switching to another window doesn't).
+      onBlur={(e) => {
+        if (open && e.relatedTarget && !root.current?.contains(e.relatedTarget as Node)) setOpen(false);
+      }}
+    >
+      <button
+        ref={chip}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-controls={open ? id : undefined}
+        title={place}
+        className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)] ${
+          open ? "border-[var(--accent)] text-[var(--text)]" : "border-[var(--border)]"
+        } ${faint}`}
+      >
+        <span className="shrink-0 font-medium">{number}</span>
+        <FileText size={11} className="shrink-0" />
+        <span className="truncate">{label}</span>
+      </button>
+      {open ? (
+        <div
+          ref={panel}
+          id={id}
+          role="dialog"
+          aria-label={`From the document: ${place}`}
+          tabIndex={-1}
+          className={`absolute z-30 flex w-80 max-w-[calc(100vw-2rem)] flex-col rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] text-left shadow-[var(--shadow-lg)] outline-none ${
+            layout.up ? "bottom-full mb-1.5" : "top-full mt-1.5"
+          }`}
+          style={{ left: shift, maxHeight: layout.maxHeight }}
+        >
+          <div className="flex shrink-0 items-start gap-2 border-b border-[var(--border)] px-3 pb-2 pt-2.5">
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">From the document</p>
+              <p className="mt-0.5 truncate text-xs font-medium text-[var(--text)]" title={place}>
+                {label}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => close(true)}
+              className="-mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+              aria-label="Close"
+              title="Close"
+            >
+              <X size={13} />
+            </button>
+          </div>
+          <p className="min-h-0 overflow-y-auto whitespace-pre-wrap break-words px-3 py-2.5 text-[13px] leading-relaxed text-[var(--text-soft)] thin-scroll">
+            {source.excerpt}
+          </p>
+        </div>
+      ) : null}
+    </span>
   );
 }
 
@@ -173,6 +297,8 @@ const PLAIN: Record<string, [running: string, done: string]> = {
   calendar_free_time: ["Finding free time…", "Found free time"],
   calendar_create_event: ["Preparing the event…", "Prepared an event for your approval"],
   gmail_send: ["Preparing the email…", "Prepared an email for your approval"],
+  search_documents: ["Searching your documents…", "Searched your documents"],
+  read_document: ["Reading the document…", "Read the document"],
 };
 
 function PlainToolLine({ tool }: { tool: ToolEventDto }) {

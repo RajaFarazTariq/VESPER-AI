@@ -21,7 +21,46 @@ function readBody(req) {
   });
 }
 
+/** The notes the app adds under a message with attachments ("[The user attached "report.pdf" with this message …]"). */
+const ATTACHED_NOTE = /\[The user attached [^\]]*\]/g;
+
+/**
+ * Documents in chat (v0.16.0): what a document tool returned, as a citation for the answer. `content` is the tool
+ * result (wrapped as untrusted: { notice, data }) from search_documents or read_document; null when it isn't one.
+ */
+function documentCitation(content) {
+  let data;
+  try {
+    data = JSON.parse(content)?.data;
+  } catch {
+    return null;
+  }
+  // Only the chat's documents have D refs (knowledge-base results keep the generic reply).
+  const hit = Array.isArray(data?.results) ? data.results[0] : null;
+  if (hit?.document_ref) return { name: hit.document, location: hit.location, text: String(hit.text ?? "") };
+  if (data?.document_ref && typeof data.text === "string") {
+    const location = /^\[([^\]\n]+)\]\n/.exec(data.text)?.[1];
+    return { name: data.document, location, text: data.text.replace(/^\[[^\]\n]+\]\n/, "") };
+  }
+  return null;
+}
+
+/** A short answer that quotes the start of the passage and cites it as (file name, page N). */
+function documentAnswer(cited) {
+  const words = cited.text.replace(/\s+/g, " ").trim().split(" ").slice(0, 30).join(" ");
+  return `**Mock reply** from the documents: "${words}…" (${cited.name}${cited.location ? `, ${cited.location}` : ""}).`;
+}
+
 function pickTool(text, names, system = "") {
+  // Documents (v0.16.0): a summary (or a message with only documents) reads the newest one; a question that mentions
+  // a document, PDF, file, report or page searches them.
+  const asked = text.replace(ATTACHED_NOTE, "").trim();
+  if (names.includes("read_document") && (!asked || /\b(?:summari[sz]e|summary|overview|key points|main points|tl;?dr)\b/i.test(asked))) {
+    return { name: "read_document", args: {} };
+  }
+  if (names.includes("search_documents") && /\b(?:documents?|pdfs?|files?|reports?|pages?)\b/i.test(asked) && asked.length >= 2) {
+    return { name: "search_documents", args: { query: asked.slice(0, 300) } };
+  }
   // Google (v0.15.0): free time, an event tomorrow at 14:30 (clashes with the fake "Client call"), an email.
   const address = /[\w.+-]+@[\w-]+\.[\w.]+/.exec(text)?.[0];
   if (names.includes("calendar_free_time") && /\bfree\b/i.test(text)) return { name: "calendar_free_time", args: { minutes: 60 } };
@@ -155,6 +194,12 @@ const server = createServer(async (req, res) => {
     const last = Array.isArray(lastContent)
       ? `${lastContent.filter((p) => p.type === "text").map((p) => p.text).join(" ")} [+${lastContent.filter((p) => p.type === "image_url").length} image(s)]`.trim()
       : lastContent;
+
+    // Documents (v0.16.0): the app may already have searched or read them ("The app already ran …" under the question,
+    // so no tool is called); either way the answer cites the first passage it got.
+    const prefetched = /\[The app already ran "[^"]+" for this question[^\]]*\]\n([\s\S]*)$/.exec(String(last))?.[1];
+    const fromDocuments = documentCitation(lastMessage?.role === "tool" ? lastMessage.content : (prefetched ?? ""));
+    if (fromDocuments) return streamText(res, documentAnswer(fromDocuments));
 
     // Tool calling: decide on a tool for recognisable requests, then answer from the tool result.
     if (Array.isArray(body.tools) && body.tools.length > 0) {

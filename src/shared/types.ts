@@ -49,6 +49,8 @@ export interface AdminUserDto extends UserDto {
   /** Emails sent and calendar events added today after their approval (v0.15.0). */
   todayEmails?: number;
   todayEvents?: number;
+  /** Documents (PDF, Word, text) they added to chats today (v0.16.0). */
+  todayDocuments?: number;
   conversations: number;
   github: boolean;
   google: boolean;
@@ -126,6 +128,10 @@ export interface AppSettingsDto {
   emailsPerDay: number;
   /** Approved calendar events each user may add per UTC day (admins unlimited). */
   eventsPerDay: number;
+  /** Documents in chat (v0.16.0): attach a PDF, Word, text or Markdown file and ask about it, with page citations. */
+  documentsEnabled: boolean;
+  /** Documents each user may add per UTC day (admins unlimited). */
+  documentsPerDay: number;
 }
 
 /** What the chat screen may offer right now (admin switches + whether a capable service is set up). */
@@ -153,6 +159,11 @@ export interface FeaturesDto {
   tables: { enabled: boolean; perDay: number; perChat: number; maxRows: number; maxMegabytes: number };
   /** Settings → Connections → Google: Google is set up and this account may use it (v0.15.0). */
   google: { available: boolean };
+  /**
+   * Documents in chat (v0.16.0): the admin's switch, with the document tools not switched off for everyone.
+   * The limits are shown in the message box and checked again by the server.
+   */
+  documents: { enabled: boolean; perDay: number; perChat: number; perMessage: number; maxPages: number; maxMegabytes: number };
 }
 
 // ------------------------------------------------------------------ Connections: GitHub, read-only (v0.12.0)
@@ -410,8 +421,13 @@ export interface SourceDto {
   url?: string;
   /** Where in a document, e.g. "page 12" (knowledge-base sources), or what was calculated from a spreadsheet. */
   location?: string;
-  /** "table": a calculation on a spreadsheet the user attached (v0.14.0); always listed under the answer. */
-  kind?: "table";
+  /**
+   * "table": a calculation on a spreadsheet the user attached (v0.14.0); always listed under the answer.
+   * "document": a passage of a document the user attached to the chat (v0.16.0); the chip shows `excerpt` when opened.
+   */
+  kind?: "table" | "document";
+  /** Documents in chat (v0.16.0): the start of the passage that was used (at most 600 characters). */
+  excerpt?: string;
 }
 
 // ------------------------------------------------------------------ Spreadsheets in chat (data analysis, v0.14.0)
@@ -487,6 +503,51 @@ export interface MessageFileDto {
   sheets: number;
   /** Data rows in all its tables. */
   rows: number;
+}
+
+// ------------------------------------------------------------------ Storage meter (admin, v0.16.0)
+
+/** The free plan's limit for one D1 database (5 GB is the whole account's total, across up to 10 databases). */
+export const D1_FREE_DATABASE_BYTES = 500 * 1024 * 1024;
+
+/** Admin → App settings: how full the database is, and the text each file feature keeps against its own cap. */
+export interface StorageDto {
+  /** Size of the whole database in bytes, as D1 reports it (null when it couldn't be read). */
+  bytes: number | null;
+  /** The free plan's limit for one database. */
+  maxBytes: number;
+  /** Characters of stored text (the search indexes come on top, about the same again for documents). */
+  knowledge: { chars: number; maxChars: number };
+  spreadsheets: { chars: number; maxChars: number };
+  documents: { chars: number; maxChars: number };
+}
+
+// ------------------------------------------------------------------ Documents in chat (v0.16.0)
+
+export type ChatDocumentKind = "pdf" | "docx" | "txt" | "md";
+
+/** A document the user added to a chat (only its text is stored, in passages). */
+export interface ChatDocumentDto {
+  id: string;
+  name: string;
+  kind: ChatDocumentKind;
+  status: "uploading" | "ready";
+  /** PDFs only. */
+  pages: number | null;
+  chunkCount: number;
+  charCount: number;
+  createdAt: number;
+}
+
+/** A document attached to a user message, shown as a chip on the message. */
+export interface MessageDocumentDto {
+  id: string;
+  name: string;
+  kind: ChatDocumentKind;
+  /** PDFs only. */
+  pages: number | null;
+  /** Characters of text read from it. */
+  chars: number;
 }
 
 /** How a date column is grouped in a calculation ("value": by its own values). */
@@ -624,6 +685,8 @@ export interface MessageDto {
   images?: string[] | null;
   /** Spreadsheets attached to a user message (v0.14.0). */
   files?: MessageFileDto[] | null;
+  /** Documents (PDF, Word, text, Markdown) attached to a user message (v0.16.0). */
+  documents?: MessageDocumentDto[] | null;
   /** The user's 👍/👎 on this answer (assistant messages only). */
   feedback?: MessageFeedbackDto | null;
   /** The answer used sources that were kept, so it can be checked against them ("Check this answer", v0.11.0). */

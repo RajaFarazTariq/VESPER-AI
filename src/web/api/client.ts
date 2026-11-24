@@ -3,6 +3,8 @@ import type {
   AdminUserDto,
   ApiErrorBody,
   AppSettingsDto,
+  ChatDocumentDto,
+  ChatDocumentKind,
   ChatImageInput,
   ChatStreamEvent,
   ConnectionsDto,
@@ -29,6 +31,7 @@ import type {
   TableFileKind,
   TableSheetInput,
   SpeechLanguage,
+  StorageDto,
   ToolInfoDto,
   TranscriptionDto,
   UserDto,
@@ -47,6 +50,8 @@ export type ChatRequestBody = {
   research?: boolean;
   /** Spreadsheets added through api.files, sent with this message (v0.14.0). */
   files?: string[];
+  /** Documents added through api.documents, sent with this message (v0.16.0). */
+  documents?: string[];
 };
 
 export class ApiError extends Error {
@@ -174,6 +179,27 @@ export const api = {
       request<{ file: TableFileDto }>(`/api/files/${encodeURIComponent(fileId)}/complete`, { method: "POST", body: "{}", ...(signal ? { signal } : {}) }),
     remove: (fileId: string) => request<{ ok: true }>(`/api/files/${encodeURIComponent(fileId)}`, { method: "DELETE" }),
   },
+  /**
+   * Documents in chat (v0.16.0): the document's details first, then its passages in batches, then ready. Only the
+   * text is sent (the file is read in the browser). Removing works until it's sent.
+   */
+  documents: {
+    create: (body: { name: string; kind: ChatDocumentKind; bytes: number; pages: number | null; expectedChunks: number; totalChars: number }) =>
+      request<{ document: ChatDocumentDto }>("/api/documents", { method: "POST", body: JSON.stringify(body) }),
+    addChunks: (documentId: string, chunks: KnowledgeChunkInput[], signal?: AbortSignal) =>
+      request<{ document: ChatDocumentDto }>(`/api/documents/${encodeURIComponent(documentId)}/chunks`, {
+        method: "POST",
+        body: JSON.stringify({ chunks }),
+        ...(signal ? { signal } : {}),
+      }),
+    complete: (documentId: string, signal?: AbortSignal) =>
+      request<{ document: ChatDocumentDto }>(`/api/documents/${encodeURIComponent(documentId)}/complete`, {
+        method: "POST",
+        body: "{}",
+        ...(signal ? { signal } : {}),
+      }),
+    remove: (documentId: string) => request<{ ok: true }>(`/api/documents/${encodeURIComponent(documentId)}`, { method: "DELETE" }),
+  },
   listMemories: () => request<{ memories: MemoryDto[] }>("/api/memories"),
   addMemory: (content: string) => request<{ memory: MemoryDto }>("/api/memories", { method: "POST", body: JSON.stringify({ content }) }),
   /** Edit the text and/or pin ("always use") a memory. */
@@ -196,6 +222,8 @@ export const api = {
         githubActions?: { configured: boolean };
         google?: { configured: boolean };
         tables?: { rowsReadToday: number };
+        /** How full the database is (v0.16.0). */
+        storage?: StorageDto;
       }>(
         "/api/admin/settings",
       ),

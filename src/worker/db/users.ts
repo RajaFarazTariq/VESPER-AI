@@ -218,6 +218,7 @@ type AdminUserRow = UserRow & {
   today_tables: number;
   today_emails: number;
   today_events: number;
+  today_documents: number;
   github_connected: number;
   github_actions_connected: number;
   google_connected: number;
@@ -235,6 +236,7 @@ export function toAdminUserDto(
     today_tables?: number;
     today_emails?: number;
     today_events?: number;
+    today_documents?: number;
     github_connected?: number;
     github_actions_connected?: number;
     google_connected?: number;
@@ -258,6 +260,7 @@ export function toAdminUserDto(
     googleConnected: row.google_connected === 1,
     todayEmails: row.today_emails ?? 0,
     todayEvents: row.today_events ?? 0,
+    todayDocuments: row.today_documents ?? 0,
     conversations: row.conversations ?? 0,
     github: row.github_login !== null,
     google: row.google_sub !== null,
@@ -272,6 +275,7 @@ const ADMIN_LIST_SQL = `SELECT ${USER_COLUMNS.split(", ")
     COALESCE(d.speech_seconds, 0) AS today_speech, COALESCE(d.research_runs, 0) AS today_research,
     COALESCE(d.answer_checks, 0) AS today_answer_checks, COALESCE(d.github_actions, 0) AS today_github_actions,
     COALESCE(d.tables, 0) AS today_tables, COALESCE(d.emails, 0) AS today_emails, COALESCE(d.events, 0) AS today_events,
+    COALESCE(d.documents, 0) AS today_documents,
     EXISTS (SELECT 1 FROM github_connections g WHERE g.user_id = u.id AND g.status = 'connected') AS github_connected,
     EXISTS (SELECT 1 FROM github_action_connections a WHERE a.user_id = u.id AND a.status = 'connected') AS github_actions_connected,
     EXISTS (SELECT 1 FROM google_connections o WHERE o.user_id = u.id AND o.status = 'connected') AS google_connected,
@@ -452,6 +456,31 @@ export async function consumeDailyTable(db: D1Database, userId: string, limit: n
 export async function refundDailyTable(db: D1Database, userId: string, day: string): Promise<void> {
   await db
     .prepare("UPDATE user_usage_daily SET tables = MAX(0, tables - 1) WHERE user_id = ?1 AND day = ?2")
+    .bind(userId, day)
+    .run();
+}
+
+/**
+ * Documents in chat (v0.16.0): counts one added document if it fits today's limit. Counted when the upload starts;
+ * refundDailyDocument gives it back when the server refuses the document or the user removes it before sending it
+ * (same day only).
+ */
+export async function consumeDailyDocument(db: D1Database, userId: string, limit: number): Promise<boolean> {
+  if (limit <= 0) return false;
+  const row = await db
+    .prepare(
+      `INSERT INTO user_usage_daily (user_id, day, messages, documents) VALUES (?1, ?2, 0, 1)
+       ON CONFLICT(user_id, day) DO UPDATE SET documents = documents + 1 WHERE documents < ?3
+       RETURNING documents`,
+    )
+    .bind(userId, utcDay(), limit)
+    .first<{ documents: number }>();
+  return row !== null;
+}
+
+export async function refundDailyDocument(db: D1Database, userId: string, day: string): Promise<void> {
+  await db
+    .prepare("UPDATE user_usage_daily SET documents = MAX(0, documents - 1) WHERE user_id = ?1 AND day = ?2")
     .bind(userId, day)
     .run();
 }

@@ -9,6 +9,7 @@ import type { ChatMessage, Provider, ToolCall, ToolSpec } from "./types";
 import { packEvidence } from "./verify";
 import { GITHUB_TOOL_NAMES } from "../tools/github";
 import { TABLE_TOOL } from "../tools/tables";
+import { READ_DOCUMENT_TOOL, SEARCH_DOCUMENTS_TOOL } from "../../shared/documents";
 
 /** Model ↔ tool rounds per user message. Every round is one request against a free quota. */
 export const MAX_TOOL_ROUNDS = 5;
@@ -29,7 +30,18 @@ const PAIRED_KNOWLEDGE_RESULTS = 3;
  * Look-up tools whose results an answer quotes numbers from; after them the number check runs (admin-only).
  * (The calculator alone doesn't trigger it, but its results count as evidence.)
  */
-const CHECKED_TOOLS = new Set(["web_search", "read_page", "wikipedia", "search_knowledge", "weather", "currency", TABLE_TOOL]);
+const CHECKED_TOOLS = new Set([
+  "web_search",
+  "read_page",
+  "wikipedia",
+  "search_knowledge",
+  "weather",
+  "currency",
+  TABLE_TOOL,
+  // The documents attached to the chat (v0.16.0).
+  SEARCH_DOCUMENTS_TOOL,
+  READ_DOCUMENT_TOOL,
+]);
 /** Tools whose results are kept with the answer for "Check this answer" (v0.11.0), when a look-up tool was used. */
 const KEPT_TOOLS = new Set([...CHECKED_TOOLS, ...GITHUB_TOOL_NAMES, "calculator", "current_datetime"]);
 /**
@@ -140,6 +152,8 @@ async function runTool(
         ...(s.url ? { url: s.url.slice(0, 2000) } : {}),
         ...(s.location ? { location: s.location.slice(0, 120) } : {}),
         ...(s.kind ? { kind: s.kind } : {}),
+        // A document passage's start, shown when its chip is opened (v0.16.0).
+        ...(s.excerpt ? { excerpt: s.excerpt.slice(0, 600) } : {}),
       }));
     return {
       event: {

@@ -8,8 +8,12 @@ Read this first when resuming work. Last updated: **2026-11-25**. No secrets are
   passed: connected as the owner's Gmail, an all-day event added on Approve, an email sent with the subject edited on
   the card. Found: Groq hit its limit and Gemini/OpenRouter rejected the next request, Workers AI (no tools) wrote a tool
   call as text, so the owner's second event (a reminder) wasn't prepared; the owner's Google Calendar is set to UTC.
-- **v0.15.1 built 2026-11-25, handed to the owner to push** on branch `release/v0.15.1-google-fixes` (owner said YES):
-  fixes for all of that (section 0). Check /api/health for `0.15.1`.
+- **v0.15.1 live** (PR #20, merge `7e7a196`; /api/health 0.15.1 on 2026-11-25): fixes for all of that (section 0).
+  Owner's live test OK: one card for "birthday all day + remind me at 11 PM the evening before" (Gemini, no fallback),
+  reminder shown as Wed 25 Nov 23:00 "(6 hours before)" (correct: his calendar is UTC), added on Approve. Told him:
+  delete the duplicate birthday event from the v0.15.0 test; if he switches Google Calendar to Pakistan time, that one
+  reminder (stored as 360 minutes before UTC midnight) moves to 18:00, so set it to "1 hour before" in Google Calendar.
+  Possible small polish: on all-day cards, say the reminder is counted from midnight in the calendar's zone.
 - **Owner's live tests still to do:** v0.14.0 steps (b)–(g); v0.14.1 (Download CSV in Excel, Table switch, phone,
   Check); v0.15.1 (ask for an event with a reminder; see the admin reason if a provider rejects again); the owner may
   set his Google Calendar's time zone to Pakistan.
@@ -18,9 +22,26 @@ Read this first when resuming work. Last updated: **2026-11-25**. No secrets are
   for v0.14.1 (charts + CSV download). He asks for work to be "perfect and accurate".
 - **GitHub set-up (unchanged):** "VESPER AI Reader" (read-only) and "VESPER AI Actions" (public since 2026-11-21);
   GitHub for users ON, GitHub changes for users ON (10/day). Test PR #15 and issue #14 are closed (owner, 2026-11-24).
-- **Next (owner to choose):** (1) find out why Gemini/OpenRouter rejected the request after a tool step (the admin
-  notice now shows the reason); (2) Excel files in the knowledge base (reuse the v0.14.0 reader); (3) Google:
-  change/cancel events VESPER added; (4) switch "Google Calendar and Gmail for users" on when the owner is happy.
+- **v0.16.0 built 2026-11-25, handed to the owner to push** (branch `release/v0.16.0-documents`): Documents in chat
+  + storage meter (section 0). Owner asked for it ("Proceed and use more agents to work faster and accurate") and for
+  the storage meter ("Yes, add it").
+- **Owner's goal after that: VESPER as his own "Jarvis"** (asked 2026-11-25). Research done (no files): a web page
+  can't listen when closed, so always-on needs device apps; Picovoice (Porcupine/Eagle) ended its free tier on
+  2026-06-30, so use open source (sherpa-onnx or openWakeWord wake word, sherpa-onnx speaker check on the device);
+  voice is convenience, never a lock (keep sign-in + Approve cards). **Owner: Android phone; Windows laptop is his main
+  device, every day.** Agreed order (proposed, he hasn't approved each step yet): (1) Talk mode in the web app (auto
+  stop on silence, speak while the answer streams, interrupt, listen again; builds on `src/web/lib/voice.ts`);
+  (2) "Hey Vesper" hands-free switch + install as an app (PWA); (3) "only my voice" (enrol once, on the device);
+  (4) reminders + morning briefing as notifications (service worker + Web Push from the cron); (5) **Windows tray app**
+  (e.g. Tauri: always-on wake word, hotkey, open apps/files/sites); (6) **Android app** (Capacitor: default assistant
+  on long-press, alarms, open apps, call/SMS/WhatsApp drafts that he sends himself). Optional: Gemini Live for natural
+  speech (free tier lets Google use the data).
+- **Storage (told the owner 2026-11-25):** free D1 = 500 MB per database, 10 databases, 5 GB per account. Free ways
+  to grow: a second D1 database for documents/spreadsheets/knowledge base; automatic clean-up of old files. R2 needs a
+  card. Storage meter added in v0.16.0 (owner: "Yes, add it").
+- **Other options (owner to choose):** find out why Gemini/OpenRouter rejected the request after a tool step (the admin
+  notice now shows the reason); Excel files in the knowledge base (reuse the v0.14.0 reader); Google: change/cancel
+  events VESPER added; switch "Google Calendar and Gmail for users" on when the owner is happy.
 - **How he works (details in section 2 and "How the owner wants each task run"):** numbered plan first, then report
   each step; plain words; dashboard tasks one step at a time; he runs all git himself; **git commands only for larger
   changes** (small fixes wait unless he asks); every release on its own branch + PR; no assistant/AI mentions in
@@ -28,7 +49,42 @@ Read this first when resuming work. Last updated: **2026-11-25**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-25)
 
-**v0.15.1 built 2026-11-25, handed to the owner to push** (branch `release/v0.15.1-google-fixes`). From the v0.15.0
+**v0.16.0 built 2026-11-25, handed to the owner to push** (branch `release/v0.16.0-documents`). Built with three
+parallel helpers (storage/upload, assistant tools/chat, screens) from one shared spec, then two independent reviews
+(server, browser); every finding was fixed.
+1. **Documents in chat**: 📎 (and drag/paste) takes PDF, Word (.docx), text and Markdown: 20 MB / 300 pages /
+   1,000,000 characters per file, 3 per message, 5 per chat, 30 and 5 million characters kept per user, 10 per user per
+   day (admins unlimited), 40 million characters for everyone. Read in the browser (same reader as the knowledge base),
+   only passages uploaded (`/api/documents` create → chunks → complete → delete while unsent), stored per chat with an
+   FTS5 index (migration `0015_chat_documents.sql`, add-only), deleted with the chat; unsent ones cleaned up after 24 h.
+2. **Tools** `search_documents` ("Your documents": FTS5 + the knowledge base's re-ranker, this chat only, best 6) and
+   `read_document` ("Read a document": in order from a part or page, ≤ 6,500 characters, `next_part`). Citations
+   "(file, page N)" / "(file, section …)"; source chips open the passage (excerpt ≤ 600 chars). "Check" works on them.
+3. **Prefetch** only for messages clearly about the documents (sent with them, naming one, a page, "the report");
+   reads the named / only / just-attached document; with several and none named it searches instead of reading.
+4. **Storage meter** (Admin → App settings, top): database size from D1's `meta.size_after` against 500 MB, plus the
+   text of the knowledge base (50 M cap), spreadsheets (120 M) and documents (40 M); note at 70%, warning at 90%.
+5. **Spreadsheet storage cap lowered** from 1,000 million to 120 million characters (it was sized for 5 GB; one free
+   D1 database holds 500 MB, 5 GB is the account total).
+6. **Review fixes**: `read_document`'s overlap removal was quadratic on passages of very short lines (PDF tables:
+   28–78 ms CPU, over the 10 ms limit) → bounded; prefetch could read the wrong document or fire on "overview of
+   photosynthesis" → stricter rules; size re-checked before a document becomes ready (parallel batches); per-user
+   5 M character cap; D1/D2 numbered by when a document joined the chat; browser: a failed settings refresh no longer
+   hides pending files, a refused send keeps files added meanwhile, huge text files are refused before splitting,
+   problem files don't take free places.
+7. **330 tests** (new: `tests/documents.test.ts`, `tests/document-tools.test.ts`, `tests/documents-web.test.ts`),
+   typecheck, build. **Headless Edge** against `wrangler dev` + `scripts/mock-llm.mjs` (twice, before and after the
+   fixes): PDF chip "PDF · 3 pages" → "Summarise this document" read it and cited pages 1–2 → "annual leave carry over"
+   searched and cited page 2 → excerpt popover (Escape closes, focus returns) → Word + text in one message, 4th refused
+   with "Attach up to 3 documents per message." → Word answer cited "(falcon-plan.docx, section “Project Falcon
+   plan”)" → old .doc refused with a hint → chips and sources back after reload → phone width without sideways scroll →
+   admin storage meter "0.4 MB of 500 MB" and the Documents settings. Local D1 reports `size_after` too.
+8. **Owner's live test after deploy** (one step at a time): (a) /api/health shows 0.16.0; (b) Admin → App settings:
+   Storage shows a size (not "not available") and "Documents in chat" is on; (c) attach a real PDF, ask "summarise
+   this", then a specific question, open a source chip; (d) attach a Word file in the same chat and ask about it;
+   (e) on the phone: attach from Files; (f) delete that test chat (its documents go with it).
+
+**Previous: v0.15.1** (now live, PR #20). From the v0.15.0
 and v0.14.1 live tests:
 1. **Fallback model without tools**: the flattened tool history now says tools can't be used in this step (the old note
    said "call tools again", so Workers AI's Gemma wrote `<|tool_call>call:calendar_create_event(…)<tool_call|>` as
@@ -910,8 +966,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Spreadsheets in chat: data analysis (v0.14.0)**: CSV/Excel/ODS read in the browser (worker, SheetJS), rows in D1 per chat, `query_table` calculates in the database over every row, source chip says what was calculated, daily share of D1 reads, migration 0013 | ✅ live (v0.14.0, PR #17, merge `a60b5ce`; /api/health confirmed 2026-11-24); owner's live test pending |
 | **Charts + CSV download (v0.14.1)**: each calculation under the answer as a line/bars/table card with Chart/Table switch, figure picker, hover and keyboard readouts, and an exact, Excel-safe CSV download; up to 500 groups / 200 listed rows | ✅ live (v0.14.1, PR #18, merge `fcbb551`); owner's live test with Gemini OK (chart, bars, totals) |
 | **Google Calendar + Gmail with approval (v0.15.0)**: connect Google (Calendar and/or sending email, PKCE, encrypted tokens), read the calendar and find free time exactly, events and emails prepared on cards (email editable) and added/sent only on Approve, daily limits, migration 0014 | ✅ live (v0.15.0, PR #19, merge `c204b7f`); set up 2026-11-24/25; live test OK (event, edited email) |
-| **Google and fallback fixes (v0.15.1)**: reminders on events (calendar's own zone for all-day), fallback models without tools told so and leaked tool text removed, admin sees rejection reasons, all-day cards without zone notes, chart years, no invented currency | 🔨 built 2026-11-25 (298 tests, typecheck, build); to push |
-| **Next: to propose** (small v0.14.1 fixes, Excel in the knowledge base, change/cancel events) | ⏳ |
+| **Google and fallback fixes (v0.15.1)**: reminders on events (calendar's own zone for all-day), fallback models without tools told so and leaked tool text removed, admin sees rejection reasons, all-day cards without zone notes, chart years, no invented currency | ✅ live (v0.15.1, PR #20, merge `7e7a196`; /api/health 2026-11-25); owner's live test OK (birthday + reminder card, added) |
+| **Documents in chat + storage meter (v0.16.0)**: PDF/Word/text/Markdown on 📎, read in the browser, passages per chat with FTS5 (migration 0015), `search_documents` + `read_document`, page citations, excerpt on source chips, prefetch for messages about the documents, limits (20 MB / 300 pages, 3 per message, 5 per chat, 30 + 5 M chars per user, 10/day), admin switch + daily limit; admin storage meter (D1 size vs 500 MB); spreadsheet cap 1,000 M → 120 M characters | 🔨 built 2026-11-25 (330 tests, typecheck, build, headless Edge); to push |
+| **Next: owner's "Jarvis" plan** (Talk mode → "Hey Vesper" → only my voice → reminders/briefing → Windows tray app → Android app); other options: second D1 database for files, Excel in the knowledge base, change/cancel events | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
 **Design system (v0.8.0)** — keep new UI consistent with it:
@@ -951,7 +1008,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 298 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 330 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

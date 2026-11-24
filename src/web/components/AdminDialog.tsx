@@ -1,6 +1,16 @@
 import { ChevronDown, ExternalLink, RefreshCw, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AdminUserDto, AppSettingsDto, FeedbackItemDto, FeedbackSummaryDto, ModelsResponse, ToolInfoDto, UserModelOption } from "../../shared/types";
+import { DOCUMENT_LIMITS } from "../../shared/documents";
+import type {
+  AdminUserDto,
+  AppSettingsDto,
+  FeedbackItemDto,
+  FeedbackSummaryDto,
+  ModelsResponse,
+  StorageDto,
+  ToolInfoDto,
+  UserModelOption,
+} from "../../shared/types";
 import { api, ApiError } from "../api/client";
 import { FEEDBACK_LABELS, formatRelative, providerLabel } from "../lib/format";
 import { KnowledgeTab } from "./KnowledgeTab";
@@ -225,6 +235,7 @@ function UserRow({
             {user.todayAnswerChecks > 0 ? ` · ${user.todayAnswerChecks} answer check${user.todayAnswerChecks === 1 ? "" : "s"}` : ""}
             {user.todayGithubActions ? ` · ${user.todayGithubActions} GitHub change${user.todayGithubActions === 1 ? "" : "s"}` : ""}
             {user.todayTables ? ` · ${user.todayTables} spreadsheet${user.todayTables === 1 ? "" : "s"}` : ""}
+            {user.todayDocuments ? ` · ${user.todayDocuments} document${user.todayDocuments === 1 ? "" : "s"}` : ""}
             {user.todayEmails ? ` · ${user.todayEmails} email${user.todayEmails === 1 ? "" : "s"}` : ""}
             {user.todayEvents ? ` · ${user.todayEvents} event${user.todayEvents === 1 ? "" : "s"}` : ""} · {user.conversations} chat
             {user.conversations === 1 ? "" : "s"} · last sign-in {formatDate(user.lastLoginAt)} · joined {formatDate(user.createdAt)}
@@ -303,6 +314,77 @@ function UserRow({
 
 // ------------------------------------------------------------------ App settings
 
+const MEGABYTE = 1024 * 1024;
+/** "0.4 MB", "123 MB". */
+const megabytes = (bytes: number) => {
+  const mb = bytes / MEGABYTE;
+  return `${mb < 10 ? mb.toLocaleString(undefined, { maximumFractionDigits: 1 }) : Math.round(mb).toLocaleString()} MB`;
+};
+/** "850,000", "1.2 million". */
+const characters = (n: number) =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 })} million` : Math.round(n).toLocaleString();
+
+/**
+ * How full the database is (v0.16.0). The free plan allows 500 MB per database and new messages can't be saved once
+ * it's full, so the admin sees it coming; each file feature's stored text is listed against its own cap.
+ */
+function StorageMeter({ storage }: { storage: StorageDto }) {
+  const percent = storage.bytes === null ? null : Math.min(100, (storage.bytes / storage.maxBytes) * 100);
+  const percentText = percent === null ? "" : percent > 0 && percent < 1 ? "under 1%" : `${Math.round(percent)}%`;
+  const lines: [string, { chars: number; maxChars: number }][] = [
+    ["Knowledge base", storage.knowledge],
+    ["Spreadsheets", storage.spreadsheets],
+    ["Documents in chat", storage.documents],
+  ];
+  return (
+    <section className="space-y-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg-soft)] p-4" aria-labelledby="storage-title">
+      <div>
+        <h3 id="storage-title" className="text-sm font-medium">
+          Storage
+        </h3>
+        <p className="mt-0.5 text-xs text-[var(--text-soft)]">
+          The free plan allows {megabytes(storage.maxBytes)} per database. When it is full, new messages can't be saved.
+        </p>
+      </div>
+      {storage.bytes === null || percent === null ? (
+        <p className="text-xs text-[var(--text-soft)]">Database: size not available right now</p>
+      ) : (
+        <div>
+          <p className="text-xs text-[var(--text-soft)]">
+            Database: {megabytes(storage.bytes)} of {megabytes(storage.maxBytes)} ({percentText})
+          </p>
+          <div
+            className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--border)]"
+            role="meter"
+            aria-label="Database space used"
+            aria-valuenow={Math.round(percent)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuetext={`${megabytes(storage.bytes)} of ${megabytes(storage.maxBytes)}`}
+          >
+            <div
+              className={`h-full rounded-full ${percent >= 90 ? "bg-[var(--danger)]" : "bg-[var(--accent)]"}`}
+              style={{ width: `${Math.max(percent, storage.bytes > 0 ? 1 : 0)}%` }}
+            />
+          </div>
+        </div>
+      )}
+      <ul className="space-y-0.5 text-xs text-[var(--text-soft)]">
+        {lines.map(([label, used]) => (
+          <li key={label}>
+            {label}: {characters(used.chars)} of {characters(used.maxChars)} characters
+          </li>
+        ))}
+      </ul>
+      {percent !== null && percent >= 70 ? (
+        <p className={`text-xs ${percent >= 90 ? "font-medium text-[var(--danger)]" : "text-[var(--text)]"}`}>
+          The database is getting full. Delete old chats with files, or ask for a second free database for files.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const [saved, setSaved] = useState<AppSettingsDto | null>(null);
   const [draft, setDraft] = useState<AppSettingsDto | null>(null);
@@ -326,6 +408,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const [eventsText, setEventsText] = useState("");
   const [tableRowsText, setTableRowsText] = useState("");
   const [tableRowsRead, setTableRowsRead] = useState(0);
+  const [documentsText, setDocumentsText] = useState("");
+  const [storage, setStorage] = useState<StorageDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -354,6 +438,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         setGoogleConfigured(Boolean(r.google?.configured));
         setEmailsText(String(r.settings.emailsPerDay));
         setEventsText(String(r.settings.eventsPerDay));
+        setDocumentsText(String(r.settings.documentsPerDay));
+        setStorage(r.storage ?? null);
       },
       (e: unknown) => setError(errorText(e, "Could not load settings.")),
     );
@@ -385,6 +471,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const emailsValid = emailsText.trim() !== "" && Number.isInteger(emailsPerDay) && emailsPerDay >= 0 && emailsPerDay <= 100;
   const eventsPerDay = Number(eventsText);
   const eventsValid = eventsText.trim() !== "" && Number.isInteger(eventsPerDay) && eventsPerDay >= 0 && eventsPerDay <= 100;
+  const documentsPerDay = Number(documentsText);
+  const documentsValid = documentsText.trim() !== "" && Number.isInteger(documentsPerDay) && documentsPerDay >= 0 && documentsPerDay <= 1_000;
   const next: AppSettingsDto = {
     ...draft,
     defaultDailyLimit: limitValid ? limit : draft.defaultDailyLimit,
@@ -401,6 +489,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
     tablesRowsPerDay: tableRowsValid ? tableRows : draft.tablesRowsPerDay,
     emailsPerDay: emailsValid ? emailsPerDay : draft.emailsPerDay,
     eventsPerDay: eventsValid ? eventsPerDay : draft.eventsPerDay,
+    documentsPerDay: documentsValid ? documentsPerDay : draft.documentsPerDay,
   };
   // Research can use the day's searches above the ones kept for normal chat.
   const researchSearches = next.webSearchDailyLimit - next.researchSearchReserve;
@@ -429,6 +518,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       setTableRowsText(String(settings.tablesRowsPerDay));
       setEmailsText(String(settings.emailsPerDay));
       setEventsText(String(settings.eventsPerDay));
+      setDocumentsText(String(settings.documentsPerDay));
       onNotice("App settings saved.", "info");
     } catch (e) {
       setError(errorText(e, "Could not save settings."));
@@ -439,6 +529,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
 
   return (
     <div className="space-y-5">
+      {storage ? <StorageMeter storage={storage} /> : null}
       <Toggle
         checked={draft.signupsOpen}
         onChange={(signupsOpen) => setDraft({ ...draft, signupsOpen })}
@@ -714,6 +805,25 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       </div>
       <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
         <Toggle
+          checked={draft.documentsEnabled}
+          onChange={(documentsEnabled) => setDraft({ ...draft, documentsEnabled })}
+          label="Documents in chat"
+          hint={`Paperclip in the message box: attach a PDF, Word (.docx), text or Markdown file (up to ${DOCUMENT_LIMITS.fileBytes / MEGABYTE} MB and ${DOCUMENT_LIMITS.pages} pages; ${DOCUMENT_LIMITS.perMessage} per message, ${DOCUMENT_LIMITS.perChat} per chat) and ask about it. The file is read in the user's browser and only its text is kept with the chat (deleted with it). Answers cite the file and page.`}
+        />
+        <label className="ml-12 flex flex-wrap items-center gap-2 text-xs text-[var(--text-soft)]">
+          Documents per user per day
+          <input
+            value={documentsText}
+            onChange={(e) => setDocumentsText(e.target.value.replace(/[^\d]/g, ""))}
+            inputMode="numeric"
+            aria-label="Documents per user per day"
+            className={`w-20 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)] ${documentsValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+          />
+          <span>(admins unlimited; each user keeps up to {DOCUMENT_LIMITS.stored})</span>
+        </label>
+      </div>
+      <div className="space-y-3 rounded-xl border border-[var(--border)] p-3">
+        <Toggle
           checked={draft.voiceEnabled}
           onChange={(voiceEnabled) => setDraft({ ...draft, voiceEnabled })}
           label="Voice"
@@ -774,6 +884,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
             !tableRowsValid ||
             !emailsValid ||
             !eventsValid ||
+            !documentsValid ||
             saving
           }
           className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-text)] disabled:opacity-40"

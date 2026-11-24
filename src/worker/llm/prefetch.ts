@@ -7,7 +7,12 @@
  * before the first request and sends the question together with the results: one request, which fits.
  *
  * Simple word rules decide (no extra model call). When unsure, nothing is prefetched and the model decides as before.
+ *
+ * In a chat with documents (v0.16.0) the documents come first: a summary request reads the newest document, a
+ * question about "the report" or "page 12" (or one sent with the documents) searches or reads them. The web isn't
+ * searched first there: "the 2025 results" is about the file, not the news (the model can still search itself).
  */
+import { READ_DOCUMENT_TOOL, SEARCH_DOCUMENTS_TOOL } from "../../shared/documents";
 import { isTimeSensitive } from "../tools/web";
 import type { ToolCall } from "./types";
 
@@ -42,12 +47,69 @@ function namesRepo(text: string): boolean {
   return false;
 }
 
+/** Asks for a summary of a document: read it in order. */
+const SUMMARY_REQUEST =
+  /\b(?:summar(?:y|ies|i[sz]e[ds]?|i[sz]ing)|overview|key (?:points|takeaways)|main (?:points|ideas)|tl;?dr)\b|\bwhat(?:'s|’s|\s+is)\s+(?:this|the|that|my|attached)\s+(?:document|file|pdf|report|paper)\s+(?:all\s+)?about\b/i;
+/** About the documents in the chat: "the report", "this file", "my PDF"… (a page is read instead, see PAGE). */
+const ABOUT_CHAT_DOCUMENTS = /\b(?:the|this|that|these|those|my|our|attached|uploaded)\s+(?:documents?|files?|pdfs?|reports?|papers?)\b/i;
+/** "page 12": read that page (the newest document's), rather than searching for the words "page" and "12". */
+const PAGE = /\bpage\s+(\d{1,4})\b/i;
+
+/** The chat's documents as the prefetch sees them: D1, D2… and file names. */
+export interface PrefetchDocuments {
+  /** This message came with documents (they are the newest ones). */
+  attached: boolean;
+  list?: { ref: string; name: string }[];
+}
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The one document a message names ("D2", "report.pdf", "the report"), or null when it names none or several. */
+export function namedDocument(text: string, list: { ref: string; name: string }[]): string | null {
+  const named = list.filter((d) => {
+    if (new RegExp(`\\b${escapeRegExp(d.ref)}\\b`, "i").test(text)) return true;
+    const name = d.name.toLowerCase();
+    const bare = name.replace(/\.[a-z0-9]{1,5}$/, "");
+    const lower = text.toLowerCase();
+    return lower.includes(name) || (bare.length >= 4 && lower.includes(bare));
+  });
+  return named.length === 1 ? named[0]!.ref : null;
+}
+
+/**
+ * Chats with documents (v0.16.0): read or search them first, or let the model decide (null).
+ * Only for messages that are clearly about the documents: sent with them, naming one, or saying "the report", "this
+ * file"… ("give me an overview of photosynthesis" in such a chat is left to the model). With several documents and
+ * none named, nothing is read first (it could be the wrong one); a search covers all of them.
+ */
+function planDocumentPrefetch(text: string, available: ReadonlySet<string>, documents: PrefetchDocuments): ToolCall | null {
+  const read = available.has(READ_DOCUMENT_TOOL);
+  const list = documents.list ?? [];
+  // A message without words (only the documents): read the newest one, which was just attached.
+  if (!/[\p{L}\p{N}]/u.test(text)) return read ? call(READ_DOCUMENT_TOOL, {}) : null;
+  // Long messages are often pasted text the user wants handled ("summarise this"): the model decides.
+  if (text.length > MAX_QUESTION_CHARS) return null;
+  const target = namedDocument(text, list);
+  const page = PAGE.exec(text);
+  const aboutDocuments = documents.attached || target !== null || page !== null || ABOUT_CHAT_DOCUMENTS.test(text);
+  if (!aboutDocuments) return null;
+  const which = target ? { document: target } : {};
+  // Which document to read: the named one, the only one, or (right after attaching) the newest.
+  const canRead = read && (target !== null || list.length <= 1 || documents.attached);
+  if (page && canRead) return call(READ_DOCUMENT_TOOL, { ...which, page: Number(page[1]) });
+  if (SUMMARY_REQUEST.test(text)) return canRead ? call(READ_DOCUMENT_TOOL, which) : null;
+  if (available.has(SEARCH_DOCUMENTS_TOOL) && text.length >= 2) return call(SEARCH_DOCUMENTS_TOOL, { query: text.slice(0, 300), ...which });
+  return null;
+}
+
 /**
  * The tool call to run before the first model request, or null to let the model decide.
  * `available` is the set of tools offered this turn (the user's and admin's switches are respected).
+ * `documents`: the chat has documents and the document tools are offered.
  */
-export function planPrefetch(question: string, available: ReadonlySet<string>): ToolCall | null {
+export function planPrefetch(question: string, available: ReadonlySet<string>, documents?: PrefetchDocuments): ToolCall | null {
   const text = question.trim();
+  if (documents) return planDocumentPrefetch(text, available, documents);
   if (text.length < 8 || text.length > MAX_QUESTION_CHARS || NOT_A_LOOKUP.test(text) || ARITHMETIC.test(text)) return null;
   if (GITHUB_TOOLS.some((name) => available.has(name)) && namesRepo(text)) return null;
   if (ABOUT_DOCUMENTS.test(text)) {

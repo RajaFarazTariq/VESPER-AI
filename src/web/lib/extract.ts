@@ -1,9 +1,9 @@
 /**
- * Reading uploaded knowledge-base files in the administrator's browser. The free Workers plan gives
- * the server only ~10 ms of CPU per request, far too little to parse a PDF, so files are read here
- * and only their text is sent. Returns units with locations (PDF pages, Word/Markdown sections, CSV
- * row blocks); shared/chunking.ts turns them into passages. The PDF and Word libraries are large, so
- * they load only when such a file is added.
+ * Reading uploaded files in the browser: knowledge-base files (admin panel) and documents attached to a chat
+ * (v0.16.0, lib/documents.ts, with stricter limits). The free Workers plan gives the server only ~10 ms of CPU per
+ * request, far too little to parse a PDF, so files are read here and only their text is sent. Returns units with
+ * locations (PDF pages, Word/Markdown sections, CSV row blocks); shared/chunking.ts turns them into passages. The PDF
+ * and Word libraries are large, so they load only when such a file is added.
  */
 import { csvUnits, markdownUnits, normalizeText, type TextUnit } from "../../shared/chunking";
 import type { KnowledgeDocKind } from "../../shared/types";
@@ -23,6 +23,25 @@ export interface ExtractedFile {
   units: TextUnit[];
 }
 
+/**
+ * Limits and wording for one caller. The knowledge base uses the defaults; documents in chat pass smaller limits
+ * so a file that is too big stops at once, before every page is read.
+ */
+export interface ExtractOptions {
+  /** Largest file (default 50 MB). Checked before anything is read. */
+  maxBytes?: number;
+  /** Most PDF pages (default 1,000), and the message for a PDF with more. */
+  maxPages?: number;
+  tooManyPages?: (pages: number, max: number) => string;
+  /** Most characters of text: a PDF stops being read as soon as it has more. */
+  maxChars?: number;
+  tooMuchText?: string;
+  /** The message for a PDF or Word file without readable text. */
+  noText?: string;
+  /** Stops reading a PDF between pages (the user removed the file). */
+  signal?: AbortSignal;
+}
+
 export function kindOf(fileName: string): FileKind | null {
   const ext = fileName.toLowerCase().split(".").pop() ?? "";
   if (ext === "pdf") return "pdf";
@@ -33,7 +52,7 @@ export function kindOf(fileName: string): FileKind | null {
   return null;
 }
 
-export async function extractFile(file: File, onProgress?: (message: string) => void): Promise<ExtractedFile> {
+export async function extractFile(file: File, onProgress?: (message: string) => void, options: ExtractOptions = {}): Promise<ExtractedFile> {
   const kind = kindOf(file.name);
   if (!kind) {
     throw new ExtractError(
@@ -43,23 +62,36 @@ export async function extractFile(file: File, onProgress?: (message: string) => 
     );
   }
   if (file.size === 0) throw new ExtractError("The file is empty.");
-  if (file.size > MAX_FILE_BYTES) throw new ExtractError("The file is larger than 50 MB. Split it into smaller files.");
+  const maxBytes = options.maxBytes ?? MAX_FILE_BYTES;
+  if (file.size > maxBytes) {
+    throw new ExtractError(`The file is larger than ${Math.round(maxBytes / (1024 * 1024))} MB. Split it into smaller files.`);
+  }
+  // Text, Markdown and Word: far more text than allowed is refused before it is split into passages, which could freeze
+  // the page for seconds on a big file. The exact count is checked on the passages afterwards (spaces and blank lines
+  // that are tidied away rarely make up a third of a file).
+  const notTooLong = (text: string) => {
+    if (options.maxChars !== undefined && text.length > options.maxChars * 1.5) {
+      throw new ExtractError(options.tooMuchText ?? "The file has too much text. Split it into smaller files.");
+    }
+    return text;
+  };
   switch (kind) {
     case "pdf":
-      return extractPdf(file, onProgress);
+      return extractPdf(file, onProgress, options);
     case "docx":
       onProgress?.("Reading the document…");
-      return { kind, pages: null, units: markdownUnits(await docxToMarkdown(file)) };
+      return { kind, pages: null, units: markdownUnits(notTooLong(await docxToMarkdown(file, options.noText))) };
     case "md":
-      return { kind, pages: null, units: markdownUnits(await file.text()) };
+      return { kind, pages: null, units: markdownUnits(notTooLong(await file.text())) };
     case "csv":
       return { kind, pages: null, units: csvUnits(await file.text()) };
     default:
-      return { kind, pages: null, units: [{ location: "", text: await file.text() }] };
+      return { kind, pages: null, units: [{ location: "", text: notTooLong(await file.text()) }] };
   }
 }
 
-async function extractPdf(file: File, onProgress?: (message: string) => void): Promise<ExtractedFile> {
+async function extractPdf(file: File, onProgress: ((message: string) => void) | undefined, options: ExtractOptions): Promise<ExtractedFile> {
+  const maxPages = options.maxPages ?? MAX_PDF_PAGES;
   onProgress?.("Opening the PDF…");
   const [pdfjs, worker] = await Promise.all([import("pdfjs-dist"), import("pdfjs-dist/build/pdf.worker.min.mjs?url")]);
   pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
@@ -76,12 +108,15 @@ async function extractPdf(file: File, onProgress?: (message: string) => void): P
     throw new ExtractError("The PDF couldn't be opened. It may be damaged.");
   }
   try {
-    if (doc.numPages > MAX_PDF_PAGES) {
-      throw new ExtractError(`The PDF has ${doc.numPages} pages; the limit is ${MAX_PDF_PAGES}. Split it into smaller files.`);
+    if (doc.numPages > maxPages) {
+      throw new ExtractError(
+        options.tooManyPages?.(doc.numPages, maxPages) ?? `The PDF has ${doc.numPages} pages; the limit is ${maxPages}. Split it into smaller files.`,
+      );
     }
     const units: TextUnit[] = [];
     let chars = 0;
     for (let n = 1; n <= doc.numPages; n++) {
+      options.signal?.throwIfAborted();
       onProgress?.(`Reading page ${n} of ${doc.numPages}…`);
       const page = await doc.getPage(n);
       const content = await page.getTextContent();
@@ -92,10 +127,13 @@ async function extractPdf(file: File, onProgress?: (message: string) => void): P
       page.cleanup();
       const clean = normalizeText(text);
       chars += clean.length;
+      if (options.maxChars !== undefined && chars > options.maxChars) {
+        throw new ExtractError(options.tooMuchText ?? "The PDF has too much text. Split it into smaller files.");
+      }
       if (clean) units.push({ location: `page ${n}`, text: clean });
     }
     if (chars < Math.max(50, doc.numPages * 20)) {
-      throw new ExtractError("This PDF has no readable text (it looks like scanned images). Scanned PDFs can't be read yet.");
+      throw new ExtractError(options.noText ?? "This PDF has no readable text (it looks like scanned images). Scanned PDFs can't be read yet.");
     }
     return { kind: "pdf", pages: doc.numPages, units };
   } finally {
@@ -104,7 +142,7 @@ async function extractPdf(file: File, onProgress?: (message: string) => void): P
 }
 
 /** Word → Markdown-like text: headings become "#" lines (cited as sections), lists "- ", table rows "a | b". */
-async function docxToMarkdown(file: File): Promise<string> {
+async function docxToMarkdown(file: File, noText?: string): Promise<string> {
   const mammoth = (await import("mammoth/mammoth.browser.min.js")).default;
   let html: string;
   try {
@@ -142,6 +180,6 @@ async function docxToMarkdown(file: File): Promise<string> {
   };
   walk(body);
   const markdown = lines.join("\n").trim();
-  if (!markdown) throw new ExtractError("The Word file has no readable text.");
+  if (!markdown) throw new ExtractError(noText ?? "The Word file has no readable text.");
   return markdown;
 }

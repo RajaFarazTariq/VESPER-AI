@@ -6,6 +6,7 @@ import type {
   ChatStreamEvent,
   ConversationDto,
   LocalPrepareResponse,
+  MessageDocumentDto,
   MessageDto,
   MessageFileDto,
   ProviderId,
@@ -29,6 +30,9 @@ import {
 import { searchableCollections } from "../db/knowledge";
 import { conversationFileCount, conversationHasTables, conversationTables, linkTableFiles, unsentReadyFiles } from "../db/tables";
 import { TABLE_LIMITS } from "../../shared/tables";
+import { DOCUMENT_LIMITS, documentsAllowed, READ_DOCUMENT_TOOL, SEARCH_DOCUMENTS_TOOL } from "../../shared/documents";
+import { conversationDocumentCount, linkChatDocuments, unsentReadyDocuments } from "../db/documents";
+import { conversationDocuments, conversationHasDocuments } from "../db/document-search";
 import { listMemories, selectMemories } from "../db/memories";
 import { D1ProviderStateStore, utcDay } from "../db/provider-state";
 import { getAppSettings, holdResearchSearches, releaseResearchSearches, userMayUseModel, type SearchHold } from "../db/app-settings";
@@ -84,13 +88,24 @@ const chatSchema = z
     research: z.boolean().optional(),
     /** A spreadsheet added beforehand through /api/files (only with a new message, v0.14.0). */
     files: z.array(z.uuid()).max(TABLE_LIMITS.perMessage, "Attach one spreadsheet per message.").optional(),
+    /** Documents added beforehand through /api/documents (only with a new message, v0.16.0). */
+    documents: z
+      .array(z.uuid())
+      .max(DOCUMENT_LIMITS.perMessage, `Attach up to ${DOCUMENT_LIMITS.perMessage} documents per message.`)
+      .optional(),
   })
   .refine((d) => !(d.research && d.images?.length), { message: "Deep research works with text questions only. Remove the images." })
   .refine((d) => !(d.research && d.files?.length), { message: "Deep research works with text questions only. Remove the spreadsheet." })
+  .refine((d) => !(d.research && d.documents?.length), { message: "Deep research works with text questions only. Remove the documents." })
   .refine((d) => !d.files?.length || (!d.regenerate && !d.edit), { message: "Spreadsheets can only be attached to a new message." })
-  .refine((d) => (d.regenerate ? Boolean(d.conversationId) : Boolean(d.message?.trim()) || Boolean(d.images?.length) || Boolean(d.files?.length)), {
-    message: "A non-empty message is required (or conversationId with regenerate).",
-  })
+  .refine((d) => !d.documents?.length || (!d.regenerate && !d.edit), { message: "Documents can only be attached to a new message." })
+  .refine(
+    (d) =>
+      d.regenerate
+        ? Boolean(d.conversationId)
+        : Boolean(d.message?.trim()) || Boolean(d.images?.length) || Boolean(d.files?.length) || Boolean(d.documents?.length),
+    { message: "A non-empty message is required (or conversationId with regenerate)." },
+  )
   .refine((d) => !d.edit || (Boolean(d.conversationId) && !d.regenerate && Boolean(d.message?.trim())), {
     message: "Editing needs a conversationId and the new text (and can't be combined with regenerate).",
   })
@@ -161,7 +176,15 @@ async function consumeImages(db: D1Database, user: SessionUser, count: number, p
 async function prepareTurn(
   c: Context<AppEnv>,
   user: SessionUser,
-  input: { conversationId?: string; message?: string; regenerate?: boolean; edit?: boolean; images?: ChatImageInput[]; files?: MessageFileDto[] },
+  input: {
+    conversationId?: string;
+    message?: string;
+    regenerate?: boolean;
+    edit?: boolean;
+    images?: ChatImageInput[];
+    files?: MessageFileDto[];
+    documents?: MessageDocumentDto[];
+  },
   selection: string,
   extras: {
     tools: AgentTool[];
@@ -186,6 +209,8 @@ async function prepareTurn(
   context: ReturnType<typeof buildContext>;
   /** The chat outgrew the prompt: these older messages should be summarised (then `withSummary` builds the prompt). */
   pendingSummary: { previous: string | null; older: MessageDto[]; withSummary: (summary: string) => ReturnType<typeof buildContext> } | null;
+  /** The chat's documents (D1, D2…), for reading or searching the one a question names first (v0.16.0). */
+  documents: { ref: string; name: string }[];
 }> {
   const db = c.env.DB;
   const config = getConfig(c.env);
@@ -196,7 +221,7 @@ async function prepareTurn(
     conversation = await getConversation(db, user.id, input.conversationId);
     if (!conversation) throw notFound("Conversation");
   } else {
-    const attachedName = input.files?.[0]?.name ?? (input.images?.length ? "Image" : "");
+    const attachedName = input.files?.[0]?.name ?? input.documents?.[0]?.name ?? (input.images?.length ? "Image" : "");
     conversation = await createConversation(db, user.id, deriveTitle(text || attachedName), selection);
     isNew = true;
   }
@@ -225,16 +250,18 @@ async function prepareTurn(
       content: text,
       images: input.images?.map((i) => i.thumb) ?? null,
       files: input.files?.length ? input.files : null,
+      documents: input.documents?.length ? input.documents : null,
     });
-    // The spreadsheets now belong to this chat (deleted with it).
+    // The spreadsheets and documents now belong to this chat (deleted with it).
     if (input.files?.length) await linkTableFiles(db, user.id, input.files.map((f) => f.id), conversation.id);
+    if (input.documents?.length) await linkChatDocuments(db, user.id, input.documents.map((d) => d.id), conversation.id);
   }
   if (conversation.model !== selection) {
     await updateConversation(db, user.id, conversation.id, { model: selection });
     conversation = { ...conversation, model: selection };
   }
 
-  const [history, memories, earlier, githubChanges, tables, googleActions] = await Promise.all([
+  const [history, memories, earlier, githubChanges, tables, googleActions, documents] = await Promise.all([
     listMessages(db, conversation.id, HISTORY_LIMIT),
     user.settings.memoryEnabled ? listMemories(db, user.id) : Promise.resolve(undefined),
     getConversationSummary(db, conversation.id),
@@ -242,6 +269,8 @@ async function prepareTurn(
     // Spreadsheets in this chat (v0.14.0): their overviews go into the prompt.
     extras.research ? Promise.resolve([]) : conversationTables(db, user.id, conversation.id),
     extras.google && !isNew ? conversationGoogleActions(db, user.id, conversation.id) : Promise.resolve([]),
+    // Documents in this chat (v0.16.0): listed in the prompt as D1, D2…, read with the document tools.
+    extras.research ? Promise.resolve([]) : conversationDocuments(db, user.id, conversation.id),
   ]);
   // Memories: pinned ones plus those related to this message and the last few things the user said (v0.10.0).
   const about = history
@@ -264,6 +293,7 @@ async function prepareTurn(
       ...(summary ? { summary } : {}),
       ...(githubChanges.length ? { githubChanges } : {}),
       ...(tables.length ? { tables } : {}),
+      ...(documents.length ? { documents } : {}),
       ...(extras.google ? { google: { account: extras.google.email, actions: googleActions } } : {}),
     });
 
@@ -286,7 +316,14 @@ async function prepareTurn(
     }
   }
   // Until (or unless) a new summary is made: the old way, with any earlier notes.
-  return { conversation, isNew, userMessage, context: buildContext(system, recent, config.maxContextChars, extras.sendImages), pendingSummary };
+  return {
+    conversation,
+    isNew,
+    userMessage,
+    context: buildContext(system, recent, config.maxContextChars, extras.sendImages),
+    pendingSummary,
+    documents: documents.map((d) => ({ ref: d.ref, name: d.name })),
+  };
 }
 
 export const chatRoutes = new Hono<AppEnv>()
@@ -329,6 +366,23 @@ export const chatRoutes = new Hono<AppEnv>()
       }
       if (body.conversationId && (await conversationFileCount(c.env.DB, user.id, body.conversationId)) + newFiles.length > TABLE_LIMITS.perChat) {
         throw new AppError(409, "chat_files_full", `A chat can have up to ${TABLE_LIMITS.perChat} spreadsheets. Start a new chat to add more.`);
+      }
+    }
+
+    // Documents (v0.16.0): each must be the user's own, finished and not sent yet; a chat holds up to 5.
+    const newDocumentIds = [...new Set(body.documents ?? [])];
+    let newDocuments: MessageDocumentDto[] = [];
+    if (newDocumentIds.length > 0) {
+      if (!documentsAllowed(appSettings)) throw new AppError(403, "documents_off", "Documents are switched off. Send the question as text.");
+      newDocuments = await unsentReadyDocuments(c.env.DB, user.id, newDocumentIds);
+      if (newDocuments.length !== newDocumentIds.length) {
+        throw new AppError(409, "document_not_ready", "That document isn't ready to send (or was already sent). Remove it and attach it again.");
+      }
+      if (
+        body.conversationId &&
+        (await conversationDocumentCount(c.env.DB, user.id, body.conversationId)) + newDocuments.length > DOCUMENT_LIMITS.perChat
+      ) {
+        throw new AppError(409, "chat_documents_full", `A chat can have up to ${DOCUMENT_LIMITS.perChat} documents. Start a new chat to add more.`);
       }
     }
 
@@ -431,6 +485,10 @@ export const chatRoutes = new Hono<AppEnv>()
     // Spreadsheets (v0.14.0): the Table analysis tool is offered in chats that have one (while the admin allows it).
     const hasTables =
       newFiles.length > 0 || (body.conversationId !== undefined && (await conversationHasTables(c.env.DB, user.id, body.conversationId)));
+    // Documents (v0.16.0): the document tools are offered in chats that have one (while the admin allows them).
+    const hasDocuments =
+      newDocuments.length > 0 ||
+      (body.conversationId !== undefined && (await conversationHasDocuments(c.env.DB, user.id, body.conversationId)));
     const tools = enabledTools(user.settings, appSettings.disabledTools, {
       web,
       knowledgeReady: knowledge.length > 0,
@@ -439,11 +497,14 @@ export const chatRoutes = new Hono<AppEnv>()
       tables: hasTables && !research && tablesAllowed(appSettings),
       googleCalendar: google?.calendar === true,
       gmailSend: google?.gmailSend === true,
+      documents: hasDocuments && !research && documentsAllowed(appSettings),
     });
+    const offered = new Set(tools.map((t) => t.name));
+    const documentTools = offered.has(SEARCH_DOCUMENTS_TOOL) || offered.has(READ_DOCUMENT_TOOL);
     const timeZone = normalizeTimeZone(body.timeZone);
     let turn: Awaited<ReturnType<typeof prepareTurn>>;
     try {
-      turn = await prepareTurn(c, user, { ...body, files: newFiles }, selection, {
+      turn = await prepareTurn(c, user, { ...body, files: newFiles, documents: newDocuments }, selection, {
         // Research writes from collected material: no tools in its prompt (it uses the knowledge base itself).
         tools: research ? [] : tools,
         adminInstructions: appSettings.botInstructions,
@@ -570,7 +631,15 @@ export const chatRoutes = new Hono<AppEnv>()
             health,
             // Questions that clearly need a look-up are searched first, so the model answers in one request. Not in chats
             // with a spreadsheet: "sales in 2026" is about the file, not the web (the model can still search itself).
-            prefetch: hasTables ? null : planPrefetch(turn.userMessage.content, new Set(tools.map((t) => t.name))),
+            // In chats with documents (v0.16.0) only the documents are read or searched first (see llm/prefetch.ts).
+            prefetch: documentTools
+              ? planPrefetch(turn.userMessage.content, offered, {
+                  attached: Boolean(turn.userMessage.documents?.length),
+                  list: turn.documents,
+                })
+              : hasTables
+                ? null
+                : planPrefetch(turn.userMessage.content, offered),
             events,
           });
         }
@@ -670,13 +739,14 @@ export const chatRoutes = new Hono<AppEnv>()
     }
     if (body.images?.length) throw badRequest("Images work with the cloud models only. Choose Auto or another cloud model.");
     if (body.files?.length) throw badRequest("Spreadsheets work with the cloud models only. Choose Auto or another cloud model.");
+    if (body.documents?.length) throw badRequest("Documents work with the cloud models only. Choose Auto or another cloud model.");
     if (body.research) throw badRequest("Deep research needs a cloud model. Choose Auto or another cloud model.");
     // Local models run on the user's own computer, so they don't count against the daily limit.
     const { botInstructions, localModelsForUsers } = await getAppSettings(c.env.DB, getConfig(c.env));
     if (user.role !== "admin" && !localModelsForUsers) {
       throw new AppError(403, "local_models_off", "Local models aren't available. Choose Auto or another model.");
     }
-    const turn = await prepareTurn(c, user, { ...body, files: undefined }, selection, {
+    const turn = await prepareTurn(c, user, { ...body, files: undefined, documents: undefined }, selection, {
       tools: [],
       adminInstructions: botInstructions,
       timeZone: normalizeTimeZone(body.timeZone),

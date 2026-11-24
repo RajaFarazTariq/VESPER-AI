@@ -9,7 +9,7 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.15.1**.
+Current version: **0.16.0**.
 
 - [What VESPER does](#what-vesper-does)
 - [How VESPER is different](#how-vesper-is-different)
@@ -34,8 +34,10 @@ question needs a look-up, fetches what it needs and cites it:
   links every source under the answer.
 - **Research**: the Research button turns a question into several planned searches and a written brief with a dated
   sources list.
-- **Your documents**: the administrator adds PDFs, Word files, text or web pages to a knowledge base; answers cite
+- **Shared documents**: the administrator adds PDFs, Word files, text or web pages to a knowledge base; answers cite
   "document, page X".
+- **Your own documents**: attach a PDF, Word, text or Markdown file to a chat and ask about it; answers cite "file,
+  page X", and each cited passage can be opened under the answer.
 - **Your spreadsheets**: attach a CSV or Excel file and ask questions about it; totals, averages, counts and trends are
   calculated exactly over every row, the answer says what was calculated, and each result comes with a chart or table
   you can download as CSV.
@@ -140,6 +142,22 @@ choices:
 - The AI provider gets the column overview, three example rows and the results, not the whole file. The rows are kept
   with the chat and deleted with it; a file you remove before sending is deleted at once, one never sent after a day.
 
+**Documents in chat** (v0.16.0)
+- Attach a PDF, Word (.docx), text (.txt) or Markdown (.md) file with the paperclip (or drag or paste it): up to 20 MB
+  and 300 pages, three per message, five per chat, 30 kept per user (about 1,500 pages of text in all), 10 added per
+  user per day (admins unlimited).
+- The file is read in your browser (the same reader as the knowledge base); only its text is uploaded, in passages of
+  about a third of a page, each with its page or section. The original file never leaves your computer.
+- Ask "summarise this", "what does it say about leave?" or "what's on page 12?". The assistant searches the chat's
+  documents for the passages a question needs (keyword search plus Cloudflare's free re-ranker), or reads a document
+  in order for summaries and given pages, and cites them as "(report.pdf, page 12)". Under the answer, each cited
+  passage is a chip; open it to see the text that was used. **Check** works on these answers too.
+- A scanned PDF (pictures of pages) has no text to read: convert it to text first.
+
+**Storage meter** (v0.16.0)
+- Admin panel → App settings → **Storage** shows the database's size against the free plan's 500 MB, and the text kept
+  by the knowledge base, spreadsheets and documents in chat against each one's own cap, with a note when it gets full.
+
 **Google Calendar and Gmail (with your approval)**
 - Settings → Connections → **Connect Google**: pick your Google account and tick what VESPER may use: your calendar's
   events, sending email, or both. This is separate from signing in with Google.
@@ -193,7 +211,7 @@ choices:
 **Accounts and administration**
 - Google sign-in for everyone (no passwords stored); GitHub sign-in as a backup for administrators.
 - Admin panel: users (block, delete, personal daily limits), sign-ups open or closed, daily limits for messages,
-  images, voice, research, answer checks and spreadsheets, instructions for the assistant, tools on or off for everyone, which
+  images, voice, research, answer checks, spreadsheets and documents, instructions for the assistant, tools on or off for everyone, which
   models users may pick, the knowledge base, feedback, provider status.
 - Light, dark and system themes (dark by default), a responsive mobile layout and a logo that follows the theme.
 
@@ -202,9 +220,9 @@ choices:
 ```mermaid
 flowchart LR
   B["Browser<br/>(React web app)"] -- "HTTPS, streamed answers" --> W["Cloudflare Worker<br/>(API)"]
-  W --> D[("D1 database<br/>chats, memories, knowledge base, spreadsheets")]
+  W --> D[("D1 database<br/>chats, memories, knowledge base, spreadsheets, documents")]
   W --> P["Free AI providers<br/>Groq · Gemini · OpenRouter · Mistral · Workers AI"]
-  W --> T["Tools<br/>web search · pages · weather · Wikipedia · currency · GitHub · table analysis"]
+  W --> T["Tools<br/>web search · pages · weather · Wikipedia · currency · GitHub · table analysis · your documents"]
   B -. "optional" .-> O["Ollama on your own computer"]
 ```
 
@@ -240,7 +258,7 @@ More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 |---|---|---|---|
 | Hosting + API | Cloudflare Workers (Free plan) | 100,000 requests/day, 10 ms CPU per request | Requests fail until 00:00 UTC. **No billing.** |
 | Web app files | Workers static assets | Unlimited requests | n/a |
-| Database | Cloudflare D1 | 5 GB storage, 5M rows read/day, 100k rows written/day | Queries fail until 00:00 UTC. **No billing.** Spreadsheet calculations have their own daily share (2M rows by default), so they can't use it all up. |
+| Database | Cloudflare D1 | 500 MB per database (5 GB per account, up to 10 databases), 5M rows read/day, 100k rows written/day | Queries fail until 00:00 UTC (a full database refuses writes until space is freed). **No billing.** Spreadsheet calculations have their own daily share (2M rows by default), so they can't use it all up. Spreadsheets, the knowledge base and documents in chat each have a storage cap, and the admin panel shows how full the database is. |
 | AI | Groq free plan | ~30 req/min, ~1,000 req/day, 8K tokens/min per model | VESPER switches provider |
 | AI | Google Gemini free tier | Per-project limits (Flash-Lite allows the most) | VESPER switches provider |
 | AI | OpenRouter `:free` models | 20 req/min, 50 req/day | VESPER switches provider |
@@ -388,6 +406,8 @@ only when the admin turns on **Local models for users**.
 - **Spreadsheets**: use the paperclip to attach a CSV or Excel file, wait until its chip shows the number of rows,
   then ask about it. Follow-up questions in the same chat keep using it. Each result shows as a chart or table under
   the answer, with **Download CSV**.
+- **Documents**: use the paperclip to attach a PDF, Word, text or Markdown file (up to three per message), wait until
+  its chip is ready, then ask about it. Open a cited passage's chip under the answer to see where it came from.
 - **Under each answer**: copy, read aloud, 👍/👎, **Check** (when the answer used sources) and regenerate.
 - **GitHub changes**: ask for an issue, a comment or a pull request; read the card under the answer, then **Approve**
   or **Reject**.
@@ -400,7 +420,7 @@ only when the admin turns on **Local models for users**.
 - **Users**: usage per day, personal limits, block or delete.
 - **App settings**: sign-ups, daily limits, instructions for the assistant, tools for everyone, web search cap,
   trusted/blocked websites, images, spreadsheets (with the daily share of database reads for calculations and
-  today's use), voice, deep research, answer checks, local models, GitHub for users, GitHub changes for users with
+  today's use), documents in chat, the storage meter, voice, deep research, answer checks, local models, GitHub for users, GitHub changes for users with
   a daily limit, and Google Calendar and Gmail for users with daily limits for emails and events.
 - **Models**: which models users may pick, with friendly names.
 - **Knowledge**: folders, documents and web pages for the knowledge base.
@@ -475,6 +495,9 @@ losing data; a test applies every migration over existing data to check nothing 
   approval card, exactly as shown (or as you edited it), once, by its owner only, within the daily limits. The prepared
   text is kept only until you decide (at most 24 hours); afterwards a log line (subject or title, who or when, outcome)
   stays 90 days. Calendar text is passed to the model as data, never as instructions.
+- **Documents in chat**: only the text is stored (the file itself stays on your computer), with the chat (deleted with
+  it), visible only to its owner. Searches are limited to the documents of that one chat. The text is passed to the
+  model as data, never as instructions.
 - **What leaves the server**: your messages (and any file text or code VESPER reads for an answer, for spreadsheets
   their column overview, three example rows and the calculated results, and the calendar events it reads and the
   emails it prepares) go to the AI provider that writes the answer. A 👍/👎 sends a copy of that question and answer to the administrator's feedback
@@ -511,6 +534,8 @@ losing data; a test applies every migration over existing data to check nothing 
 - **Google asks to reconnect**: while VESPER's Google app is in testing, Google ends the connection every 7 days;
   reconnect in Settings → Connections. **"Gmail (or Google Calendar) isn't switched on"**: the administrator needs to
   enable that API in Google Cloud.
+- **A document is refused**: the message says why (over 20 MB or 300 pages, no readable text such as a scanned PDF,
+  or not a PDF, Word .docx, text or Markdown file). Split a long file, or save an old .doc as .docx.
 - **A spreadsheet is refused**: the message says why (over 10 MB or 50,000 rows, password-protected, or not a CSV,
   Excel or OpenDocument file). Remove what you don't need or save a copy as .xlsx or .csv.
 - **Numbers or dates read wrongly**: check the column in the file (one type per column works best). Dates like
