@@ -41,6 +41,36 @@ export const LEAK_GUARD_MESSAGE =
   "Opening web pages is switched off for the rest of this answer because it contains private repository content " +
   "(this keeps the code from being sent to other websites). Answer without it, or tell the user to ask in a new message.";
 
+/**
+ * Tool-call syntax that models write as plain text when they can't call tools (v0.15.1): Gemma
+ * ("<|tool_call>call:name(…)<tool_call|>"), Qwen/Hermes ("<tool_call>…</tool_call>"), Llama ("<|python_tag|>…",
+ * "<function=name>…</function>") and Mistral ("[TOOL_CALLS]…"). Nothing runs from such text.
+ */
+const LEAKED_TOOL_CALLS = [
+  /<\|tool_call\|?>[\s\S]*?(?:<\|?\/?tool_call\|?>|$)/g,
+  /<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g,
+  /<\|python_tag\|>[\s\S]*?(?:<\|eom_id\|>|<\|eot_id\|>|$)/g,
+  /<function=[\w.-]+>[\s\S]*?(?:<\/function>|$)/g,
+  /\[TOOL_CALLS\][\s\S]*$/g,
+];
+export const LEAKED_TOOL_NOTE =
+  "(Part of this answer couldn't be done: the backup model that finished it can't use tools. Ask again for anything that is missing.)";
+
+/** The answer without leaked tool-call syntax (code blocks are left as they are), or null when there was none. */
+export function withoutLeakedToolCalls(text: string): string | null {
+  let changed = false;
+  const cleaned = text
+    .split(/(```[\s\S]*?```)/)
+    .map((part) => {
+      if (part.startsWith("```")) return part;
+      let out = part;
+      for (const pattern of LEAKED_TOOL_CALLS) out = out.replace(pattern, () => ((changed = true), ""));
+      return out;
+    })
+    .join("");
+  return changed ? cleaned.replace(/\n{3,}/g, "\n\n").trim() : null;
+}
+
 /** The knowledge-base search to run alongside a web look-up, or null when it isn't needed. */
 function pairedKnowledgeCall(call: ToolCall, tools: Map<string, AgentTool>): ToolCall | null {
   if (!PAIRED_WEB_TOOLS.has(call.name) || !tools.has("search_knowledge")) return null;
@@ -300,6 +330,9 @@ export async function runAgent(input: {
 
     if (route.toolCalls.length === 0) {
       result.status = "complete";
+      // A fallback model without tools may have written a tool call as text: it didn't run, so say so plainly.
+      const cleaned = specs.length ? withoutLeakedToolCalls(result.text) : null;
+      if (cleaned !== null) result.text = `${cleaned}\n\n_${LEAKED_TOOL_NOTE}_`.trim();
       const used = (names: Set<string>) => result.tools.some((t) => names.has(t.name) && t.status === "done");
       if (used(CHECKED_TOOLS) || used(GITHUB_TOOL_NAMES)) result.evidence = packEvidence(kept);
       if (used(CHECKED_TOOLS)) {

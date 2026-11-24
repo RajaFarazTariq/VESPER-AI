@@ -31,6 +31,8 @@ const MAX_DESCRIPTION = 4_000;
 const MAX_LOCATION = 300;
 /** The longest period read at once (days), and the most events listed. */
 const MAX_RANGE_DAYS = 92;
+/** Google allows reminders up to 4 weeks before an event. */
+const MAX_REMINDER_MINUTES = 40_320;
 const MAX_LIST = 50;
 
 /** Tools whose results hold text written by other people, where a planted instruction could hide. */
@@ -644,6 +646,12 @@ const calendarCreateEvent = define({
       description: { type: "string", description: "Notes for the event (optional, plain text)." },
       attendees: { type: "array", items: { type: "string" }, description: "Guests' email addresses: only ones the user gave you (optional)." },
       meet: { type: "boolean", description: "Add a Google Meet video link." },
+      reminders: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          'Pop-up reminders (optional, up to 5): each a local time ("2026-11-25T23:00") or minutes before the start ("30"). Use this when the user asks to be reminded; don\'t create a separate event for a reminder.',
+      },
     },
     required: ["title", "start"],
   },
@@ -657,6 +665,11 @@ const calendarCreateEvent = define({
     description: z.string().max(MAX_DESCRIPTION).optional(),
     attendees: z.union([z.array(z.string().max(300)).max(MAX_RECIPIENTS * 2), z.string().max(4_000)]).optional(),
     meet: z.boolean().optional(),
+    // "30" and 30 both mean minutes before; anything else is a local time.
+    reminders: z
+      .array(z.union([z.number(), z.string().trim().max(40)]).transform((v) => (typeof v === "string" && /^\d{1,5}$/.test(v) ? Number(v) : v)))
+      .max(5)
+      .optional(),
   }),
   async run(args, ctx): Promise<ToolOutput> {
     const { g, account } = await access(ctx, "calendar");
@@ -703,6 +716,23 @@ const calendarCreateEvent = define({
         const times = eventTimes(e, timeZone);
         return times ? [{ title: clip(e.summary?.trim() || "(no title)", 120), start: times.start, end: times.end, allDay: times.allDay }] : [];
       });
+    // Reminders: Google counts them in minutes before the start, and for an all-day event from midnight in the
+    // CALENDAR's own time zone, so a reminder given as a local time is converted from that point.
+    const startsAt = allDay ? zonedInstant(event.start, "00:00", existing.calendarTimeZone ?? timeZone) : event.from;
+    const reminders = (args.reminders ?? []).map((r) => {
+      let minutes: number;
+      if (typeof r === "number") minutes = r;
+      else {
+        const at = parseWhen(r, timeZone);
+        if (!at || at.time === null) throw new ToolInputError(`Write a reminder as minutes before (e.g. 30) or a local time (2026-11-25T23:00); got "${clip(r, 40)}".`);
+        minutes = Math.round((startsAt - zonedInstant(at.date, at.time, timeZone)) / 60_000);
+      }
+      if (!Number.isInteger(minutes) || minutes < 0 || minutes > MAX_REMINDER_MINUTES) {
+        throw new ToolInputError("A reminder must be at the start or before it, at most 4 weeks before.");
+      }
+      const at = wallClock(startsAt - minutes * 60_000, timeZone);
+      return { at: `${at.date}T${at.time}`, minutes };
+    });
     const preview: GoogleEventPreviewDto = {
       title: args.title,
       start: event.start,
@@ -716,6 +746,7 @@ const calendarCreateEvent = define({
       meet: args.meet === true,
       clashes,
       account: account.email,
+      ...(reminders.length ? { reminders: [...new Map(reminders.map((r) => [r.minutes, r])).values()].sort((a, b) => b.minutes - a.minutes) } : {}),
     };
     const warnings = googleWarnings("event", {
       used: ctx.turn?.used ?? [],
@@ -726,7 +757,8 @@ const calendarCreateEvent = define({
     const when = describeWhen(preview);
     return prepared(ctx, {
       title: args.title,
-      target: clip(`${when}${timeZone !== "UTC" ? ` (${timeZone})` : ""}`, 200),
+      // An all-day event is the same days everywhere: no time zone in its log line.
+      target: clip(`${when}${!allDay && timeZone !== "UTC" ? ` (${timeZone})` : ""}`, 200),
       warnings,
       payload: { kind: "event", event: preview },
       what: `the event "${clip(args.title, 80)}" on ${when}${attendees.length ? ` with ${attendees.length} guest${attendees.length === 1 ? "" : "s"}` : ""}${clashes.length ? ` (it clashes with ${clashes.length} existing event${clashes.length === 1 ? "" : "s"}, shown on the card)` : ""}`,
@@ -802,6 +834,7 @@ export function eventBody(e: GoogleEventPreviewDto, requestId: string): Record<s
     end: e.allDay ? { date: addDays(e.end, 1) } : { dateTime: `${e.end}:00`, timeZone: e.timeZone },
     ...(e.attendees.length ? { attendees: e.attendees.map((email) => ({ email })) } : {}),
     ...(e.meet ? { conferenceData: { createRequest: { requestId, conferenceSolutionKey: { type: "hangoutsMeet" } } } } : {}),
+    ...(e.reminders?.length ? { reminders: { useDefault: false, overrides: e.reminders.map((r) => ({ method: "popup", minutes: r.minutes })) } } : {}),
   };
 }
 

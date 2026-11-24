@@ -36,6 +36,16 @@ export function eventWhen(e: Pick<GoogleEventPreviewDto, "start" | "end" | "allD
   return sd === ed ? `${dayText(sd)} · ${st}–${et}` : `${dayText(sd)} ${st} – ${dayText(ed)} ${et}`;
 }
 
+/** "1 hour before", "1 day 2 hours before", "at the start". */
+export function beforeText(minutes: number): string {
+  if (minutes === 0) return "at the start";
+  const d = Math.floor(minutes / 1440);
+  const h = Math.floor((minutes % 1440) / 60);
+  const m = minutes % 60;
+  const parts = [d ? `${d} day${d === 1 ? "" : "s"}` : "", h ? `${h} hour${h === 1 ? "" : "s"}` : "", m ? `${m} minute${m === 1 ? "" : "s"}` : ""].filter(Boolean);
+  return `${parts.join(" ")} before`;
+}
+
 const splitAddresses = (text: string) =>
   text
     .split(/[,;\s]+/)
@@ -259,10 +269,26 @@ function EventView({ event }: { event: GoogleEventPreviewDto }) {
         <dd>
           {eventWhen(event)}
           {!event.allDay && event.timeZone !== deviceZone ? <span className="text-[var(--text-soft)]"> ({event.timeZone})</span> : null}
-          {event.calendarTimeZone ? (
-            <span className="block text-xs text-[var(--text-soft)]">Your calendar uses {event.calendarTimeZone}; Google shows it there at the matching time.</span>
+          {event.calendarTimeZone && !event.allDay ? (
+            <span className="block text-xs text-[var(--text-soft)]">
+              Your Google Calendar is set to {event.calendarTimeZone}, so it shows this at the same moment in that time zone. To see your local times
+              there, change the time zone in Google Calendar's settings.
+            </span>
           ) : null}
         </dd>
+        {event.reminders?.length ? (
+          <>
+            <dt className="text-xs text-[var(--text-soft)] sm:pt-px">Reminder{event.reminders.length === 1 ? "" : "s"}</dt>
+            <dd>
+              {event.reminders.map((r) => (
+                <span key={r.minutes} className="block">
+                  {eventWhen({ start: r.at, end: r.at, allDay: false }).replace(/–.*$/, "")}{" "}
+                  <span className="text-[var(--text-soft)]">({beforeText(r.minutes)})</span>
+                </span>
+              ))}
+            </dd>
+          </>
+        ) : null}
         {event.location ? (
           <>
             <dt className="text-xs text-[var(--text-soft)] sm:pt-px">Where</dt>

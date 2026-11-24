@@ -247,6 +247,11 @@ export interface GoogleEventPreviewDto {
   meet: boolean;
   /** Events already in the calendar at that time (up to 5). */
   clashes: { title: string; start: string; end: string; allDay: boolean }[];
+  /**
+   * Pop-up reminders (v0.15.1): when each fires (local time in `timeZone`, "2026-11-25T23:00") and the minutes before
+   * the start that Google stores. Absent: the calendar's default reminders.
+   */
+  reminders?: { at: string; minutes: number }[];
   /** The Google account whose calendar it goes in. */
   account: string;
 }

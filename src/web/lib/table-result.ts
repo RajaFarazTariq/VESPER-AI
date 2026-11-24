@@ -105,7 +105,7 @@ export function withUnit(text: string, unit: string | undefined): string {
   return `${text} ${unit}`;
 }
 
-/** A group's name: "(empty)", "Q1 2026", "March 2026" / "Mar 26", "Week of 2 Mar 2026", "Monday", "14:00". */
+/** A group's name: "(empty)", "Q1 2026", "March 2026" / "Mar 2026", "Week of 2 Mar 2026", "Monday", "14:00". */
 export function groupLabel(v: TableCell, column: TableResultColumnDto, style: "long" | "short", locale?: string): string {
   if (v === null || v === "") return "(empty)";
   const s = String(v);
@@ -119,7 +119,8 @@ export function groupLabel(v: TableCell, column: TableResultColumnDto, style: "l
     case "month": {
       const m = /^(\d{4})-(\d{2})$/.exec(s);
       if (!m) return s;
-      const options: Intl.DateTimeFormatOptions = style === "long" ? { month: "long", year: "numeric" } : { month: "short", year: "2-digit" };
+      // The axis writes the whole year: "Jan 26" could be read as 26 January.
+      const options: Intl.DateTimeFormatOptions = style === "long" ? { month: "long", year: "numeric" } : { month: "short", year: "numeric" };
       return formatDateParts(Number(m[1]), Number(m[2]), 1, options, locale);
     }
     case "week":
@@ -184,7 +185,7 @@ export interface ChartPoint {
   key: string;
   /** For the tooltip and the table ("March 2026"). */
   label: string;
-  /** For the axis ("Mar 26"). */
+  /** For the axis ("Mar 2026"). */
   short: string;
 }
 
