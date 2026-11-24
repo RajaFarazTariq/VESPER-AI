@@ -167,6 +167,27 @@ export const api = {
     request<{ verification: VerificationDto }>(`/api/answer-check/${encodeURIComponent(messageId)}`, { method: "POST", body: "{}" }),
   transcribe: (body: { audio: string; mimeType: string; seconds: number; language?: SpeechLanguage }) =>
     request<TranscriptionDto>("/api/media/transcribe", { method: "POST", body: JSON.stringify(body) }),
+  /**
+   * VESPER Agent's studio voice (v0.17.1): the text read by the server's natural voice, as MP3 bytes. Errors are the
+   * server's ApiError (e.g. 429 studio_voice_limit: today's characters are used up).
+   */
+  speech: async (text: string, signal?: AbortSignal): Promise<ArrayBuffer> => {
+    let response: Response;
+    try {
+      response = await fetch("/api/media/speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "audio/mpeg" },
+        body: JSON.stringify({ text }),
+        credentials: "same-origin",
+        ...(signal ? { signal } : {}),
+      });
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      throw new ApiError(0, "network", "Can't reach the server. Check your connection.");
+    }
+    if (!response.ok) throw await toApiError(response);
+    return response.arrayBuffer();
+  },
   /** Spreadsheets (v0.14.0): the overview first, then the rows in blocks, then ready. Removing works until it's sent. */
   files: {
     create: (body: { name: string; kind: TableFileKind; bytes: number; tables: TableSheetInput[] }, signal?: AbortSignal) =>
@@ -226,6 +247,8 @@ export const api = {
         tables?: { rowsReadToday: number };
         /** How full the database is (v0.16.0). */
         storage?: StorageDto;
+        /** Characters the studio voice read today for the whole app (v0.17.1). */
+        studioVoice?: { charsToday: number };
       }>(
         "/api/admin/settings",
       ),

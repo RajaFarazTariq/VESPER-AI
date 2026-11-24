@@ -8,9 +8,11 @@ import type {
   FeedbackSummaryDto,
   ModelsResponse,
   StorageDto,
+  StudioSpeaker,
   ToolInfoDto,
   UserModelOption,
 } from "../../shared/types";
+import { speakerLabel, STUDIO_SPEAKERS, STUDIO_VOICE_MAX_CHARS_PER_DAY } from "../../shared/voice";
 import { api, ApiError } from "../api/client";
 import { FEEDBACK_LABELS, formatRelative, providerLabel } from "../lib/format";
 import { KnowledgeTab } from "./KnowledgeTab";
@@ -409,6 +411,9 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const [tableRowsText, setTableRowsText] = useState("");
   const [tableRowsRead, setTableRowsRead] = useState(0);
   const [documentsText, setDocumentsText] = useState("");
+  /** VESPER Agent's studio voice (v0.17.1): characters per day for the whole app, and how many were read today. */
+  const [studioCharsText, setStudioCharsText] = useState("");
+  const [studioCharsToday, setStudioCharsToday] = useState(0);
   const [storage, setStorage] = useState<StorageDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -439,6 +444,8 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
         setEmailsText(String(r.settings.emailsPerDay));
         setEventsText(String(r.settings.eventsPerDay));
         setDocumentsText(String(r.settings.documentsPerDay));
+        setStudioCharsText(String(r.settings.studioVoiceCharsPerDay));
+        setStudioCharsToday(r.studioVoice?.charsToday ?? 0);
         setStorage(r.storage ?? null);
       },
       (e: unknown) => setError(errorText(e, "Could not load settings.")),
@@ -473,6 +480,9 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
   const eventsValid = eventsText.trim() !== "" && Number.isInteger(eventsPerDay) && eventsPerDay >= 0 && eventsPerDay <= 100;
   const documentsPerDay = Number(documentsText);
   const documentsValid = documentsText.trim() !== "" && Number.isInteger(documentsPerDay) && documentsPerDay >= 0 && documentsPerDay <= 1_000;
+  const studioChars = Number(studioCharsText);
+  const studioCharsValid =
+    studioCharsText.trim() !== "" && Number.isInteger(studioChars) && studioChars >= 0 && studioChars <= STUDIO_VOICE_MAX_CHARS_PER_DAY;
   const next: AppSettingsDto = {
     ...draft,
     defaultDailyLimit: limitValid ? limit : draft.defaultDailyLimit,
@@ -490,6 +500,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
     emailsPerDay: emailsValid ? emailsPerDay : draft.emailsPerDay,
     eventsPerDay: eventsValid ? eventsPerDay : draft.eventsPerDay,
     documentsPerDay: documentsValid ? documentsPerDay : draft.documentsPerDay,
+    studioVoiceCharsPerDay: studioCharsValid ? studioChars : draft.studioVoiceCharsPerDay,
   };
   // Research can use the day's searches above the ones kept for normal chat.
   const researchSearches = next.webSearchDailyLimit - next.researchSearchReserve;
@@ -519,6 +530,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
       setEmailsText(String(settings.emailsPerDay));
       setEventsText(String(settings.eventsPerDay));
       setDocumentsText(String(settings.documentsPerDay));
+      setStudioCharsText(String(settings.studioVoiceCharsPerDay));
       onNotice("App settings saved.", "info");
     } catch (e) {
       setError(errorText(e, "Could not save settings."));
@@ -840,6 +852,43 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
           />
           <span>(admins unlimited; Groq's free plan allows 8 hours a day for the whole app)</span>
         </label>
+        <div className="ml-12 space-y-2 border-t border-[var(--border)] pt-3">
+          <Toggle
+            checked={draft.studioVoiceEnabled}
+            onChange={(studioVoiceEnabled) => setDraft({ ...draft, studioVoiceEnabled })}
+            label="Studio voice"
+            hint="A natural female voice for VESPER Agent from Cloudflare Workers AI. Each 1,000 characters use about 1,364 of the 10,000 free daily AI units, which the backup chat model, speech-to-text and the knowledge-base search also use. After the daily limit, the device's own voice is used."
+          />
+          <label className="ml-12 flex flex-wrap items-center gap-2 text-xs text-[var(--text-soft)]">
+            Characters per day (whole app)
+            <input
+              value={studioCharsText}
+              onChange={(e) => setStudioCharsText(e.target.value.replace(/[^\d]/g, ""))}
+              inputMode="numeric"
+              aria-label="Studio voice characters per day (whole app)"
+              className={`w-24 rounded-lg border bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)] ${studioCharsValid ? "border-[var(--border)]" : "border-[var(--danger)]"}`}
+            />
+            <span>
+              Used today: {studioCharsToday.toLocaleString()} of {saved.studioVoiceCharsPerDay.toLocaleString()} (at most{" "}
+              {STUDIO_VOICE_MAX_CHARS_PER_DAY.toLocaleString()}; resets 00:00 UTC)
+            </span>
+          </label>
+          <label className="ml-12 flex flex-wrap items-center gap-2 text-xs text-[var(--text-soft)]">
+            Voice
+            <select
+              value={draft.studioVoiceSpeaker}
+              onChange={(e) => setDraft({ ...draft, studioVoiceSpeaker: e.target.value as StudioSpeaker })}
+              aria-label="Studio voice"
+              className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-sm text-[var(--text)]"
+            >
+              {STUDIO_SPEAKERS.map((speaker) => (
+                <option key={speaker} value={speaker}>
+                  {speakerLabel(speaker)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
       <Field label="Tools available to everyone" hint="A tool switched off here is removed for all users, including you.">
         <div className="space-y-2">
@@ -885,6 +934,7 @@ function SettingsTab({ onNotice }: { onNotice: Props["onNotice"] }) {
             !emailsValid ||
             !eventsValid ||
             !documentsValid ||
+            !studioCharsValid ||
             saving
           }
           className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-text)] disabled:opacity-40"

@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { AppSettingsDto } from "../../shared/types";
+import type { AppSettingsDto, StudioSpeaker } from "../../shared/types";
+import { STUDIO_SPEAKERS, STUDIO_VOICE_MAX_CHARS_PER_DAY } from "../../shared/voice";
 import type { AppConfig } from "../env";
 
 const HOST = /^(?=.{3,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -69,6 +70,9 @@ export const appSettingsSchema = z.object({
   eventsPerDay: z.number().int().min(0).max(100),
   documentsEnabled: z.boolean(),
   documentsPerDay: z.number().int().min(0).max(1_000),
+  studioVoiceEnabled: z.boolean(),
+  studioVoiceCharsPerDay: z.number().int().min(0).max(STUDIO_VOICE_MAX_CHARS_PER_DAY),
+  studioVoiceSpeaker: z.enum(STUDIO_SPEAKERS as [StudioSpeaker, ...StudioSpeaker[]]),
 });
 
 type Key = keyof AppSettingsDto;
@@ -118,6 +122,11 @@ export function defaultAppSettings(config: AppConfig): AppSettingsDto {
     // Documents in chat (v0.16.0): on for everyone (they only read the user's own file); 10 documents per user per day.
     documentsEnabled: true,
     documentsPerDay: 10,
+    // VESPER Agent's studio voice (v0.17.1): about 20–30 short spoken answers a day for the whole app, which leaves
+    // most of Workers AI's free daily allowance for the backup chat model, speech-to-text and the re-ranker.
+    studioVoiceEnabled: true,
+    studioVoiceCharsPerDay: 3_000,
+    studioVoiceSpeaker: "luna",
   };
 }
 

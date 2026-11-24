@@ -1,9 +1,22 @@
 /**
  * VESPER Agent (v0.17.0), the browser side that needs nothing from the page itself: the greeting, how a reply being
- * written is cut into sentences to speak, and when a listening turn is over.
+ * written is cut into sentences to speak, and when a listening turn is over. v0.17.1: the studio voice's requests and
+ * the best female device voice.
  */
 import { describe, expect, it } from "vitest";
-import { agentGreeting, LISTEN_TIMING, loudness, nextSentences, SilenceDetector, speechChunks, type ListenVerdict } from "../src/web/lib/agent-voice";
+import {
+  agentGreeting,
+  LISTEN_TIMING,
+  loudness,
+  nextSentences,
+  nextUtcMidnight,
+  rankVoices,
+  SilenceDetector,
+  speechChunks,
+  takeChunks,
+  voiceScore,
+  type ListenVerdict,
+} from "../src/web/lib/agent-voice";
 
 const at = (hour: number) => new Date(2026, 10, 25, hour, 30);
 
@@ -170,5 +183,107 @@ describe("listening", () => {
     expect(d.feed(0.5, 2000)).toBe("listening");
     expect(d.feed(0.05, 3000)).toBe("listening");
     expect(d.feed(0.05, 4000)).toBe("silence");
+  });
+});
+
+// ------------------------------------------------------------------ v0.17.1: the studio voice and the device voices
+
+describe("requests for the studio voice", () => {
+  const s = (n: number, letter = "a") => `${letter.repeat(n - 1)}.`;
+
+  it("starts with the first sentence alone, then joins sentences up to about 250 characters", () => {
+    const sentences = [s(40, "a"), s(100, "b"), s(100, "c"), s(100, "d"), s(30, "e")];
+    const { chunks, rest } = takeChunks(sentences, { starting: true, final: false });
+    expect(chunks[0]).toBe(sentences[0]);
+    expect(chunks[1]).toBe(`${sentences[1]} ${sentences[2]}`);
+    // The last group (d + e, 131 characters) waits for more text...
+    expect(chunks).toHaveLength(2);
+    expect(rest).toEqual([`${sentences[3]} ${sentences[4]}`]);
+    // ...and goes when the reply is done.
+    expect(takeChunks(rest, { starting: false, final: true })).toEqual({ chunks: [`${sentences[3]} ${sentences[4]}`], rest: [] });
+  });
+
+  it("keeps the first piece short and never sends more than 600 characters", () => {
+    const long = `${"word ".repeat(150).trim()}.`; // 750 characters
+    const { chunks } = takeChunks([long, "Then this."], { starting: true, final: true });
+    expect(chunks[0]!.length).toBeLessThanOrEqual(200);
+    expect(chunks.every((c) => c.length <= 600)).toBe(true);
+    expect(chunks.join(" ")).toBe(`${long} Then this.`);
+  });
+
+  it("sends a group that is already long enough without waiting", () => {
+    expect(takeChunks([s(260)], { starting: false, final: false })).toEqual({ chunks: [s(260)], rest: [] });
+    expect(takeChunks([], { starting: true, final: true })).toEqual({ chunks: [], rest: [] });
+  });
+
+  it("knows when the day's allowance comes back (00:00 UTC)", () => {
+    expect(new Date(nextUtcMidnight(Date.UTC(2026, 10, 25, 23, 59, 59))).toISOString()).toBe("2026-11-26T00:00:00.000Z");
+    expect(new Date(nextUtcMidnight(Date.UTC(2026, 11, 31, 0, 0, 0))).toISOString()).toBe("2027-01-01T00:00:00.000Z");
+  });
+});
+
+describe("the best female device voice", () => {
+  const voice = (name: string, lang = "en-US", localService = true, isDefault = false) => ({ name, lang, localService, default: isDefault });
+
+  it("Chrome on Windows: Google's female voices first, Zira before the male voices", () => {
+    const chrome = [
+      voice("Microsoft David - English (United States)", "en-US", true, true),
+      voice("Microsoft Mark - English (United States)"),
+      voice("Microsoft Zira - English (United States)"),
+      voice("Google Deutsch", "de-DE", false),
+      voice("Google US English", "en-US", false),
+      voice("Google UK English Female", "en-GB", false),
+      voice("Google UK English Male", "en-GB", false),
+    ];
+    expect(rankVoices(chrome).map((v) => v.name)).toEqual([
+      "Google UK English Female",
+      "Google US English",
+      "Microsoft Zira - English (United States)",
+      "Google UK English Male",
+      "Microsoft David - English (United States)",
+      "Microsoft Mark - English (United States)",
+    ]);
+  });
+
+  it("Opera on Windows (no Google voices): Zira, never David or Mark", () => {
+    const opera = [voice("Microsoft David - English (United States)", "en-US", true, true), voice("Microsoft Mark"), voice("Microsoft Zira")];
+    expect(rankVoices(opera)[0]!.name).toBe("Microsoft Zira");
+  });
+
+  it("Edge: a natural online female voice", () => {
+    const edge = [
+      voice("Microsoft Guy Online (Natural) - English (United States)", "en-US", false),
+      voice("Microsoft AndrewMultilingual Online (Natural) - English (United States)", "en-US", false),
+      voice("Microsoft Zira - English (United States)"),
+      voice("Microsoft AvaMultilingual Online (Natural) - English (United States)", "en-US", false),
+      voice("Microsoft Sonia Online (Natural) - English (United Kingdom)", "en-GB", false),
+    ];
+    const ranked = rankVoices(edge).map((v) => v.name);
+    expect(ranked[0]).toMatch(/AvaMultilingual|Sonia/);
+    expect(ranked.slice(-2).every((n) => /Guy|Andrew/.test(n))).toBe(true);
+  });
+
+  it("Apple and Android voices; only the reply's language; a male voice only when there's nothing else", () => {
+    expect(rankVoices([voice("Daniel", "en-GB"), voice("Fred"), voice("Samantha"), voice("Karen", "en-AU")])[0]!.name).toBe("Samantha");
+    expect(rankVoices([voice("en-us-x-iom-local"), voice("en-us-x-sfg-local")])[0]!.name).toBe("en-us-x-sfg-local");
+    expect(rankVoices([voice("Google Deutsch", "de-DE", false), voice("Google US English", "en-US", false)]).map((v) => v.name)).toEqual([
+      "Google US English",
+    ]);
+    expect(rankVoices([voice("Microsoft David")])[0]!.name).toBe("Microsoft David");
+    expect(rankVoices([voice("Anna", "de-DE")])[0]!.name).toBe("Anna"); // no English voice at all: whatever there is
+    expect(voiceScore(voice("Microsoft Zira"))).toBeLessThan(voiceScore(voice("Google US English", "en-US", false)));
+  });
+
+  it("Urdu: a female Urdu voice first", () => {
+    const urdu = [
+      voice("Microsoft Asad Online (Natural) - Urdu (Pakistan)", "ur-PK", false),
+      voice("Microsoft Salman Online (Natural) - Urdu (India)", "ur-IN", false),
+      voice("Microsoft Uzma Online (Natural) - Urdu (Pakistan)", "ur-PK", false),
+      voice("Microsoft Gul Online (Natural) - Urdu (India)", "ur-IN", false),
+      voice("Google US English", "en-US", false),
+    ];
+    const ranked = rankVoices(urdu, "ur").map((v) => v.name);
+    expect(ranked.slice(0, 2)).toEqual(["Microsoft Uzma Online (Natural) - Urdu (Pakistan)", "Microsoft Gul Online (Natural) - Urdu (India)"]);
+    expect(ranked).toHaveLength(4);
   });
 });

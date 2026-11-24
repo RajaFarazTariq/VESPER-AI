@@ -938,3 +938,54 @@ describe("agent mode (v0.17.0)", () => {
     expect(research.json.error.message).toContain("Deep research isn't available in VESPER Agent");
   });
 });
+
+describe("studio voice for VESPER Agent (v0.17.1)", () => {
+  /** A stand-in for the Workers AI binding: records the calls and answers with a few MP3-looking bytes (or fails). */
+  function fakeAi(fail = false) {
+    const calls: { model: string; input: any }[] = [];
+    const ai = {
+      run: async (model: string, input: any) => {
+        calls.push({ model, input });
+        if (fail) throw new Error("model busy");
+        return new Response(new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3])).body;
+      },
+    };
+    // Tests switch Workers AI off by default (vitest.config.ts); here it is on, with this stand-in.
+    return { calls, env: { AI: ai, WORKERS_AI_ENABLED: "true" } as unknown as ExtraEnv };
+  }
+  const speak = (text: string, cookie: string, extra: ExtraEnv) =>
+    call("/api/media/speech", { method: "POST", body: JSON.stringify({ text }), cookie, env: extra });
+
+  it("reads text aloud with the chosen female voice, within the app's daily characters, and gives them back on failure", async () => {
+    const admin = await login();
+    const user = await login("ann");
+    const { calls, env: withAi } = fakeAi();
+    expect((await call("/api/media/features", { cookie: user, env: withAi })).json.voice.studio).toEqual({ enabled: true, speaker: "luna" });
+    expect((await call("/api/media/features", { cookie: user })).json.voice.studio.enabled).toBe(false); // no Workers AI
+
+    const ok = await speak("Hello, I'm VESPER.", user, withAi);
+    expect(ok.response.status).toBe(200);
+    expect(ok.response.headers.get("content-type")).toBe("audio/mpeg");
+    expect(calls).toEqual([{ model: "@cf/deepgram/aura-1", input: { text: "Hello, I'm VESPER.", speaker: "luna" } }]);
+
+    // The admin picks another voice and a small daily cap; the admin panel shows what was used today.
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ studioVoiceSpeaker: "asteria", studioVoiceCharsPerDay: 30 }), cookie: admin });
+    expect((await call("/api/admin/settings", { cookie: admin })).json.studioVoice).toEqual({ charsToday: 18 });
+    expect((await speak("Twelve chars", user, withAi)).response.status).toBe(200);
+    expect(calls.at(-1)!.input.speaker).toBe("asteria");
+    const over = await speak("This one is too long.", user, withAi);
+    expect([over.response.status, over.json.error.code]).toEqual([429, "studio_voice_limit"]);
+
+    // A failed request doesn't use the day's characters.
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ studioVoiceCharsPerDay: 100 }), cookie: admin });
+    const failed = await speak("Not spoken.", user, fakeAi(true).env);
+    expect([failed.response.status, failed.json.error.code]).toEqual([502, "studio_voice_failed"]);
+    expect((await call("/api/admin/settings", { cookie: admin })).json.studioVoice).toEqual({ charsToday: 30 });
+
+    expect((await speak("x".repeat(601), user, withAi)).response.status).toBe(400);
+    expect((await speak("Hi", user, {})).json.error.code).toBe("studio_voice_unavailable");
+    await call("/api/admin/settings", { method: "PUT", body: JSON.stringify({ studioVoiceEnabled: false }), cookie: admin });
+    expect((await speak("Hi", user, withAi)).json.error.code).toBe("studio_voice_off");
+    expect((await call("/api/media/features", { cookie: user, env: withAi })).json.voice.studio.enabled).toBe(false);
+  });
+});

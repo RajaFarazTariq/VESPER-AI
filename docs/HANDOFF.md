@@ -22,8 +22,13 @@ Read this first when resuming work. Last updated: **2026-11-25**. No secrets are
   for v0.14.1 (charts + CSV download). He asks for work to be "perfect and accurate".
 - **GitHub set-up (unchanged):** "VESPER AI Reader" (read-only) and "VESPER AI Actions" (public since 2026-11-21);
   GitHub for users ON, GitHub changes for users ON (10/day). Test PR #15 and issue #14 are closed (owner, 2026-11-24).
-- **v0.17.0 built 2026-11-25, handed to the owner to push** (branch `release/v0.17.0-agent-mode`): **VESPER Agent**,
-  the owner's "Jarvis-style" mode (his spec pasted 2026-11-25; section 0). Owner's live test still to do.
+- **v0.17.1 built 2026-11-25, handed to the owner to push** (branch `release/v0.17.1-agent-voice`): **Agent voice**.
+  Owner: "I need a beautiful lady voice for Agent" → chose **both**: Cloudflare studio voice (Aura "Luna", daily
+  app-wide cap 3,000 characters) with the best female device voice as fallback. His laptop browsers: **Chrome and
+  Opera** on Windows (their own voices are robotic; Google UK English Female is the best of them); phone: Android.
+- **v0.17.0 live** (/api/health 0.17.0 on 2026-11-25; commit `a475a5b`, merged by the owner): **VESPER Agent**, the
+  owner's "Jarvis-style" mode (section 0). His local copy was still on the release branch: told him to switch to
+  main and pull. Owner's live test still to do.
 - **v0.16.0 live** (PR #21, merge `2c81069`; /api/health 0.16.0 on 2026-11-25): Documents in chat + storage meter
   (section 0, "Previous"). Owner's live test still to do. Owner asked for it ("Proceed and use more agents to work faster and accurate") and for
   the storage meter ("Yes, add it").
@@ -51,7 +56,28 @@ Read this first when resuming work. Last updated: **2026-11-25**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-25)
 
-**v0.17.0 built 2026-11-25, handed to the owner to push** (branch `release/v0.17.0-agent-mode`). The owner pasted a
+**v0.17.1 built 2026-11-25, handed to the owner to push** (branch `release/v0.17.1-agent-voice`): the agent's voice.
+1. **Server**: `POST /api/media/speech` (text ≤ 600 chars → MP3, Workers AI `@cf/deepgram/aura-1`, speaker from the
+   admin setting, default Luna; female speakers offered: luna, asteria, stella, athena, hera), app-wide daily
+   character cap counted atomically in `rate_limits` (`voice:studio_chars`, refunded on failure), 60/min per user;
+   `features.voice.studio`; admin settings `studioVoiceEnabled` (on) / `studioVoiceCharsPerDay` (3,000, max 7,000) /
+   `studioVoiceSpeaker`; admin panel shows today's characters. MeloTTS (cheaper) was retired by Cloudflare on
+   2026-11-20, so Aura (≈1,364 Neurons per 1,000 characters) is used. No migration.
+2. **Agent**: Web Audio playback of the studio voice (next piece fetched while one plays; core follows the real
+   loudness), automatic fallback to the best female device voice (after the cap until 00:00 UTC, Urdu, errors), voice
+   menu with device voices (female first, Recommended, Test), choice remembered per device.
+3. **Review fixes** (one independent review; server correct): Safari/iOS only starts audio inside a tap → the audio
+   output is unlocked in every tap and nothing is requested unless it is running (else the device voice, no request,
+   so iPhones can't use up the cap unheard); 10 s timeout per request → device voice; prefetch only one piece ahead (at
+   most 2 requests open, so stopping wastes little); watch timer stops the source; Urdu uses the female-first ranking
+   (Uzma/Gul); device pieces re-cut to ≈220 characters. Not testable offline: whether real iOS Safari counts the
+   launcher tap (if not, the first reply uses the device voice and Luna starts from the next tap).
+   358 tests; headless Edge with stubbed studio audio (order, ≤ 2 requests open, timeout fallback at 10.7 s, no request
+   while the output isn't running, 0 audio contexts and mic tracks after closing).
+4. **Owner's live test after deploy**: open the agent → the greeting in Luna's voice; ask two questions; voice menu →
+   Test a device voice; Admin → App settings → Voice: "Used today" goes up.
+
+**Previous: v0.17.0** (live 2026-11-25, branch `release/v0.17.0-agent-mode`). The owner pasted a
 spec for a "Jarvis-style AI agent mode" next to the unchanged chat: floating orb, dimmed screen with an animated
 cyan core (rings, HUD, boot-up, greeting), text or voice, reacts while listening/thinking/speaking, floating text not
 bubbles, does tasks and confirms them, ✕/Esc collapses it. His task list was left as "[list your tasks]" → it uses
@@ -1001,7 +1027,8 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Google Calendar + Gmail with approval (v0.15.0)**: connect Google (Calendar and/or sending email, PKCE, encrypted tokens), read the calendar and find free time exactly, events and emails prepared on cards (email editable) and added/sent only on Approve, daily limits, migration 0014 | ✅ live (v0.15.0, PR #19, merge `c204b7f`); set up 2026-11-24/25; live test OK (event, edited email) |
 | **Google and fallback fixes (v0.15.1)**: reminders on events (calendar's own zone for all-day), fallback models without tools told so and leaked tool text removed, admin sees rejection reasons, all-day cards without zone notes, chart years, no invented currency | ✅ live (v0.15.1, PR #20, merge `7e7a196`; /api/health 2026-11-25); owner's live test OK (birthday + reminder card, added) |
 | **Documents in chat + storage meter (v0.16.0)**: PDF/Word/text/Markdown on 📎, read in the browser, passages per chat with FTS5 (migration 0015), `search_documents` + `read_document`, page citations, excerpt on source chips, prefetch for messages about the documents, limits (20 MB / 300 pages, 3 per message, 5 per chat, 30 + 5 M chars per user, 10/day), admin switch + daily limit; admin storage meter (D1 size vs 500 MB); spreadsheet cap 1,000 M → 120 M characters | ✅ live (v0.16.0, PR #21, merge `2c81069`, deployed 2026-11-25; 330 tests); owner's live test pending |
-| **VESPER Agent (v0.17.0)**: the owner's "Jarvis-style" mode next to the unchanged chat: glowing orb → dimmed screen with an animated core (rings, HUD, boot-up, spoken greeting), text or voice (silence detection → Whisper), Hands-free, spoken sentence-by-sentence replies, floating text, tool steps, approval cards in the HUD, Open in chat, Esc/✕/Back; `agent` flag → short spoken-reply rules; no new settings or migration | 🔨 built 2026-11-25 (348 tests, typecheck, build, headless Edge with a fake microphone); to push |
+| **VESPER Agent (v0.17.0)**: the owner's "Jarvis-style" mode next to the unchanged chat: glowing orb → dimmed screen with an animated core (rings, HUD, boot-up, spoken greeting), text or voice (silence detection → Whisper), Hands-free, spoken sentence-by-sentence replies, floating text, tool steps, approval cards in the HUD, Open in chat, Esc/✕/Back; `agent` flag → short spoken-reply rules; no new settings or migration | ✅ live (v0.17.0, commit `a475a5b`, /api/health 2026-11-25; 348 tests); owner's live test pending |
+| **Agent voice (v0.17.1)**: studio voice from Workers AI (Deepgram Aura, female speakers, default Luna) via `POST /api/media/speech` with an app-wide daily character cap (3,000) and refunds; Web Audio playback with prefetch; best female device voice as fallback; voice menu with Test; admin switch, cap, speaker and "Used today" | 🔨 built 2026-11-25 (358 tests, typecheck, build, headless Edge with stubbed studio audio); to push |
 | **Next: owner's "Jarvis" plan** (Talk mode → "Hey Vesper" → only my voice → reminders/briefing → Windows tray app → Android app); other options: second D1 database for files, Excel in the knowledge base, change/cancel events | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
@@ -1042,7 +1069,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 348 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 358 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```
