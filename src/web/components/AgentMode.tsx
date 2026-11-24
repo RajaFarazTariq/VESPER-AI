@@ -1,9 +1,20 @@
 import { ArrowUp, AudioLines, MessageSquareText, Mic, Square, Volume2, VolumeX, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from "react";
 import { AUTO_MODEL, type ConversationDto, type FeaturesDto, type UserSettings } from "../../shared/types";
+import { speakerLabel, STUDIO_VOICE_MAX_CHARS } from "../../shared/voice";
 import { api, ApiError } from "../api/client";
 import { useChat, type UiMessage } from "../hooks/useChat";
-import { agentGreeting, loudness, nextSentences, SilenceDetector, speechChunks, type ListenVerdict } from "../lib/agent-voice";
+import {
+  agentGreeting,
+  loudness,
+  nextSentences,
+  nextUtcMidnight,
+  rankVoices,
+  SilenceDetector,
+  speechChunks,
+  takeChunks,
+  type ListenVerdict,
+} from "../lib/agent-voice";
 import { answerSources, chipLabels, githubLineLinks, plainDocumentLinks, tidyCitations } from "../lib/format";
 import { canRecord, canSpeak, RecordingError, speakableText, stopSpeaking, type Recording } from "../lib/voice";
 import { AgentCore, type AgentCoreState } from "./AgentCore";
@@ -27,6 +38,12 @@ function toBase64(blob: Blob): Promise<string> {
 }
 
 type EndReason = Exclude<ListenVerdict, "listening">;
+
+/** Web Audio (the microphone meter and the studio voice), where the browser has it. */
+const audioContextClass = (): typeof AudioContext | undefined =>
+  typeof window === "undefined"
+    ? undefined
+    : (window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
 
 /**
  * One listening turn. Records like the message box's microphone (lib/voice.ts) and measures the loudness on the same
@@ -86,7 +103,7 @@ class AgentListener {
 
   /** The loudness meter. Without one (an old browser), the microphone button and the time limit still end the turn. */
   private meter(maxSeconds: number, onLevel: (level: number) => void): void {
-    const Context = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    const Context = audioContextClass();
     if (!Context) return;
     try {
       const audio = new Context();
@@ -176,84 +193,405 @@ class AgentListener {
   }
 }
 
-// ------------------------------------------------------------------ VESPER's voice (the device's built-in voices)
+// ------------------------------------------------------------------ VESPER's voice: the studio voice or the device's
 
 const URDU = /[؀-ۿ]/;
+const STUDIO_UNTIL_KEY = "vesper-agent-studio-until";
+/** Today's studio characters are used up: remembered until 00:00 UTC, so it isn't asked again for every sentence. */
+const studioLimited = () => {
+  try {
+    return Date.now() < Number(localStorage.getItem(STUDIO_UNTIL_KEY) ?? 0);
+  } catch {
+    return false;
+  }
+};
+const rememberStudioLimit = () => {
+  try {
+    localStorage.setItem(STUDIO_UNTIL_KEY, String(nextUtcMidnight(Date.now())));
+  } catch {
+    // storage unavailable: asked again next time
+  }
+};
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** A studio request that hasn't answered by then is given up (the device voice speaks instead). */
+const STUDIO_TIMEOUT_MS = 10_000;
+
+/** The request's own signal, also aborted after `ms` (a timer of our own where AbortSignal.any/timeout are missing). */
+function withTimeout(signal: AbortSignal, ms: number): AbortSignal {
+  const S = AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal; timeout?: (ms: number) => AbortSignal };
+  if (typeof S.any === "function" && typeof S.timeout === "function") return S.any([signal, S.timeout(ms)]);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException("The studio voice took too long.", "TimeoutError")), ms);
+  signal.addEventListener(
+    "abort",
+    () => {
+      clearTimeout(timer);
+      controller.abort(signal.reason);
+    },
+    { once: true },
+  );
+  return controller.signal;
+}
+
+/** Which voice speaks: the studio voice (while it can), or a device voice by name (null: the best female one). */
+interface VoiceChoice {
+  studio: boolean;
+  deviceName: string | null;
+}
+type StudioIssue = "limit" | "off";
+/** One piece to say, in order: by the studio voice (its audio asked for ahead) or by the device. */
+type Piece = { text: string; studio: boolean; controller?: AbortController; audio?: Promise<AudioBuffer> };
+
+/** The device voice to use: the chosen one, else the best female voice for English. */
+function deviceVoice(name: string | null): SpeechSynthesisVoice | undefined {
+  const voices = window.speechSynthesis.getVoices();
+  return (name ? voices.find((v) => v.name === name) : undefined) ?? rankVoices(voices)[0];
+}
 
 /**
- * Sentences spoken one after another while the reply is still being written. Starting stops the chat's Read aloud
- * (and Read aloud stops this, since it cancels the device's speech). `onChange` says whether it is talking.
+ * VESPER's voice. Sentences arrive while the reply is still being written and are said in order: by the studio voice
+ * (natural, from the server: a few sentences per request, the next asked for while one plays, at most two at a time)
+ * or by the device's own voice (text with Urdu letters, a device voice chosen, or after a studio error: then the rest
+ * of that reply). Starting stops the chat's Read aloud. `onChange` says whether it is talking, `onLevel` how loud the
+ * studio voice is (for the core).
  */
 class AgentVoice {
+  /** Bumped by stop(): everything from earlier speech is ignored. */
   private run = 0;
-  private readonly queued = new Set<SpeechSynthesisUtterance>();
-  /** Looks whether the device still talks: speech cancelled elsewhere, or that never started, may send no events. */
-  private watch: ReturnType<typeof setInterval> | null = null;
-  private quietSince: number | null = null;
+  /** Sentences for the studio voice not in a request yet, and the pieces to say, in order. */
+  private pending: string[] = [];
+  private queue: Piece[] = [];
+  /** The piece being said (or whose audio is awaited). */
+  private current: Piece | null = null;
+  private talking = false;
+  /** After a studio error: the device voice for the rest of this reply. */
+  private deviceForReply = false;
+  /** Switched off or not available on the server: the device voice for this session. */
+  private studioOff = false;
+  private choice: VoiceChoice = { studio: false, deviceName: null };
+  private utterance: SpeechSynthesisUtterance | null = null;
+  private deviceWatch: ReturnType<typeof setInterval> | null = null;
+  private audio: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private source: AudioBufferSourceNode | null = null;
+  private playWatch: ReturnType<typeof setTimeout> | null = null;
+  private meterTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly onChange: (speaking: boolean) => void) {}
+  constructor(
+    private readonly events: {
+      onChange: (speaking: boolean) => void;
+      onLevel: (level: number) => void;
+      onStudioIssue: (issue: StudioIssue) => void;
+    },
+  ) {}
 
   get speaking(): boolean {
-    return this.queued.size > 0;
+    return this.talking;
   }
 
-  say(markdown: string): void {
-    if (!canSpeak()) return;
+  setChoice(choice: VoiceChoice): void {
+    this.choice = choice;
+  }
+
+  /**
+   * Safari and phones let audio start only from a tap, so every tap handler calls this: the studio voice's output is
+   * created and started right then. A refusal means no studio voice for this session. Resolves once it runs (or after
+   * half a second).
+   */
+  unlock(force = false): Promise<void> {
+    if (!force && (!this.choice.studio || this.studioOff)) return Promise.resolve();
+    const audio = this.context();
+    if (!audio || audio.state === "running") return Promise.resolve();
+    const started = audio.resume().catch(() => {
+      this.studioOff = true;
+      this.events.onStudioIssue("off");
+    });
+    return Promise.race([started, wait(500)]);
+  }
+
+  /** A sentence of a reply still being written (more may follow). */
+  add(markdown: string): void {
     const text = speakableText(markdown);
-    const parts = speechChunks(text);
-    if (parts.length === 0) return;
-    if (this.queued.size === 0) stopSpeaking();
-    const run = this.run;
-    const urdu = URDU.test(text);
-    const voice = urdu ? window.speechSynthesis.getVoices().find((v) => v.lang.toLowerCase().startsWith("ur")) : undefined;
-    for (const part of parts) {
-      const u = new SpeechSynthesisUtterance(part);
-      if (urdu) u.lang = voice?.lang ?? "ur-PK";
-      if (voice) u.voice = voice;
-      // Kept in the set until it ends: some browsers drop the end event of an utterance nothing refers to.
-      const done = () => {
-        if (run !== this.run || !this.queued.delete(u)) return;
-        if (this.queued.size === 0) this.finish();
-      };
-      u.onend = done;
-      u.onerror = done;
-      this.queued.add(u);
-      window.speechSynthesis.speak(u);
+    if (!text) return;
+    if (this.studioFor(text)) {
+      this.pending.push(text);
+      this.pump(false);
+      return;
     }
-    this.onChange(true);
-    this.watchQuiet();
+    // What waits for the studio voice comes first.
+    this.pump(true);
+    for (const part of speechChunks(text)) this.queue.push({ text: part, studio: false });
+    this.next();
+  }
+
+  /** Nothing more for now: what waits for the studio voice is asked for too. */
+  flush(): void {
+    this.pump(true);
+  }
+
+  /** A whole text at once (the greeting, a note, the voice test). */
+  say(markdown: string): void {
+    this.add(markdown);
+    this.flush();
   }
 
   stop(): void {
-    const was = this.queued.size > 0;
-    if (was && canSpeak()) window.speechSynthesis.cancel();
-    this.finish(was);
-  }
-
-  /** Nothing more to say: forget the queue (events of what was queued are ignored from now on). */
-  private finish(changed = true): void {
     this.run++;
-    this.queued.clear();
-    if (this.watch !== null) clearInterval(this.watch);
-    this.watch = null;
-    if (changed) this.onChange(false);
+    for (const piece of [this.current, ...this.queue]) piece?.controller?.abort();
+    this.current = null;
+    this.queue = [];
+    this.pending = [];
+    this.deviceForReply = false;
+    if (this.source) {
+      const source = this.source;
+      this.source = null;
+      source.onended = null;
+      try {
+        source.stop();
+      } catch {
+        // not started yet
+      }
+    }
+    if (this.playWatch) clearTimeout(this.playWatch);
+    this.playWatch = null;
+    this.stopMeter();
+    if (this.deviceWatch) clearInterval(this.deviceWatch);
+    this.deviceWatch = null;
+    if (this.utterance) {
+      this.utterance = null;
+      if (canSpeak()) window.speechSynthesis.cancel();
+    }
+    this.setTalking(false);
   }
 
-  /** Silent for about a second while sentences are still queued: they won't be spoken, so the voice is done. */
-  private watchQuiet(): void {
-    if (this.watch !== null) return;
-    this.quietSince = null;
-    this.watch = setInterval(() => {
-      if (this.queued.size === 0) return this.finish(false);
-      const synth = window.speechSynthesis;
+  /** Closing: stop, and let the audio output go. */
+  dispose(): void {
+    this.stop();
+    void this.audio?.close().catch(() => {});
+    this.audio = null;
+    this.analyser = null;
+  }
+
+  /**
+   * Whether the studio voice reads this. Only while its output runs: otherwise (no tap yet on Safari or a phone) the
+   * device voice says the rest of this reply and nothing is asked for, so no characters are spent unheard.
+   */
+  private studioFor(text: string): boolean {
+    if (!this.choice.studio || this.studioOff || this.deviceForReply || URDU.test(text) || studioLimited()) return false;
+    if (this.audio?.state === "running") return true;
+    this.deviceForReply = true;
+    return false;
+  }
+
+  private setTalking(on: boolean): void {
+    if (on === this.talking) return;
+    this.talking = on;
+    // Nothing of VESPER's is being said yet: stop the chat's Read aloud.
+    if (on) stopSpeaking();
+    this.events.onChange(on);
+  }
+
+  private pump(final: boolean): void {
+    if (this.pending.length === 0) return;
+    const starting = !this.current && this.queue.length === 0;
+    // Something playing and nothing after it yet: ask for what has arrived now, so there's no gap.
+    const ahead = this.current !== null && this.queue.length === 0;
+    const { chunks, rest } = takeChunks(this.pending, { starting, final: final || ahead, max: STUDIO_VOICE_MAX_CHARS });
+    this.pending = rest;
+    for (const text of chunks) this.queue.push({ text, studio: true });
+    this.prefetch();
+    this.next();
+  }
+
+  /**
+   * Ask for the next studio piece's audio while one plays: one ahead only, so at most two requests are open (the
+   * piece playing or awaited, and the next) and little is paid for if VESPER is interrupted.
+   */
+  private prefetch(): void {
+    const next = this.queue.find((p) => p.studio);
+    if (!next || next.audio) return;
+    if (this.audio?.state !== "running") this.switchToDevice(null);
+    else this.request(next);
+  }
+
+  private request(piece: Piece): void {
+    const audio = this.audio!;
+    const controller = new AbortController();
+    piece.controller = controller;
+    piece.audio = api.speech(piece.text, withTimeout(controller.signal, STUDIO_TIMEOUT_MS)).then((bytes) => audio.decodeAudioData(bytes));
+    piece.audio.catch(() => {}); // looked at when its turn comes
+  }
+
+  private next(): void {
+    if (this.current) return;
+    const piece = this.queue.shift();
+    if (!piece) {
+      // Keep talking with what has arrived, or stop.
+      if (this.pending.length > 0) this.pump(true);
+      else this.setTalking(false);
+      return;
+    }
+    this.current = piece;
+    this.setTalking(true);
+    // What waits for the studio voice is asked for while this piece plays.
+    if (this.queue.length === 0 && this.pending.length > 0) this.pump(true);
+    this.prefetch();
+    const run = this.run;
+    const done = () => {
+      if (run !== this.run) return;
+      this.current = null;
+      this.next();
+    };
+    if (piece.studio) void this.playStudio(piece, run, done);
+    else this.speakDevice(piece.text, done);
+  }
+
+  private async playStudio(piece: Piece, run: number, done: () => void): Promise<void> {
+    try {
+      if (!piece.audio) {
+        if (this.audio?.state !== "running") throw new Error("The audio output isn't running.");
+        this.request(piece);
+      }
+      const buffer = await piece.audio!;
+      const audio = this.audio;
+      if (run !== this.run) return;
+      if (!audio || !this.analyser) throw new Error("No audio output.");
+      // Stopped meanwhile (a phone call, another output): one short try, else the device voice.
+      if (audio.state !== "running") await Promise.race([audio.resume().catch(() => {}), wait(300)]);
+      if (run !== this.run) return;
+      if (audio.state !== "running") throw new Error("The audio output isn't running.");
+      const source = audio.createBufferSource();
+      source.buffer = buffer;
+      source.connect(this.analyser);
+      this.source = source;
+      const end = () => {
+        if (this.source !== source) return;
+        this.source = null;
+        if (this.playWatch) clearTimeout(this.playWatch);
+        this.playWatch = null;
+        this.stopMeter();
+        done();
+      };
+      source.onended = end;
+      // Never "speaking" for ever if the output is held up; and held-up audio mustn't play later over the device voice.
+      this.playWatch = setTimeout(() => {
+        source.onended = null;
+        try {
+          source.stop();
+        } catch {
+          // not started
+        }
+        end();
+      }, buffer.duration * 1000 + 2000);
+      source.start();
+      this.startMeter();
+    } catch (error) {
+      if (run !== this.run) return;
+      this.useDevice(error, piece);
+      done();
+    }
+  }
+
+  /** A studio error: this piece and everything after it in this reply are said by the device, in the same order. */
+  private useDevice(error: unknown, failed: Piece): void {
+    if (error instanceof ApiError) {
+      if (error.code === "studio_voice_limit") {
+        rememberStudioLimit();
+        this.events.onStudioIssue("limit");
+      } else if (error.status === 403 || error.status === 404 || error.status === 503) {
+        this.studioOff = true;
+        this.events.onStudioIssue("off");
+      }
+    }
+    this.switchToDevice(failed);
+  }
+
+  /** This piece (if any) and everything after it in this reply: the device voice, in the same order and device-sized pieces. */
+  private switchToDevice(failed: Piece | null): void {
+    this.deviceForReply = true;
+    for (const piece of this.queue) piece.controller?.abort();
+    const texts = [...(failed ? [failed.text] : []), ...this.queue.map((p) => p.text), ...this.pending];
+    this.pending = [];
+    this.queue = texts.flatMap((text) => speechChunks(text).map((part) => ({ text: part, studio: false })));
+  }
+
+  private speakDevice(text: string, done: () => void): void {
+    if (!canSpeak()) return done();
+    const synth = window.speechSynthesis;
+    const u = new SpeechSynthesisUtterance(text);
+    if (URDU.test(text)) {
+      const voices = synth.getVoices();
+      const urdu = voices.some((v) => v.lang.toLowerCase().startsWith("ur")) ? rankVoices(voices, "ur")[0] : undefined;
+      u.lang = urdu?.lang ?? "ur-PK";
+      if (urdu) u.voice = urdu;
+    } else {
+      const voice = deviceVoice(this.choice.deviceName);
+      if (voice) {
+        u.voice = voice;
+        u.lang = voice.lang;
+      }
+    }
+    let finished = false;
+    const end = () => {
+      if (finished) return;
+      finished = true;
+      if (this.deviceWatch) clearInterval(this.deviceWatch);
+      this.deviceWatch = null;
+      if (this.utterance === u) this.utterance = null;
+      done();
+    };
+    u.onend = end;
+    u.onerror = end;
+    // Kept until it ends: some browsers drop the end event of an utterance nothing refers to.
+    this.utterance = u;
+    synth.speak(u);
+    // Speech cancelled elsewhere, or that never starts, may send no events: silent for a second means it's over.
+    let quietSince: number | null = null;
+    this.deviceWatch = setInterval(() => {
       if (synth.speaking || synth.pending) {
-        this.quietSince = null;
+        quietSince = null;
         return;
       }
-      const now = Date.now();
-      this.quietSince ??= now;
-      if (now - this.quietSince >= 1000) this.finish();
+      quietSince ??= Date.now();
+      if (Date.now() - quietSince >= 1000) end();
     }, 500);
+  }
+
+  /** One audio output per session: the studio voice goes through a meter (the core follows its loudness). */
+  private context(): AudioContext | null {
+    if (this.audio && this.audio.state !== "closed") return this.audio;
+    const Context = audioContextClass();
+    if (!Context) return null;
+    try {
+      const audio = new Context();
+      const analyser = audio.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.connect(audio.destination);
+      this.audio = audio;
+      this.analyser = analyser;
+      return audio;
+    } catch {
+      return null;
+    }
+  }
+
+  private startMeter(): void {
+    const analyser = this.analyser;
+    if (!analyser) return;
+    if (this.meterTimer !== null) clearInterval(this.meterTimer);
+    const samples = new Float32Array(analyser.fftSize);
+    let shown = 0;
+    this.meterTimer = setInterval(() => {
+      analyser.getFloatTimeDomainData(samples);
+      shown = Math.max(loudness(samples), shown * 0.8);
+      this.events.onLevel(Math.round(shown * 100) / 100);
+    }, 50);
+  }
+
+  private stopMeter(): void {
+    if (this.meterTimer !== null) clearInterval(this.meterTimer);
+    this.meterTimer = null;
+    this.events.onLevel(0);
   }
 }
 
@@ -282,7 +620,7 @@ type LevelStore = ReturnType<typeof levelStore>;
 
 function LiveCore({ levels, state, size }: { levels: LevelStore; state: AgentCoreState; size: number }) {
   const level = useSyncExternalStore(levels.subscribe, levels.get, levels.get);
-  return <AgentCore state={state} level={state === "listening" ? level : 0} size={size} />;
+  return <AgentCore state={state} level={state === "listening" || state === "speaking" ? level : 0} size={size} />;
 }
 
 /** The core's size: about 220 px on a phone, up to 320 px on a large screen, smaller on short screens. */
@@ -312,6 +650,38 @@ const saveVoiceOut = (on: boolean) => {
     // storage unavailable: still works for this visit
   }
 };
+/** The voice chosen in the voice menu (v0.17.1): "studio", or a device voice's name. */
+const CHOICE_KEY = "vesper-agent-voice-choice";
+const readChoice = () => {
+  try {
+    return localStorage.getItem(CHOICE_KEY);
+  } catch {
+    return null;
+  }
+};
+const saveChoice = (choice: string) => {
+  try {
+    localStorage.setItem(CHOICE_KEY, choice);
+  } catch {
+    // storage unavailable: still works for this visit
+  }
+};
+const TEST_SENTENCE = "Hello, I'm VESPER. How can I help?";
+
+/** The device's voices (they load a moment after the page: "voiceschanged"). */
+function useDeviceVoices(): SpeechSynthesisVoice[] {
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>(() => (canSpeak() ? window.speechSynthesis.getVoices() : []));
+  useEffect(() => {
+    if (!canSpeak()) return;
+    const synth = window.speechSynthesis;
+    const update = () => setVoices(synth.getVoices());
+    update();
+    synth.addEventListener("voiceschanged", update);
+    return () => synth.removeEventListener("voiceschanged", update);
+  }, []);
+  return voices;
+}
+
 const prefersCalm = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 const finePointer = () => window.matchMedia?.("(pointer: fine)").matches !== false;
 
@@ -353,6 +723,26 @@ function shownText(m: UiMessage): string {
 
 const plainOf = (e: Exchange) => e.text ?? (e.reply ? speakableText(tidyCitations(e.reply.content)) || e.reply.error || "" : "");
 
+/** One voice in the voice menu. */
+function VoiceOption({ value, checked, title, note, onChoose }: { value: string; checked: boolean; title: string; note: string; onChoose: (value: string) => void }) {
+  return (
+    <label className={`flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 hover:bg-[var(--ag-cyan-soft)] ${checked ? "bg-[var(--ag-cyan-soft)]" : ""}`}>
+      <input
+        type="radio"
+        name="agent-voice"
+        value={value}
+        checked={checked}
+        onChange={() => onChoose(value)}
+        className="mt-0.5 shrink-0 accent-[var(--ag-cyan)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ag-cyan)]"
+      />
+      <span className="min-w-0">
+        <span className="block text-[13px] text-[var(--ag-text)] [overflow-wrap:anywhere]">{title}</span>
+        <span className="block text-[11px] text-[var(--ag-text-soft)]">{note}</span>
+      </span>
+    </label>
+  );
+}
+
 export interface AgentModeProps {
   /** For the greeting; without a name it greets without one. */
   firstName: string | null;
@@ -387,17 +777,24 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
   const [errorPulse, setErrorPulse] = useState(false);
   /** What the screen reader hears of the reply (the state is announced separately). */
   const [replyNote, setReplyNote] = useState("");
+  /** The voice menu (v0.17.1): the choice, and why the studio voice isn't speaking right now. */
+  const [voiceChoice, setVoiceChoice] = useState(readChoice);
+  const [studioIssue, setStudioIssue] = useState<"limit" | "off" | null>(() => (studioLimited() ? "limit" : null));
+  const [menuOpen, setMenuOpen] = useState(false);
   const size = useCoreSize();
+  const deviceVoices = useDeviceVoices();
 
   const dialog = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);
   const cardsPanel = useRef<HTMLElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const menuButton = useRef<HTMLButtonElement>(null);
   const listener = useRef<AgentListener | null>(null);
   const phaseRef = useRef<Phase>("idle");
   const closingRef = useRef(false);
   const alive = useRef(true);
   const [levels] = useState(levelStore);
-  const [voice] = useState(() => new AgentVoice(setSpeaking));
+  const [voice] = useState(() => new AgentVoice({ onChange: setSpeaking, onLevel: levels.set, onStudioIssue: setStudioIssue }));
   /** The turn being spoken: which one (counted by your messages), how much of its reply was handed to the voice. */
   const spoken = useRef({ turn: -1, upTo: 0, muted: false });
   /** Hands-free: listen again once this turn's reply has been written and spoken. */
@@ -408,9 +805,19 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
   const wasStreaming = useRef(false);
   const pulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const testRun = useRef(0);
 
   const sttOn = Boolean(features?.voice.speechToText) && canRecord();
-  const ttsOn = Boolean(features?.voice.enabled) && canSpeak();
+  // The studio voice (v0.17.1): switched on by the admin, with Web Audio to play it.
+  const studio = features?.voice.enabled && features.voice.studio?.enabled && audioContextClass() ? features.voice.studio : null;
+  const ttsOn = Boolean(features?.voice.enabled) && (canSpeak() || studio !== null);
+  const rankedVoices = useMemo(() => rankVoices(deviceVoices), [deviceVoices]);
+  // Studio when it's there and not declined (the default), else the chosen device voice, else the best female one.
+  const useStudio = studio !== null && studioIssue !== "off" && (voiceChoice === null || voiceChoice === "studio");
+  const chosenDevice = voiceChoice && voiceChoice !== "studio" && rankedVoices.some((v) => v.name === voiceChoice) ? voiceChoice : null;
+  voice.setChoice({ studio: useStudio, deviceName: voiceChoice && voiceChoice !== "studio" ? voiceChoice : null });
+  const selectedVoice = useStudio ? "studio" : (chosenDevice ?? rankedVoices[0]?.name ?? null);
+  const voiceLabel = useStudio && studio ? `Studio voice (${speakerLabel(studio.speaker)})` : (selectedVoice ?? "the device's voice");
   const maxSeconds = Math.max(5, Math.min(30, features?.voice.maxRecordingSeconds ?? 30));
   // The agent's tasks run on the server's tools, which a model on this computer can't use.
   const localDefault = settings.defaultModel.startsWith("ollama:");
@@ -448,10 +855,14 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
     pulseTimer.current = setTimeout(() => setErrorPulse(false), ERROR_MS);
   };
 
-  /** Speak, unless voice replies are off, the microphone is on or the view is closing. */
-  const say = (text: string) => {
+  /** Whether VESPER may speak now: voice replies on, the microphone off, the view not closing. */
+  const maySpeak = () => {
     const l = live.current;
-    if (l.voiceOut && l.ttsOn && phaseRef.current === "idle" && !closingRef.current) voice.say(text);
+    return l.voiceOut && l.ttsOn && phaseRef.current === "idle" && !closingRef.current;
+  };
+  /** Speak a whole text (the greeting, a note). */
+  const say = (text: string) => {
+    if (maySpeak()) voice.say(text);
   };
 
   /** A note in place of a reply: an error (the core flashes) or a hint such as "I didn't hear anything." */
@@ -585,7 +996,7 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
       alive.current = false;
       listener.current?.cancel();
       listener.current = null;
-      voice.stop();
+      voice.dispose();
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
       if (closeTimer.current) clearTimeout(closeTimer.current);
     };
@@ -599,8 +1010,12 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
       if (phaseRef.current === "idle" && live.current.chat.messages.length === 0) say(greeting);
     };
     if (calm) {
-      greet();
-      return () => voice.stop();
+      let current = true;
+      void voice.unlock().then(() => current && greet());
+      return () => {
+        current = false;
+        voice.stop();
+      };
     }
     const timer = setTimeout(greet, BOOT_MS);
     return () => clearTimeout(timer);
@@ -620,16 +1035,41 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
     };
   }, [calm]);
 
+  // The launcher's tap (this runs while it is being handled): the studio voice's output may start now.
+  useLayoutEffect(() => {
+    void voice.unlock();
+  }, [voice]);
+
   // Focus moves into the view: the text field (on touch screens the view itself, so the keyboard doesn't cover the core).
   useEffect(() => {
     if (finePointer()) field.current?.focus({ preventScroll: true });
     else dialog.current?.focus({ preventScroll: true });
   }, []);
 
+  // The voice menu: focus on the chosen voice; a click outside closes it.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const list = menu.current;
+    (list?.querySelector<HTMLInputElement>('input[type="radio"]:checked') ?? list?.querySelector<HTMLInputElement>("input"))?.focus();
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (!menu.current?.contains(target) && !menuButton.current?.contains(target)) setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [menuOpen]);
+
   // Esc closes; Tab stays inside the view.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !e.isComposing) {
+        // The voice menu open: Esc closes only the menu.
+        if (menu.current) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeMenuRef.current();
+          return;
+        }
         // In an approval card (e.g. editing the email), Esc only leaves the card, so the edits aren't thrown away
         // by accident; Esc again closes.
         const panel = cardsPanel.current;
@@ -676,7 +1116,9 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
     if (s.upTo > text.length) s.upTo = text.length;
     const { sentences, consumed } = nextSentences(text.slice(s.upTo), replyDone);
     s.upTo += consumed;
-    if (!s.muted) for (const sentence of sentences) say(sentence);
+    if (s.muted || !maySpeak()) return;
+    for (const sentence of sentences) voice.add(sentence);
+    if (replyDone) voice.flush();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replyContent, replyDone, userCount]);
 
@@ -729,6 +1171,7 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
           ? "Turning speech into text"
           : "Speak";
   const onMic = () => {
+    void voice.unlock();
     if (phaseRef.current === "listening") void finishListening("done");
     else if (phaseRef.current === "idle") void startListening();
   };
@@ -742,6 +1185,7 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
         ? "Start listening"
         : null;
   const onCore = () => {
+    void voice.unlock();
     if (voice.speaking) {
       voice.stop();
       spoken.current.muted = true;
@@ -750,7 +1194,35 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
     else if (phaseRef.current === "idle" && sttOn && !booting && !live.current.chat.streaming) void startListening();
   };
 
+  /** The voice menu closes back onto its button. */
+  const closeMenu = () => {
+    setMenuOpen(false);
+    menuButton.current?.focus();
+  };
+  const closeMenuRef = useRef(closeMenu);
+  closeMenuRef.current = closeMenu;
+
+  const chooseVoice = (choice: string) => {
+    if (choice === "studio") void voice.unlock(true);
+    setVoiceChoice(choice);
+    saveChoice(choice);
+  };
+
+  /** Says one sentence in the chosen voice (even with voice replies off: it was asked for). */
+  const testVoice = () => {
+    if (phaseRef.current !== "idle" || closingRef.current) return;
+    voice.stop();
+    spoken.current.muted = true;
+    listenAfterTurn.current = false;
+    const run = ++testRun.current;
+    // Said once the studio voice's output runs (it starts on this tap), else by the device.
+    void voice.unlock().then(() => {
+      if (run === testRun.current && alive.current && phaseRef.current === "idle") voice.say(TEST_SENTENCE);
+    });
+  };
+
   const toggleVoiceOut = () => {
+    void voice.unlock();
     const next = !voiceOut;
     setVoiceOut(next);
     saveVoiceOut(next);
@@ -761,6 +1233,7 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
   };
 
   const toggleHandsFree = () => {
+    void voice.unlock();
     const next = !handsFree;
     setHandsFree(next);
     if (!next) return;
@@ -779,6 +1252,7 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
+    void voice.unlock();
     if (!input.trim() || chat.streaming || phase === "starting" || phase === "transcribing") return;
     if (phase === "listening") cancelListening();
     if (sendText(input)) setInput("");
@@ -991,7 +1465,7 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
         </div>
 
         <form onSubmit={onSubmit} className="relative z-10 shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-6 sm:pb-5">
-          <div className="agent-panel mx-auto flex w-full max-w-3xl items-center gap-1 px-1.5 py-1.5 has-[input:focus]:outline-1 has-[input:focus]:outline-[var(--ag-cyan)]">
+          <div className="agent-panel mx-auto flex w-full max-w-3xl items-center gap-1 px-1.5 py-1.5 has-[.agent-field:focus]:outline-1 has-[.agent-field:focus]:outline-[var(--ag-cyan)]">
             {sttOn ? (
               <>
                 {/* aria-disabled while the microphone starts or the words are recognised, so the focus stays on it. */}
@@ -1026,7 +1500,7 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
               autoComplete="off"
               placeholder={sttOn ? "Type, or tap the mic…" : "Type a message…"}
               aria-label="Message VESPER"
-              className="min-w-0 flex-1 bg-transparent px-2 py-1.5 text-[16px] text-[var(--ag-text)] outline-none placeholder:text-[var(--ag-text-soft)] sm:text-[15px]"
+              className="agent-field min-w-0 flex-1 bg-transparent px-2 py-1.5 text-[16px] text-[var(--ag-text)] outline-none placeholder:text-[var(--ag-text-soft)] sm:text-[15px]"
             />
             {chat.streaming ? (
               <button type="button" onClick={stopReply} className={`${hudIcon} ${hudTone(false)}`} aria-label="Stop the reply" title="Stop">
@@ -1044,16 +1518,80 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
               </button>
             )}
             {ttsOn ? (
-              <button
-                type="button"
-                onClick={toggleVoiceOut}
-                aria-pressed={voiceOut}
-                className={`${hudIcon} ${voiceOut ? "text-[var(--ag-cyan)]" : "text-[var(--ag-text-soft)]"}`}
-                aria-label="Voice replies"
-                title={voiceOut ? "Voice replies are on (click to mute)" : "Voice replies are off (click to turn on)"}
-              >
-                {voiceOut ? <Volume2 size={18} /> : <VolumeX size={18} />}
-              </button>
+              <>
+                <button
+                  ref={menuButton}
+                  type="button"
+                  onClick={() => {
+                    void voice.unlock();
+                    setMenuOpen((open) => !open);
+                  }}
+                  aria-haspopup="dialog"
+                  aria-expanded={menuOpen}
+                  aria-controls={menuOpen ? "agent-voice-menu" : undefined}
+                  className={`${hudIcon} ${voiceOut ? "text-[var(--ag-cyan)]" : "text-[var(--ag-text-soft)]"}`}
+                  aria-label="Voice"
+                  title={voiceOut ? `Voice: ${voiceLabel}` : "Voice replies are off"}
+                >
+                  {voiceOut ? <Volume2 size={18} /> : <VolumeX size={18} />}
+                </button>
+                {menuOpen ? (
+                  <div
+                    ref={menu}
+                    id="agent-voice-menu"
+                    role="dialog"
+                    aria-label="VESPER's voice"
+                    className="agent-panel absolute bottom-full right-0 z-30 mb-2 w-80 max-w-[calc(100vw-1.5rem)] p-3 text-left"
+                  >
+                    <label className="flex cursor-pointer items-center justify-between gap-3 text-[13px] text-[var(--ag-text)]">
+                      Voice replies
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        checked={voiceOut}
+                        onChange={toggleVoiceOut}
+                        className="h-4 w-4 accent-[var(--ag-cyan)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ag-cyan)]"
+                      />
+                    </label>
+                    <fieldset className="mt-3 min-w-0 border-t border-[var(--ag-border)] pt-2">
+                      <legend className="agent-hud-label pr-2">Voice</legend>
+                      <div className="thin-scroll mt-1 max-h-[min(40vh,260px)] space-y-0.5 overflow-y-auto pr-1">
+                        {studio ? (
+                          <VoiceOption
+                            value="studio"
+                            checked={selectedVoice === "studio"}
+                            title={`Studio voice (${speakerLabel(studio.speaker)})`}
+                            note={
+                              studioIssue === "limit"
+                                ? "Today's limit is used up: the device voice speaks until 00:00 UTC"
+                                : studioIssue === "off"
+                                  ? "Not available right now: the device voice speaks instead"
+                                  : "Natural voice from Cloudflare · daily limit"
+                            }
+                            onChoose={chooseVoice}
+                          />
+                        ) : null}
+                        {rankedVoices.map((v, i) => (
+                          <VoiceOption
+                            key={`${v.name}|${v.lang}|${i}`}
+                            value={v.name}
+                            checked={selectedVoice === v.name}
+                            title={v.name}
+                            note={i === 0 ? `${v.lang} · Recommended` : v.lang}
+                            onChoose={chooseVoice}
+                          />
+                        ))}
+                        {rankedVoices.length === 0 && !studio ? (
+                          <p className="px-2 py-1.5 text-xs text-[var(--ag-text-soft)]">This device has no voices to choose from.</p>
+                        ) : null}
+                      </div>
+                    </fieldset>
+                    <button type="button" onClick={testVoice} disabled={phase !== "idle"} className={`${chip} mt-3 disabled:opacity-40`}>
+                      <Volume2 size={12} aria-hidden="true" /> Test
+                    </button>
+                  </div>
+                ) : null}
+              </>
             ) : null}
           </div>
         </form>

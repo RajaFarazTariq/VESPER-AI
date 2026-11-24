@@ -180,7 +180,7 @@ function useSpinRate(root: RefObject<HTMLDivElement | null>, state: AgentCoreSta
   }, [root, state]);
 }
 
-/** The animated core. `level`: microphone loudness 0..1 while listening (drives a pulse); ignored otherwise. */
+/** The animated core. `level`: loudness 0..1 of the microphone while listening, or of the studio voice while speaking (v0.17.1); ignored otherwise. */
 export function AgentCore({
   state,
   level = 0,
@@ -196,7 +196,7 @@ export function AgentCore({
   const root = useRef<HTMLDivElement>(null);
   useSpinRate(root, state);
 
-  const loudness = state === "listening" && Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : 0;
+  const loudness = (state === "listening" || state === "speaking") && Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : 0;
   const style = { width: size, height: size, "--ag-level": round(loudness) } as CSSProperties;
   const label = STATE_LABEL[state];
   const half = labelHalfAngle(label);

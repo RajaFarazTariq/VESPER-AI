@@ -103,6 +103,102 @@ export function speechChunks(text: string, max = 220): string[] {
   return out;
 }
 
+// ------------------------------------------------------------------ The studio voice (v0.17.1): requests to make
+
+export interface ChunkOptions {
+  /** Nothing is playing or waiting: the first piece goes alone (and short), so the voice starts quickly. */
+  starting: boolean;
+  /** No more text is coming for now: the last, unfinished group goes too. */
+  final: boolean;
+  /** Sentences are joined up to about this many characters, so there are fewer requests. */
+  target?: number;
+  /** Never more than this in one request (the server's limit). */
+  max?: number;
+  /** The most for the first piece when starting. */
+  firstMax?: number;
+}
+
+/**
+ * Sentences waiting for the studio voice → the requests to make now, in order (`chunks`), and what waits for more
+ * text (`rest`). Every chunk is at most `max` characters; a long sentence is cut at a comma or a space.
+ */
+export function takeChunks(sentences: readonly string[], { starting, final, target = 250, max = 600, firstMax = 200 }: ChunkOptions): { chunks: string[]; rest: string[] } {
+  const pieces = sentences.flatMap((s) => speechChunks(s, max));
+  const chunks: string[] = [];
+  if (starting && pieces.length > 0) {
+    const [head, ...tail] = speechChunks(pieces.shift()!, firstMax);
+    chunks.push(head!);
+    pieces.unshift(...tail);
+  }
+  let group = "";
+  for (const piece of pieces) {
+    if (!group) group = piece;
+    else if (group.length + 1 + piece.length <= target) group = `${group} ${piece}`;
+    else {
+      chunks.push(group);
+      group = piece;
+    }
+  }
+  if (!group) return { chunks, rest: [] };
+  if (final || group.length >= target) return { chunks: [...chunks, group], rest: [] };
+  return { chunks, rest: [group] };
+}
+
+/** When the studio voice's day ends: the next 00:00 UTC after `now` (milliseconds). */
+export const nextUtcMidnight = (now: number) => {
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+};
+
+// ------------------------------------------------------------------ The device's voices: the best female voice first
+
+/** What a browser voice tells about itself (SpeechSynthesisVoice). */
+export interface VoiceInfo {
+  name: string;
+  lang: string;
+  localService: boolean;
+  default: boolean;
+}
+
+/** Well-known female voices on Windows/Edge ("AvaMultilingual" too; Urdu: Uzma, Gul), macOS/iOS, Chrome and Android (voice codes). */
+const FEMALE =
+  /\b(?:(?:ava|emma|jenny|aria|sonia|libby|natasha|michelle|ana|clara|jane|nancy|sara|ashley|cora|elizabeth|monica|amber|maisie|hollie|molly|neerja|heera|samantha|karen|moira|tessa|serena|victoria|allison|susan|fiona|veena|kate|hazel|catherine|linda|zira|uzma|gul)(?:multilingual)?|female|woman|x-(?:sfg|iob|iog|tpc|tpf))\b/i;
+/** Well-known male voices (never chosen while there's another one). */
+const MALE =
+  /\b(?:(?:david|mark|george|guy|ryan|james|christopher|eric|roger|steffan|andrew|brian|william|thomas|daniel|alex|fred|oliver|arthur|aaron|rishi|ravi|prabhat|tom|lee|asad|salman)(?:multilingual)?|male|man|x-(?:iom|iol|tpd))\b/i;
+
+/** How good a voice is for VESPER (higher is better): natural female voices first, known male voices last. */
+export function voiceScore(v: VoiceInfo): number {
+  const name = v.name.toLowerCase();
+  let score: number;
+  if (/google uk english female/.test(name)) score = 90;
+  else if (/google us english/.test(name)) score = 85; // Chrome's US English voice is female
+  else if (MALE.test(name) && !/female/.test(name)) return -100 + (v.localService ? 0 : 1);
+  else if (/zira/.test(name)) score = 20; // female, but robotic: a last resort
+  else if (FEMALE.test(name) && /natural|neural|online|premium|enhanced/.test(name)) score = 100;
+  else if (/\b(samantha|karen|moira|tessa|serena)\b/.test(name)) score = 78;
+  else if (FEMALE.test(name)) score = 60;
+  else score = 10; // unknown: often fine (e.g. Android's own voices), but maybe male
+  if (!v.localService) score += 3; // voices from the network usually sound better
+  if (/^en-(us|gb)/i.test(v.lang)) score += 1;
+  if (v.default) score += 1;
+  return score;
+}
+
+/**
+ * The voices for `language` ("en"), best first; all voices when none is for that language. A known male voice comes
+ * after every other one.
+ */
+export function rankVoices<T extends VoiceInfo>(voices: readonly T[], language = "en"): T[] {
+  const prefix = language.toLowerCase();
+  const matching = voices.filter((v) => v.lang.toLowerCase().replace("_", "-").startsWith(prefix));
+  const list = matching.length > 0 ? matching : [...voices];
+  return list
+    .map((v, i) => ({ v, i, score: voiceScore(v) }))
+    .sort((a, b) => b.score - a.score || a.i - b.i)
+    .map((x) => x.v);
+}
+
 // ------------------------------------------------------------------ Listening: noticing when you stop talking
 
 /**

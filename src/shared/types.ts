@@ -132,7 +132,16 @@ export interface AppSettingsDto {
   documentsEnabled: boolean;
   /** Documents each user may add per UTC day (admins unlimited). */
   documentsPerDay: number;
+  /** VESPER Agent speaks with a natural studio voice from Cloudflare Workers AI (v0.17.1); the device's voice otherwise. */
+  studioVoiceEnabled: boolean;
+  /** Characters the studio voice may read per UTC day for the whole app (each 1,000 uses ~1,364 free Workers AI Neurons). */
+  studioVoiceCharsPerDay: number;
+  /** Which female studio voice. */
+  studioVoiceSpeaker: StudioSpeaker;
 }
+
+/** The female voices of Cloudflare's Deepgram Aura model offered for VESPER Agent (v0.17.1). */
+export type StudioSpeaker = "luna" | "asteria" | "stella" | "athena" | "hera";
 
 /** What the chat screen may offer right now (admin switches + whether a capable service is set up). */
 export interface FeaturesDto {
@@ -141,7 +150,17 @@ export interface FeaturesDto {
    * enabled: the admin's Voice switch (covers "Read aloud", which runs on the device).
    * speechToText: the microphone button can be offered (Voice on + Groq or Workers AI available).
    */
-  voice: { enabled: boolean; speechToText: boolean; minutesPerDay: number; maxRecordingSeconds: number };
+  voice: {
+    enabled: boolean;
+    speechToText: boolean;
+    minutesPerDay: number;
+    maxRecordingSeconds: number;
+    /**
+     * VESPER Agent's studio voice (v0.17.1): switched on, Voice on and Workers AI available. Whether today's characters
+     * are left is learned from `POST /api/media/speech` (429 `studio_voice_limit` → the device voice until 00:00 UTC).
+     */
+    studio?: { enabled: boolean; speaker: StudioSpeaker };
+  };
   /** The Research button: switch on, web search set up, and the daily cap above the searches kept for chat. */
   research: { enabled: boolean; runsPerDay: number };
   /** Settings → Local models (Ollama): always for admins; for users only when the admin allows it. */

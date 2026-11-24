@@ -6,6 +6,7 @@ import { feedbackSummary, listFeedback } from "../db/feedback";
 import { hasSearchableKnowledge } from "../db/knowledge";
 import { tableRowsReadToday } from "../db/tables";
 import { storageOverview } from "../db/storage";
+import { studioCharsToday } from "../lib/studio-voice";
 import { deleteUserSessions } from "../db/sessions";
 import { deleteUser, getUserById, getUserForAdmin, listUsersForAdmin, roleOf, updateUser } from "../db/users";
 import { getConfig } from "../env";
@@ -59,12 +60,13 @@ export const adminRoutes = new Hono<AppEnv>()
 
   .get("/settings", async (c) => {
     const config = getConfig(c.env);
-    const [settings, searchesUsed, knowledgeReady, tableRowsRead, storage] = await Promise.all([
+    const [settings, searchesUsed, knowledgeReady, tableRowsRead, storage, studioChars] = await Promise.all([
       getAppSettings(c.env.DB, config),
       webSearchesToday(c.env.DB),
       hasSearchableKnowledge(c.env.DB),
       tableRowsReadToday(c.env.DB),
       storageOverview(c.env.DB),
+      studioCharsToday(c.env.DB),
     ]);
     const web = webToolContext(c.env, config.appName, new URL(c.req.url).origin, settings);
     return c.json({
@@ -92,6 +94,8 @@ export const adminRoutes = new Hono<AppEnv>()
       tables: { rowsReadToday: tableRowsRead },
       // Storage meter (v0.16.0): the database's size against the free plan's 500 MB, and each file feature's text.
       storage,
+      // VESPER Agent's studio voice (v0.17.1): characters read today for the whole app.
+      studioVoice: { charsToday: studioChars },
     });
   })
 

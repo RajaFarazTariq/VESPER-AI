@@ -9,7 +9,7 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.17.0**.
+Current version: **0.17.1**.
 
 - [What VESPER does](#what-vesper-does)
 - [How VESPER is different](#how-vesper-is-different)
@@ -163,8 +163,11 @@ choices:
   into text (the same free speech-to-text as the 🎤 in the chat). **Hands-free** listens again after each answer, for a
   real back-and-forth. The core reacts: it pulses with your voice, spins faster while thinking and pulses while
   speaking. Tap the core to stop it talking.
-- Answers are short and spoken (the device's own voices; the speaker button switches voice off), shown as floating
-  text around the core. The step being done is shown ("Checking your calendar…"), and tasks end with a one-sentence
+- Answers are short and spoken, shown as floating text around the core. **Voice** (v0.17.1): by default a natural
+  female studio voice from Cloudflare ("Luna"; the administrator can pick Asteria, Stella, Athena or Hera), the same
+  on every device, within a daily allowance for the whole app; after it, for Urdu, or if the service is busy, the
+  best female voice on your device. The voice menu lists the device voices (female first) with **Test**, and turns
+  voice off. The step being done is shown ("Checking your calendar…"), and tasks end with a one-sentence
   confirmation. Emails, events and GitHub changes appear on the usual approval cards beside the core and are sent only
   when you press Approve.
 - Each session is saved as a normal chat in the sidebar; **Open in chat** shows the full answer there. Esc, ✕ or the

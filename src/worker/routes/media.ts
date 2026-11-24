@@ -15,6 +15,8 @@ import { parseJson } from "../lib/validation";
 import { getProviders } from "../llm/registry";
 import { requireUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/security";
+import { STUDIO_VOICE_MAX_CHARS } from "../../shared/voice";
+import { consumeStudioChars, refundStudioChars, studioVoiceAvailable, StudioVoiceError, synthesize } from "../lib/studio-voice";
 
 /** What the chat screen may offer: the admin's switches, and whether a service that can do it is set up. */
 export function featuresFor(env: Env, settings: AppSettingsDto, admin: boolean): FeaturesDto {
@@ -30,6 +32,11 @@ export function featuresFor(env: Env, settings: AppSettingsDto, admin: boolean):
       speechToText: settings.voiceEnabled && speechAvailable(env),
       minutesPerDay: settings.speechMinutesPerDay,
       maxRecordingSeconds: MAX_RECORDING_SECONDS,
+      // VESPER Agent's studio voice (v0.17.1): Voice on, the studio voice on, a daily cap above 0 and Workers AI there.
+      studio: {
+        enabled: settings.voiceEnabled && settings.studioVoiceEnabled && settings.studioVoiceCharsPerDay > 0 && studioVoiceAvailable(env),
+        speaker: settings.studioVoiceSpeaker,
+      },
     },
     research: {
       // Needs web search: a Tavily key, web_search not switched off for everyone, and a daily cap above the
@@ -78,6 +85,9 @@ const transcribeSchema = z.object({
 });
 
 const voiceLimiter = rateLimit("voice", 12, 60_000, (c) => c.get("user").id);
+/** A spoken answer is a few requests of one or two sentences each. */
+const studioLimiter = rateLimit("studio-voice", 60, 60_000, (c) => c.get("user").id);
+const speechSchema = z.object({ text: z.string().trim().min(1).max(STUDIO_VOICE_MAX_CHARS, "Send at most 600 characters at a time.") });
 
 const minutes = (seconds: number) => Math.max(0, Math.floor(seconds / 60));
 
@@ -87,6 +97,33 @@ export const mediaRoutes = new Hono<AppEnv>()
   .get("/features", async (c) =>
     c.json(featuresFor(c.env, await getAppSettings(c.env.DB, getConfig(c.env)), c.get("user").role === "admin")),
   )
+
+  /**
+   * VESPER Agent's studio voice (v0.17.1): text → MP3 (one or two sentences per request). Counted against the whole app's
+   * daily characters before the request and given back if it fails; when they're used up the agent uses the device's
+   * own voice until 00:00 UTC.
+   */
+  .post("/speech", studioLimiter, async (c) => {
+    const { text } = await parseJson(c, speechSchema, 8 * 1024);
+    const settings = await getAppSettings(c.env.DB, getConfig(c.env));
+    if (!settings.voiceEnabled || !settings.studioVoiceEnabled) throw new AppError(403, "studio_voice_off", "The studio voice is switched off.");
+    if (!studioVoiceAvailable(c.env)) throw new AppError(503, "studio_voice_unavailable", "The studio voice isn't available on this server.");
+    const { ok, day } = await consumeStudioChars(c.env.DB, text.length, settings.studioVoiceCharsPerDay);
+    if (!ok) {
+      throw new AppError(429, "studio_voice_limit", "The studio voice has used today's allowance. The device's voice is used until 00:00 UTC.");
+    }
+    try {
+      const audio = await synthesize(c.env, text, settings.studioVoiceSpeaker);
+      return new Response(audio, { headers: { "content-type": "audio/mpeg", "cache-control": "no-store" } });
+    } catch (error) {
+      await refundStudioChars(c.env.DB, text.length, day).catch(() => {});
+      if (error instanceof StudioVoiceError) {
+        console.warn(JSON.stringify({ msg: "studio voice failed", error: error.message }));
+        throw new AppError(502, "studio_voice_failed", "The studio voice didn't work just now. The device's voice is used instead.");
+      }
+      throw error;
+    }
+  })
 
   /** Microphone: speech → text. The text goes into the message box; nothing is sent to the chat. */
   .post("/transcribe", voiceLimiter, async (c) => {

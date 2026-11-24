@@ -596,6 +596,15 @@ chat's, and each opening starts a new conversation (a normal saved chat).
   started, so while sentences are queued the device is checked every 0.5 s: neither speaking nor waiting for about 1 s
   means done (otherwise the core could stay "speaking" and hands-free would never listen again). **Hands-free** listens again after each
   answer has been spoken (no listening while speaking, so it doesn't hear itself).
+- **Studio voice** (v0.17.1, `lib/studio-voice.ts`, `POST /api/media/speech`): one or two sentences (≤ 600 characters)
+  → MP3 from Workers AI's Deepgram Aura (`@cf/deepgram/aura-1`, a female speaker the admin picks; Cloudflare retired
+  the cheaper MeloTTS on 2026-11-20). Aura costs about 1,364 of the 10,000 free daily Neurons per 1,000 characters,
+  shared with the backup chat model, speech-to-text and re-ranking, so the whole app has a daily character cap
+  (default 3,000), counted atomically in `rate_limits` before the request and given back if it fails. The browser
+  plays it with Web Audio (decoded buffers, no blob URLs, so the strict CSP stays as it is), fetches the next piece
+  while one plays, and the core follows the voice's real loudness. After the cap (remembered until 00:00 UTC), for
+  Urdu, or on any error, the best female device voice takes over (ranked by name: natural/online voices first, known
+  male voices last).
 - **Server**: `agent: true` on `POST /api/chat` adds `AGENT_RULES` to the system prompt: one to three spoken sentences,
   plain text, tasks done with tools and confirmed in one sentence, prepared emails/events/GitHub changes described as
   waiting on their card, never an action a tool didn't confirm. Not allowed with deep research.
