@@ -12,6 +12,7 @@ import { googleActionRoutes } from "./routes/google-actions";
 import { authRoutes } from "./routes/auth";
 import { chatRoutes } from "./routes/chat";
 import { conversationRoutes } from "./routes/conversations";
+import { documentRoutes } from "./routes/documents";
 import { feedbackRoutes } from "./routes/feedback";
 import { fileRoutes } from "./routes/files";
 import { knowledgeRoutes } from "./routes/knowledge";
@@ -51,6 +52,7 @@ app.route("/api/connections", connectionRoutes);
 app.route("/api/github-actions", githubActionRoutes);
 app.route("/api/google-actions", googleActionRoutes);
 app.route("/api/files", fileRoutes);
+app.route("/api/documents", documentRoutes);
 app.route("/api/admin/knowledge", knowledgeRoutes);
 app.route("/api/admin", adminRoutes);
 

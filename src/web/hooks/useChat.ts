@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatImageInput, ChatStreamEvent, ConversationDto, MessageDto, MessageFileDto } from "../../shared/types";
+import type { ChatImageInput, ChatStreamEvent, ConversationDto, MessageDocumentDto, MessageDto, MessageFileDto } from "../../shared/types";
 import { api, ApiError, streamChat, type ChatRequestBody } from "../api/client";
 import { providerLabel } from "../lib/format";
 import { explainOllamaError, streamOllamaChat } from "../lib/ollama";
@@ -111,7 +111,7 @@ export function useChat(options: Options) {
 
   /** Cloud providers: stream through our API. Returns false if the message was rejected outright. */
   const runRemote = useCallback(
-    async (body: ChatRequestBody, files: MessageFileDto[] = []): Promise<boolean> => {
+    async (body: ChatRequestBody, files: MessageFileDto[] = [], documents: MessageDocumentDto[] = []): Promise<boolean> => {
       const tempUserId = `local-user-${Date.now()}`;
       const assistantId = `local-assistant-${Date.now()}`;
       let before: UiMessage[] = [];
@@ -125,9 +125,20 @@ export function useChat(options: Options) {
         }
         const base = body.regenerate ? withoutTrailingAssistant(prev) : prev;
         const images = body.images?.map((i) => i.thumb) ?? null;
+        // A message may be only attachments (e.g. a document to summarise), without text.
         const user: UiMessage[] =
-          body.message || images || files.length
-            ? [{ ...placeholder(tempUserId), role: "user", content: body.message ?? "", images, files: files.length ? files : null, streaming: false }]
+          body.message || images || files.length || documents.length
+            ? [
+                {
+                  ...placeholder(tempUserId),
+                  role: "user",
+                  content: body.message ?? "",
+                  images,
+                  files: files.length ? files : null,
+                  documents: documents.length ? documents : null,
+                  streaming: false,
+                },
+              ]
             : [];
         return [...base, ...user, placeholder(assistantId)];
       });
@@ -301,17 +312,25 @@ export function useChat(options: Options) {
   );
 
   const send = useCallback(
-    (text: string, model: string, images: ChatImageInput[] = [], research = false, files: MessageFileDto[] = []) => {
+    (
+      text: string,
+      model: string,
+      images: ChatImageInput[] = [],
+      research = false,
+      files: MessageFileDto[] = [],
+      documents: MessageDocumentDto[] = [],
+    ) => {
       const body = {
         ...(conversationId ? { conversationId } : {}),
         message: text,
         model,
         ...(images.length ? { images } : {}),
         ...(research ? { research: true } : {}),
-        // Spreadsheets go with cloud models only (the message box checks this before sending).
+        // Spreadsheets and documents go with cloud models only (the message box checks this before sending).
         ...(files.length ? { files: files.map((f) => f.id) } : {}),
+        ...(documents.length ? { documents: documents.map((d) => d.id) } : {}),
       };
-      return model.startsWith("ollama:") ? runLocal(body) : runRemote(body, files);
+      return model.startsWith("ollama:") ? runLocal(body) : runRemote(body, files, documents);
     },
     [conversationId, runLocal, runRemote],
   );

@@ -88,8 +88,17 @@ export function documentSourceLabel(text: string): string {
   return quoted.length ? `your document (quoting ${quoted.join(", ")})` : "your document";
 }
 
-/** Order passages by meaning (best first) with the re-ranker; falls back to the given order. */
-export async function rerank(ai: Ai | undefined, query: string, hits: KnowledgeHit[], top: number): Promise<KnowledgeHit[]> {
+/**
+ * Order passages by meaning (best first) with the re-ranker; falls back to the given order. Used for the knowledge
+ * base and for the documents users attach to a chat (v0.16.0), so it takes any passage with a `text`.
+ */
+export async function rerank<T extends { text: string }>(
+  ai: Ai | undefined,
+  query: string,
+  hits: T[],
+  top: number,
+  what = "knowledge",
+): Promise<T[]> {
   if (!ai || hits.length <= 1) return hits.slice(0, top);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -110,7 +119,7 @@ export async function rerank(ai: Ai | undefined, query: string, hits: KnowledgeH
       .map((r) => hits[r.id]!);
     return ordered.length > 0 ? ordered.slice(0, top) : hits.slice(0, top);
   } catch (error) {
-    console.warn(JSON.stringify({ msg: "knowledge re-rank failed; using keyword order", error: String(error) }));
+    console.warn(JSON.stringify({ msg: `${what} re-rank failed; using keyword order`, error: String(error) }));
     return hits.slice(0, top);
   } finally {
     if (timer) clearTimeout(timer);

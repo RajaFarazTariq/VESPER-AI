@@ -1,6 +1,7 @@
 import type { ModelInfo, ProviderId } from "../../shared/types";
 import { githubActionCleanup } from "./github";
 import { googleActionCleanup } from "./google";
+import { chatDocumentCleanup } from "./documents";
 import { tableFileCleanup } from "./tables";
 
 export interface ProviderHealth {
@@ -114,5 +115,7 @@ export async function cleanup(db: D1Database): Promise<void> {
     ...googleActionCleanup(db, now),
     // Spreadsheets added but never sent are removed after 24 hours (v0.14.0).
     ...tableFileCleanup(db, now),
+    // Documents added to a message but never sent are removed after 24 hours (v0.16.0).
+    ...chatDocumentCleanup(db, now),
   ]);
 }

@@ -2,6 +2,7 @@ import type {
   ConversationDto,
   FeedbackReason,
   MessageDto,
+  MessageDocumentDto,
   MessageFileDto,
   MessageRole,
   MessageStatus,
@@ -31,6 +32,8 @@ interface MessageRow {
   images: string | null;
   /** JSON of the spreadsheets attached to a user message (v0.14.0). */
   files?: string | null;
+  /** JSON of the documents attached to a user message (v0.16.0). */
+  documents?: string | null;
   /** JSON of the answer check (v0.11.0); null = not checked. */
   verification?: string | null;
   /** 1 when the answer's sources were kept (evidence IS NOT NULL), so it can be checked. */
@@ -57,6 +60,16 @@ function parseFiles(raw: string | null | undefined): MessageFileDto[] | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
     return Array.isArray(parsed) && parsed.length > 0 ? (parsed as MessageFileDto[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseDocuments(raw: string | null | undefined): MessageDocumentDto[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) && parsed.length > 0 ? (parsed as MessageDocumentDto[]) : null;
   } catch {
     return null;
   }
@@ -103,6 +116,7 @@ const toMessage = (r: MessageRow): MessageDto => ({
   tools: parseTools(r.tools),
   images: parseImages(r.images),
   files: parseFiles(r.files),
+  documents: parseDocuments(r.documents),
   feedback:
     r.fb_rating === 1 || r.fb_rating === -1
       ? { rating: r.fb_rating, reason: (r.fb_reason as FeedbackReason | null) ?? null, note: r.fb_note ?? null }
@@ -207,7 +221,7 @@ export async function listMessages(db: D1Database, conversationId: string, limit
   const { results } = await db
     .prepare(
       `SELECT * FROM (
-         SELECT m.id, m.role, m.content, m.reasoning, m.provider, m.model, m.status, m.error, m.tools, m.images, m.files,
+         SELECT m.id, m.role, m.content, m.reasoning, m.provider, m.model, m.status, m.error, m.tools, m.images, m.files, m.documents,
                 m.verification, (m.evidence IS NOT NULL) AS checkable,
                 m.created_at, m.rowid AS rid, f.rating AS fb_rating, f.reason AS fb_reason, f.note AS fb_note
          FROM messages m LEFT JOIN message_feedback f ON f.message_id = m.id
@@ -235,6 +249,8 @@ export interface NewMessage {
   images?: string[] | null;
   /** Spreadsheets attached to a user message (v0.14.0). */
   files?: MessageFileDto[] | null;
+  /** Documents attached to a user message (v0.16.0). */
+  documents?: MessageDocumentDto[] | null;
   /** The source text the answer was based on, kept for "Check this answer" (never sent to the browser). */
   evidence?: string | null;
   /** The answer's check, when it was checked as it was written (deep research). */
@@ -257,6 +273,7 @@ export async function insertMessage(db: D1Database, conversationId: string, m: N
     tools: m.tools && m.tools.length > 0 ? m.tools : null,
     images: m.images && m.images.length > 0 ? m.images : null,
     files: m.files && m.files.length > 0 ? m.files : null,
+    documents: m.documents && m.documents.length > 0 ? m.documents : null,
     ...(m.role === "assistant" ? { checkable: Boolean(m.evidence), verification: m.verification ?? null } : {}),
     createdAt,
   };
@@ -264,8 +281,8 @@ export async function insertMessage(db: D1Database, conversationId: string, m: N
     db
       .prepare(
         `INSERT INTO messages (id, conversation_id, role, content, reasoning, provider, model, status, error,
-                               tokens_in, tokens_out, created_at, tools, images, evidence, verification, files)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)`,
+                               tokens_in, tokens_out, created_at, tools, images, evidence, verification, files, documents)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)`,
       )
       .bind(
         message.id,
@@ -285,6 +302,7 @@ export async function insertMessage(db: D1Database, conversationId: string, m: N
         m.evidence || null,
         m.verification ? JSON.stringify(m.verification) : null,
         message.files ? JSON.stringify(message.files) : null,
+        message.documents ? JSON.stringify(message.documents) : null,
       ),
     db.prepare("UPDATE conversations SET updated_at = ?1 WHERE id = ?2").bind(createdAt, conversationId),
   ]);

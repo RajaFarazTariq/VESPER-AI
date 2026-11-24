@@ -1,4 +1,4 @@
-import { ArrowDown, FileSpreadsheet, Menu, Mic, Paperclip, Sparkles, SquarePen, Telescope } from "lucide-react";
+import { ArrowDown, FileSpreadsheet, FileText, Menu, Mic, Paperclip, Sparkles, SquarePen, Telescope } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ConversationDto, FeaturesDto, ModelsResponse, PublicConfigDto, ToolInfoDto, UserDto, UserSettings } from "../shared/types";
 import { api, ApiError } from "./api/client";
@@ -12,7 +12,10 @@ import { Sidebar } from "./components/Sidebar";
 import { Toasts, type Toast } from "./components/Toasts";
 import { TOOL_ICONS } from "./components/ToolActivity";
 import { useChat } from "./hooks/useChat";
+import { DOCUMENT_LIMITS, documentKind, READ_DOCUMENT_TOOL, SEARCH_DOCUMENTS_TOOL } from "../shared/documents";
 import { tableKind } from "../shared/tables";
+import { documentProblem, orList, rejectedFileMessage, routeFiles } from "./lib/attachments";
+import { documentErrorMessage, messageDocument, readDocument, uploadDocument, type PendingDocument } from "./lib/documents";
 import { ImageError, prepareImage, type PendingImage } from "./lib/images";
 import { messageFile, readInBackground, tableErrorMessage, uploadTables, type PendingTable } from "./lib/tables";
 import { explainOllamaError, listOllamaModels } from "./lib/ollama";
@@ -138,6 +141,9 @@ function ChatApp({
   /** Spreadsheets waiting in the message box (v0.14.0), and how to stop reading or uploading each one. */
   const [tableFiles, setTableFiles] = useState<PendingTable[]>([]);
   const tableJobs = useRef(new Map<string, AbortController>());
+  /** Documents waiting in the message box (v0.16.0), and how to stop reading or uploading each one. */
+  const [docFiles, setDocFiles] = useState<PendingDocument[]>([]);
+  const docJobs = useRef(new Map<string, AbortController>());
   const [features, setFeatures] = useState<FeaturesDto | null>(null);
   /** Deep research for the next message (turns itself off after sending). */
   const [researchMode, setResearchMode] = useState(false);
@@ -204,7 +210,8 @@ function ChatApp({
       () => setToolList([]),
     );
     // Image and voice switches (admin panel → App settings).
-    api.features().then(setFeatures, () => setFeatures(null));
+    // A failed refresh keeps what was known: otherwise files waiting in the message box would vanish from view.
+    api.features().then(setFeatures, () => {});
   }, [settings, adminOpen]);
 
   // Stop reading aloud when leaving the page.
@@ -241,8 +248,6 @@ function ChatApp({
   const addTables = useCallback(
     (files: File[]) => {
       const sheets = files.filter((f) => tableKind(f.name));
-      const other = files.find((f) => !tableKind(f.name));
-      if (other) toast(`"${other.name}" can't be attached. Attach ${imagesOn ? "images or " : ""}a spreadsheet (CSV, Excel or OpenDocument).`);
       if (!features?.tables?.enabled || sheets.length === 0) return;
       if (selection.startsWith("ollama:")) {
         toast("Spreadsheets work with the cloud models only. Choose Auto or another cloud model to attach one.");
@@ -282,7 +287,7 @@ function ChatApp({
         }
       })();
     },
-    [features, imagesOn, selection, tableFiles.length, chatFiles, patchTable, toast],
+    [features, selection, tableFiles.length, chatFiles, patchTable, toast],
   );
   /** Remove spreadsheets from the message box: stop their reading or upload, and delete what was uploaded. */
   const dropTables = useCallback((items: PendingTable[]) => {
@@ -294,12 +299,106 @@ function ChatApp({
     setTableFiles((list) => list.filter((t) => !ids.has(t.id)));
   }, []);
 
+  // Documents (v0.16.0): read in this browser, their passages uploaded, then sent with the message.
+  const documentsOn = Boolean(features?.documents?.enabled);
+  const maxDocuments = features?.documents?.perMessage ?? DOCUMENT_LIMITS.perMessage;
+  const chatDocuments = useMemo(() => chat.messages.reduce((n, m) => n + (m.documents?.length ?? 0), 0), [chat.messages]);
+  const patchDocument = useCallback(
+    (id: string, patch: Partial<PendingDocument>) => setDocFiles((list) => list.map((d) => (d.id === id ? { ...d, ...patch } : d))),
+    [],
+  );
+  /** Remove documents from the message box: stop their reading or upload, and delete what was uploaded. */
+  const dropDocuments = useCallback((items: PendingDocument[]) => {
+    for (const d of items) {
+      docJobs.current.get(d.id)?.abort();
+      if (d.documentId) void api.documents.remove(d.documentId).catch(() => {});
+    }
+    const ids = new Set(items.map((d) => d.id));
+    setDocFiles((list) => list.filter((d) => !ids.has(d.id)));
+  }, []);
+
   const activeTools = useMemo(() => {
     if (toolList === null) return null;
     if (!settings.toolsEnabled) return [];
     return toolList.filter((t) => !settings.disabledTools.includes(t.name) && (!t.requiresMemory || settings.memoryEnabled));
   }, [toolList, settings]);
   const activeNames = new Set((activeTools ?? []).map((t) => t.name));
+  // The documents are read only through the assistant's document tools (the user can switch those off).
+  const documentToolsOff = activeTools !== null && !activeNames.has(SEARCH_DOCUMENTS_TOOL) && !activeNames.has(READ_DOCUMENT_TOOL);
+
+  const addDocuments = useCallback(
+    (files: File[]) => {
+      const limits = features?.documents;
+      if (!limits?.enabled || files.length === 0) return;
+      if (selection.startsWith("ollama:")) {
+        toast("Documents work with the cloud models only. Choose Auto or another cloud model to attach one.");
+        return;
+      }
+      // The same limits and wording as the server, which checks them again.
+      const inMessage = maxDocuments - docFiles.length;
+      const inChat = limits.perChat - chatDocuments - docFiles.length;
+      const chatMessage = `A chat can have up to ${limits.perChat} documents. Start a new chat to add more.`;
+      const messageMessage = `Attach up to ${maxDocuments} documents per message.`;
+      const room = Math.max(0, Math.min(inMessage, inChat));
+      // Problems known before reading (type, empty, size) don't add a chip, and don't take a free place either.
+      const usable = files.filter((file) => {
+        const problem = documentProblem(file);
+        if (problem) toast(`${file.name}: ${problem}`);
+        return !problem;
+      });
+      if (usable.length > room) toast(inChat <= inMessage ? chatMessage : messageMessage);
+      const picked = usable.slice(0, room);
+      if (picked.length === 0) return;
+      if (documentToolsOff) {
+        toast(
+          settings.toolsEnabled
+            ? "To read documents, switch on “Your documents” in Settings → Tools."
+            : "To read documents, switch tools on in Settings → Tools.",
+          "info",
+        );
+      }
+      for (const file of picked) {
+        const id = `${Date.now()}-${Math.random()}`;
+        const controller = new AbortController();
+        docJobs.current.set(id, controller);
+        setDocFiles((list) => [...list, { id, name: file.name, kind: documentKind(file.name)!, status: "reading", progress: 0 }]);
+        void (async () => {
+          try {
+            const read = await readDocument(file, (note) => patchDocument(id, { note }), controller.signal);
+            patchDocument(id, { status: "uploading", pages: read.pages, note: undefined });
+            const saved = await uploadDocument(
+              read,
+              (documentId) => patchDocument(id, { documentId }),
+              (progress) => patchDocument(id, { progress }),
+              controller.signal,
+            );
+            patchDocument(id, { status: "ready", documentId: saved.id, progress: 1, pages: saved.pages, chars: saved.charCount });
+          } catch (error) {
+            if (controller.signal.aborted) return;
+            const message = documentErrorMessage(error);
+            if (message) toast(`${file.name}: ${message}`);
+            setDocFiles((list) => list.filter((d) => d.id !== id));
+          } finally {
+            docJobs.current.delete(id);
+          }
+        })();
+      }
+    },
+    [features, selection, maxDocuments, docFiles.length, chatDocuments, documentToolsOff, settings.toolsEnabled, patchDocument, toast],
+  );
+
+  /** Every picked, dropped or pasted file: images, spreadsheets and documents each go to their own list. */
+  const addFiles = useCallback(
+    (files: File[]) => {
+      const on = { images: imagesOn, tables: tablesOn, documents: documentsOn };
+      const routed = routeFiles(files, on);
+      if (routed.rejected[0]) toast(rejectedFileMessage(routed.rejected[0], on));
+      if (routed.images.length) addImages(routed.images);
+      if (routed.tables.length) addTables(routed.tables);
+      if (routed.documents.length) addDocuments(routed.documents);
+    },
+    [imagesOn, tablesOn, documentsOn, addImages, addTables, addDocuments, toast],
+  );
 
   const toggleCollapsed = () =>
     setCollapsed((c) => {
@@ -355,11 +454,12 @@ function ChatApp({
       setInput("");
       setAttachments([]);
       dropTables(tableFiles);
+      dropDocuments(docFiles);
       setResearchMode(false);
       setSidebarOpen(false);
       if (push && window.location.pathname !== "/") window.history.pushState(null, "", "/");
     },
-    [chat, settings.defaultModel, dropTables, tableFiles],
+    [chat, settings.defaultModel, dropTables, tableFiles, dropDocuments, docFiles],
   );
 
   // URL routing: /c/<id> opens a conversation; back/forward work.
@@ -410,12 +510,17 @@ function ChatApp({
 
   const researchOn = Boolean(features?.research.enabled);
   const send = async (text = input) => {
+    // Files whose feature the admin switched off meanwhile can't be sent: remove them (and what was uploaded).
+    if (!documentsOn && docFiles.length > 0) dropDocuments(docFiles);
+    if (!tablesOn && tableFiles.length > 0) dropTables(tableFiles);
     const message = text.trim();
     const images = imagesOn ? attachments : [];
     const sheets = tablesOn ? tableFiles : [];
+    const docs = documentsOn ? docFiles : [];
     const research = researchOn && researchMode;
-    if ((!message && images.length === 0 && sheets.length === 0) || chat.streaming || preparing > 0) return;
-    if (sheets.some((t) => t.status !== "ready")) return;
+    // A message may be only documents (e.g. "summarise this" is then implied), without text.
+    if ((!message && images.length === 0 && sheets.length === 0 && docs.length === 0) || chat.streaming || preparing > 0) return;
+    if (sheets.some((t) => t.status !== "ready") || docs.some((d) => d.status !== "ready")) return;
     if (images.length > 0 && selection.startsWith("ollama:")) {
       toast("Images work with the cloud models only. Remove the images or choose a cloud model.");
       return;
@@ -424,8 +529,14 @@ function ChatApp({
       toast("Spreadsheets work with the cloud models only. Remove the spreadsheet or choose a cloud model.");
       return;
     }
-    if (research && (images.length > 0 || sheets.length > 0 || !message)) {
-      toast("Deep research works with text questions only. Remove the images or spreadsheet, or turn Research off.");
+    if (docs.length > 0 && selection.startsWith("ollama:")) {
+      toast("Documents work with the cloud models only. Remove the documents or choose a cloud model.");
+      return;
+    }
+    if (research && (images.length > 0 || sheets.length > 0 || docs.length > 0 || !message)) {
+      // Without text there is always something attached (an empty message isn't sent at all).
+      const attached = [images.length ? "images" : "", sheets.length ? "spreadsheet" : "", docs.length ? "documents" : ""].filter(Boolean);
+      toast(`Deep research works with text questions only. Remove the ${orList(attached)}, or turn Research off.`);
       return;
     }
     if (research && selection.startsWith("ollama:")) {
@@ -435,6 +546,7 @@ function ChatApp({
     setInput("");
     setAttachments([]);
     setTableFiles([]);
+    setDocFiles([]);
     setResearchMode(false);
     stopSpeaking();
     const accepted = await chat.send(
@@ -443,11 +555,14 @@ function ChatApp({
       images.map(({ data, thumb }) => ({ data, thumb })),
       research,
       sheets.map(messageFile),
+      docs.map(messageDocument),
     );
     if (!accepted) {
+      // Put everything back, keeping files added while the message was on its way.
       setInput(message);
-      setAttachments(images);
-      setTableFiles(sheets);
+      setAttachments((list) => [...images, ...list]);
+      setTableFiles((list) => [...sheets, ...list]);
+      setDocFiles((list) => [...docs, ...list]);
       setResearchMode(research);
     }
   };
@@ -473,6 +588,7 @@ function ChatApp({
     ...(researchOn ? [{ key: "research", label: "Deep research", Icon: Telescope }] : []),
     ...(imagesOn ? [{ key: "images", label: "Understands images", Icon: Paperclip }] : []),
     ...(tablesOn ? [{ key: "tables", label: "Analyses spreadsheets", Icon: FileSpreadsheet }] : []),
+    ...(documentsOn ? [{ key: "documents", label: "Reads documents", Icon: FileText }] : []),
     ...(features?.voice.speechToText ? [{ key: "voice", label: "Voice input", Icon: Mic }] : []),
   ];
 
@@ -494,13 +610,13 @@ function ChatApp({
   );
   // 📎 and 🎤 appear only when the admin has them switched on and a service that can do them is set up.
   const composerMedia = {
+    onFiles: addFiles,
     ...(imagesOn
       ? {
           attachments: {
             items: attachments,
             preparing,
             max: maxImages,
-            onAdd: addImages,
             onRemove: (id: string) => setAttachments((list) => list.filter((a) => a.id !== id)),
           },
         }
@@ -510,8 +626,16 @@ function ChatApp({
           tables: {
             items: tableFiles,
             max: maxTables,
-            onAdd: addTables,
             onRemove: (id: string) => dropTables(tableFiles.filter((t) => t.id === id)),
+          },
+        }
+      : {}),
+    ...(documentsOn
+      ? {
+          documents: {
+            items: docFiles,
+            max: maxDocuments,
+            onRemove: (id: string) => dropDocuments(docFiles.filter((d) => d.id === id)),
           },
         }
       : {}),

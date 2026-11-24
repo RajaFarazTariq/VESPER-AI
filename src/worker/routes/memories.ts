@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app-env";
+import { documentsAllowed } from "../../shared/documents";
 import { getAppSettings } from "../db/app-settings";
 import { hasSearchableKnowledge } from "../db/knowledge";
 import { getConfig } from "../env";
@@ -68,8 +69,18 @@ export const toolRoutes = new Hono<AppEnv>().use(requireUser).get("/", async (c)
   const tables = settings.tablesEnabled;
   // Google (v0.15.0): the calendar and email tools are listed once connected, for what the user allowed.
   const google = googleAllowed(c.env, c.get("user"), settings) ? await googleConnection(c.env.DB, c.get("user").id) : null;
+  // The document tools (v0.16.0) are listed while documents are on (they're offered in chats that have one).
+  const documents = documentsAllowed(settings);
   return c.json({
-    tools: toolInfo({ web, knowledgeReady, github, tables, googleCalendar: google?.calendar === true, gmailSend: google?.gmailSend === true }).filter(
+    tools: toolInfo({
+      web,
+      knowledgeReady,
+      github,
+      tables,
+      googleCalendar: google?.calendar === true,
+      gmailSend: google?.gmailSend === true,
+      documents,
+    }).filter(
       (t) => t.available && !settings.disabledTools.includes(t.name),
     ),
   });

@@ -72,6 +72,8 @@ export interface ToolServerState {
   /** Google (v0.15.0): the user connected Google and allowed Calendar / sending email. */
   googleCalendar?: boolean;
   gmailSend?: boolean;
+  /** Documents (v0.16.0): in a chat, it has a ready document; in the tool lists, the admin has documents on. */
+  documents?: boolean;
 }
 
 export interface WebToolContext {

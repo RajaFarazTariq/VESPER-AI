@@ -4,6 +4,7 @@ import { VERSION } from "../version";
 import { addMemory, deleteMemory, MemoryLimitError } from "../db/memories";
 import { sensitiveMessage, sensitiveReason } from "../lib/sensitive";
 import { CalcError, evaluate } from "./calculator";
+import { DOCUMENT_TOOLS } from "./documents";
 import { searchKnowledge } from "./knowledge";
 import { GITHUB_TOOLS } from "./github";
 import { GITHUB_ACTION_TOOLS } from "./github-actions";
@@ -142,6 +143,8 @@ export const ALL_TOOLS: AgentTool[] = [
   searchKnowledge,
   // Exact figures from spreadsheets attached to the chat (v0.14.0).
   queryTable,
+  // Search and read the documents attached to the chat (v0.16.0).
+  ...DOCUMENT_TOOLS,
   ...GITHUB_TOOLS,
   // Prepare GitHub changes the user approves on a card (v0.13.0).
   ...GITHUB_ACTION_TOOLS,

@@ -67,6 +67,8 @@ export const appSettingsSchema = z.object({
   googleForUsers: z.boolean(),
   emailsPerDay: z.number().int().min(0).max(100),
   eventsPerDay: z.number().int().min(0).max(100),
+  documentsEnabled: z.boolean(),
+  documentsPerDay: z.number().int().min(0).max(1_000),
 });
 
 type Key = keyof AppSettingsDto;
@@ -113,6 +115,9 @@ export function defaultAppSettings(config: AppConfig): AppSettingsDto {
     googleForUsers: false,
     emailsPerDay: 20,
     eventsPerDay: 20,
+    // Documents in chat (v0.16.0): on for everyone (they only read the user's own file); 10 documents per user per day.
+    documentsEnabled: true,
+    documentsPerDay: 10,
   };
 }
 

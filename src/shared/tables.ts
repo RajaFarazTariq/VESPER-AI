@@ -28,8 +28,13 @@ export const TABLE_LIMITS = {
   chunkBytes: 200_000,
 } as const;
 
-/** Stored rows of all users' spreadsheets together (characters of JSON), so the free 5 GB database never fills up. */
-export const TABLE_STORAGE_CHARS = 1_000_000_000;
+/**
+ * Stored rows of all users' spreadsheets together (characters of JSON). On the free plan one D1 database holds at most
+ * 500 MB (5 GB is the whole account's total), and every write fails once it is full, so the stored rows are kept to
+ * about 120 MB. With the knowledge base (~150 MB at most) and documents in chat (~120 MB) that leaves room for the chats.
+ * (Until v0.16.0 this was 1,000 million, sized for 5 GB by mistake.)
+ */
+export const TABLE_STORAGE_CHARS = 120_000_000;
 
 const EXTENSIONS: Record<string, TableFileKind> = {
   csv: "csv",

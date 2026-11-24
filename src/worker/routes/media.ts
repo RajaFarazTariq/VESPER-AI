@@ -5,6 +5,7 @@ import type { AppEnv } from "../app-env";
 import { getAppSettings } from "../db/app-settings";
 import { addSpeechSeconds, speechSecondsToday } from "../db/users";
 import { getConfig, type Env } from "../env";
+import { DOCUMENT_LIMITS, documentsAllowed } from "../../shared/documents";
 import { TABLE_LIMITS } from "../../shared/tables";
 import { tablesAllowed } from "./files";
 import { AppError, badRequest } from "../lib/errors";
@@ -50,6 +51,14 @@ export function featuresFor(env: Env, settings: AppSettingsDto, admin: boolean):
       perChat: TABLE_LIMITS.perChat,
       maxRows: TABLE_LIMITS.rows,
       maxMegabytes: TABLE_LIMITS.fileBytes / (1024 * 1024),
+    },
+    documents: {
+      enabled: documentsAllowed(settings),
+      perDay: settings.documentsPerDay,
+      perChat: DOCUMENT_LIMITS.perChat,
+      perMessage: DOCUMENT_LIMITS.perMessage,
+      maxPages: DOCUMENT_LIMITS.pages,
+      maxMegabytes: DOCUMENT_LIMITS.fileBytes / (1024 * 1024),
     },
     google: { available: getConfig(env).googleConnectEnabled && (admin || settings.googleForUsers) },
   };
