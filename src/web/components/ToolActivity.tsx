@@ -301,10 +301,15 @@ const PLAIN: Record<string, [running: string, done: string]> = {
   read_document: ["Reading the document…", "Read the document"],
 };
 
+/** One step in plain words, e.g. "Reading your calendar…" while it runs (also VESPER Agent's step line, v0.17.0). */
+export function plainToolText(tool: ToolEventDto): string {
+  const [running, done] = PLAIN[tool.name] ?? [`${tool.label}…`, tool.label];
+  return tool.status === "running" ? running : tool.status === "error" ? `${tool.label}: didn't work` : done;
+}
+
 function PlainToolLine({ tool }: { tool: ToolEventDto }) {
   const Icon = tool.status === "running" ? Loader2 : tool.status === "error" ? CircleAlert : (TOOL_ICONS[tool.name] ?? Wrench);
-  const [running, done] = PLAIN[tool.name] ?? [`${tool.label}…`, tool.label];
-  const text = tool.status === "running" ? running : tool.status === "error" ? `${tool.label}: didn't work` : done;
+  const text = plainToolText(tool);
   return (
     <span className="inline-flex items-center gap-1.5">
       <Icon size={12} className={`shrink-0 ${tool.status === "running" ? "animate-spin" : ""}`} />

@@ -36,7 +36,22 @@ export interface SystemPromptInput {
   google?: { account: string; actions: GoogleActionDto[] };
   /** Documents attached to this chat (v0.16.0), numbered D1, D2…. */
   documents?: ChatDocumentMeta[];
+  /** Agent mode (v0.17.0): the user talks to VESPER Agent by voice or text; replies are spoken aloud. */
+  agent?: boolean;
 }
+
+/**
+ * Agent mode (v0.17.0): the full-screen voice agent. Replies are read aloud and shown as floating text, so they are
+ * short and spoken, and tasks end with a one-sentence confirmation of what actually happened.
+ */
+export const AGENT_RULES = [
+  "Agent mode: the user is talking to you through VESPER Agent, the full-screen voice agent. Your reply is read aloud and shown as short floating text. These rules take precedence over the formatting guidelines above:",
+  "- Their words may come from speech-to-text and contain small recognition errors: read them generously, and ask one short question only when you really can't tell what they mean.",
+  "- Reply in one to three short, natural spoken sentences. Plain text only: no Markdown, headings, tables, bullet lists, links or code unless they ask for them. Write numbers, times and dates the way people say them.",
+  "- When they ask you to do something, use your tools to do it, then confirm in one sentence what you did (\"Done, it's on your calendar for Friday at 3 PM.\"). An email, calendar event or GitHub change you prepare is not done yet: say it's ready on the card and waits for their approval.",
+  "- Never say an action happened unless a tool result confirms it. If a tool fails or something isn't possible, say so plainly in one sentence and suggest the next step.",
+  "- If the full answer needs a table, a long list or code, give the short spoken answer and say the full version is in the chat.",
+];
 
 /** Room in the system prompt for the spreadsheet overviews (all tables together, characters). */
 export const TABLES_PROMPT_CHARS = 6_000;
@@ -358,6 +373,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
       summary,
     );
   }
+  if (input.agent && !input.research) lines.push("", ...AGENT_RULES);
   const admin = input.adminInstructions?.trim();
   if (admin) {
     lines.push("", `Instructions from the administrator of ${input.appName} (they apply to every conversation):`, admin);

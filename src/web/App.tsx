@@ -1,8 +1,10 @@
 import { ArrowDown, FileSpreadsheet, FileText, Menu, Mic, Paperclip, Sparkles, SquarePen, Telescope } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { ConversationDto, FeaturesDto, ModelsResponse, PublicConfigDto, ToolInfoDto, UserDto, UserSettings } from "../shared/types";
 import { api, ApiError } from "./api/client";
 import { AdminDialog } from "./components/AdminDialog";
+import { AgentLauncher } from "./components/AgentCore";
+import { AgentMode } from "./components/AgentMode";
 import { Composer, ResearchToggle, ToolsButton } from "./components/Composer";
 import { LoginPage } from "./components/LoginPage";
 import { MessageItem } from "./components/MessageItem";
@@ -109,6 +111,48 @@ const readCollapsed = () => {
 
 const conversationIdFromPath = () => /^\/c\/([0-9a-f-]{36})$/i.exec(window.location.pathname)?.[1] ?? null;
 
+/**
+ * VESPER Agent's launcher on the welcome screen (v0.17.0) sits in the bottom-right corner, unless the message box
+ * reaches that corner (a long message on a short screen): then it moves just above the box, or below it. Returns the
+ * launcher's distance from the bottom of the screen in that case, else null (the corner).
+ */
+function useLauncherLift(box: RefObject<HTMLElement | null>, active: boolean): number | null {
+  const [lift, setLift] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!active || !el) {
+      setLift(null);
+      return;
+    }
+    const SIZE = 56;
+    const GAP = 8;
+    const place = () => {
+      const r = el.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const right = vw >= 640 ? 24 : 16; // right-4 / sm:right-6
+      const inCorner = r.bottom > vh - 24 - SIZE - GAP && r.right > vw - right - SIZE - GAP;
+      if (!inCorner) return setLift(null);
+      const above = r.top - 56; // below the header
+      const below = vh - r.bottom;
+      if (above >= SIZE + 2 * GAP || above >= below) setLift(vh - r.top + GAP);
+      else setLift(Math.max(GAP, below - SIZE - GAP));
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(el);
+    const scroller = el.closest(".overflow-y-auto");
+    scroller?.addEventListener("scroll", place, { passive: true });
+    window.addEventListener("resize", place);
+    return () => {
+      observer.disconnect();
+      scroller?.removeEventListener("scroll", place);
+      window.removeEventListener("resize", place);
+    };
+  }, [box, active]);
+  return lift;
+}
+
 function ChatApp({
   appName,
   session,
@@ -148,6 +192,12 @@ function ChatApp({
   /** Deep research for the next message (turns itself off after sending). */
   const [researchMode, setResearchMode] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  /** VESPER Agent (v0.17.0): open over the chat, growing out of the launcher at `agentOrigin`. */
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [agentOrigin, setAgentOrigin] = useState<{ x: number; y: number } | null>(null);
+  const agentOpenRef = useRef(false);
+  agentOpenRef.current = agentOpen;
+  const launcher = useRef<HTMLButtonElement>(null);
 
   const toast = useCallback((message: string, kind: Toast["kind"] = "error") => {
     const id = Date.now() + Math.random();
@@ -174,7 +224,8 @@ function ChatApp({
     ollamaUrl: settings.ollamaUrl,
     onError: toast,
     onReplyDone: (message) => {
-      if (settings.readAloud && voiceOn && canSpeak() && message.content.trim()) speak(message.id, message.content);
+      // Not while VESPER Agent is open: it is the one speaking then.
+      if (settings.readAloud && voiceOn && canSpeak() && message.content.trim() && !agentOpenRef.current) speak(message.id, message.content);
     },
     onConversationCreated: (conversation) => {
       setConversations((list) => [conversation, ...list.filter((c) => c.id !== conversation.id)]);
@@ -462,6 +513,73 @@ function ChatApp({
     [chat, settings.defaultModel, dropTables, tableFiles, dropDocuments, docFiles],
   );
 
+  // VESPER Agent (v0.17.0): its own chat state; its conversations join the sidebar like any other chat.
+  // Opening adds a history entry (same address), so Back closes the agent instead of moving the chat behind it.
+  const agentEntry = useRef(false);
+  /** Set just before our own history.back(): the popstate it causes is ignored by the chat. */
+  const ignorePop = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipNextPop = () => {
+    if (ignorePop.current) clearTimeout(ignorePop.current);
+    ignorePop.current = setTimeout(() => (ignorePop.current = null), 1000);
+  };
+  const openAgent = () => {
+    const rect = launcher.current?.getBoundingClientRect();
+    setAgentOrigin(rect && rect.width > 0 ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null);
+    setSidebarOpen(false);
+    window.history.pushState({ vesperAgent: true }, "", window.location.href);
+    agentEntry.current = true;
+    setAgentOpen(true);
+  };
+  /** Closed with ✕ or Esc: its history entry goes again. */
+  const closeAgent = useCallback(() => {
+    setAgentOpen(false);
+    if (!agentEntry.current) return;
+    agentEntry.current = false;
+    skipNextPop();
+    window.history.back();
+  }, []);
+  /** "Open in chat": the agent's history entry becomes the conversation's, so Back returns to where you were. */
+  const openAgentChat = useCallback(
+    (id: string) => {
+      setAgentOpen(false);
+      if (!agentEntry.current) {
+        void openConversation(id);
+        return;
+      }
+      agentEntry.current = false;
+      window.history.replaceState(null, "", `/c/${id}`);
+      void openConversation(id, false);
+    },
+    [openConversation],
+  );
+  // Closing puts the focus back on the launcher.
+  const agentWasOpen = useRef(false);
+  useEffect(() => {
+    if (agentOpen) {
+      agentWasOpen.current = true;
+      return;
+    }
+    if (!agentWasOpen.current) return;
+    agentWasOpen.current = false;
+    launcher.current?.focus();
+  }, [agentOpen]);
+  /** VESPER Agent's launcher, placed by the screen it is on (welcome screen or conversation). */
+  const agentLauncher = (className = "") => <AgentLauncher ref={launcher} onClick={openAgent} hidden={agentOpen} className={className} />;
+  const agentConversationCreated = useCallback(
+    (conversation: ConversationDto) => setConversations((list) => [conversation, ...list.filter((c) => c.id !== conversation.id)]),
+    [],
+  );
+  const agentConversationActivity = useCallback(
+    (id: string) => {
+      setConversations((list) => {
+        const found = list.find((c) => c.id === id);
+        return found ? [{ ...found, updatedAt: Date.now() }, ...list.filter((c) => c.id !== id)] : list;
+      });
+      void loadModels();
+    },
+    [loadModels],
+  );
+
   // URL routing: /c/<id> opens a conversation; back/forward work.
   useEffect(() => {
     // Back from GitHub (v0.12.0): open Settings → Connections and say how it went.
@@ -498,7 +616,24 @@ function ChatApp({
     const initial = conversationIdFromPath();
     if (initial) void openConversation(initial, false);
     else if (window.location.search) window.history.replaceState(null, "", "/");
-    const onPop = () => {
+    const onPop = (event: PopStateEvent) => {
+      // VESPER Agent (v0.17.0): none of these move the chat. Our own step back after closing the agent; Back while it
+      // is open (closes it); Forward into an earlier agent entry (stepped back over).
+      if (ignorePop.current) {
+        clearTimeout(ignorePop.current);
+        ignorePop.current = null;
+        return;
+      }
+      if (agentOpenRef.current) {
+        agentEntry.current = false;
+        setAgentOpen(false);
+        return;
+      }
+      if ((event.state as { vesperAgent?: boolean } | null)?.vesperAgent) {
+        skipNextPop();
+        window.history.back();
+        return;
+      }
       const id = conversationIdFromPath();
       if (id) void openConversation(id, false);
       else newChat(false);
@@ -581,6 +716,8 @@ function ChatApp({
   const lastIndex = chat.messages.length - 1;
   const lastUserIndex = chat.messages.map((m) => m.role).lastIndexOf("user");
   const empty = chat.messages.length === 0 && !chat.loading;
+  const heroBox = useRef<HTMLDivElement>(null);
+  const launcherLift = useLauncherLift(heroBox, empty);
   const activeTitle = conversations.find((c) => c.id === chat.conversationId)?.title ?? null;
   const firstName = (user.name ?? "").trim().split(/\s+/)[0] || null;
   const capabilities = Object.keys(CAPABILITY_LABELS).filter((name) => activeNames.has(name));
@@ -742,7 +879,7 @@ function ChatApp({
                 <p className="mt-2 max-w-md text-[15px] text-[var(--text-soft)]">What would you like to explore today?</p>
               </div>
 
-              <div className="rise-in mt-7">
+              <div ref={heroBox} className="rise-in mt-7">
                 <Composer
                   variant="hero"
                   value={input}
@@ -774,6 +911,10 @@ function ChatApp({
                 </div>
               ) : null}
 
+            </div>
+            {/* The message box is in the middle here, so the launcher sits in the corner (moved when the box reaches it). */}
+            <div className="fixed bottom-6 right-4 z-20 flex sm:right-6" style={launcherLift === null ? undefined : { bottom: launcherLift }}>
+              {agentLauncher()}
             </div>
           </div>
         ) : (
@@ -826,6 +967,8 @@ function ChatApp({
                 controls={composerControls}
                 {...composerMedia}
               />
+              {/* Just above the message box, however tall it grows (so never over Send); bottom-right on wide screens. */}
+              {agentLauncher("absolute bottom-full right-3 z-20 mb-2 sm:right-4 xl:fixed xl:bottom-6 xl:right-6 xl:mb-0")}
             </div>
           </>
         )}
@@ -845,6 +988,18 @@ function ChatApp({
             setSettingsOpen(false);
             toast("Settings saved.", "info");
           }}
+        />
+      ) : null}
+      {agentOpen ? (
+        <AgentMode
+          firstName={firstName}
+          settings={settings}
+          features={features}
+          origin={agentOrigin}
+          onClose={closeAgent}
+          onOpenInChat={openAgentChat}
+          onConversationCreated={agentConversationCreated}
+          onConversationActivity={agentConversationActivity}
         />
       ) : null}
       {adminOpen && user.role === "admin" ? (

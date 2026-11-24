@@ -52,6 +52,8 @@ export type ChatRequestBody = {
   files?: string[];
   /** Documents added through api.documents, sent with this message (v0.16.0). */
   documents?: string[];
+  /** VESPER Agent (v0.17.0): short spoken replies; tasks are done with the tools and confirmed in a sentence. */
+  agent?: boolean;
 };
 
 export class ApiError extends Error {

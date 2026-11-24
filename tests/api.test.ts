@@ -913,3 +913,28 @@ describe("v0.10.0: smarter memory", () => {
     expect(calls[0]!.system).toContain("trip to Skardu in June");
   });
 });
+
+describe("agent mode (v0.17.0)", () => {
+  it("adds the short spoken-reply rules only for VESPER Agent messages, and refuses research there", async () => {
+    const cookie = await login();
+    const systems: string[] = [];
+    mockFetch((url, init) => {
+      if (url === "https://groq.test/v1/chat/completions") {
+        systems.push(JSON.parse(String(init?.body)).messages[0].content);
+        return sseResponse(["Done."]);
+      }
+      return new Response("unexpected " + url, { status: 500 });
+    });
+    const send = (body: object) => call("/api/chat", { method: "POST", body: JSON.stringify({ model: "auto", ...body }), cookie, env: PROVIDERS });
+
+    expect((await send({ message: "What time is it in London?", agent: true })).response.status).toBe(200);
+    expect(systems[0]).toContain("Agent mode: the user is talking to you through VESPER Agent");
+    expect(systems[0]).toContain("Never say an action happened unless a tool result confirms it.");
+    expect((await send({ message: "What time is it in London?" })).response.status).toBe(200);
+    expect(systems[1]).not.toContain("Agent mode");
+
+    const research = await send({ message: "Research solar power", agent: true, research: true });
+    expect(research.response.status).toBe(400);
+    expect(research.json.error.message).toContain("Deep research isn't available in VESPER Agent");
+  });
+});
