@@ -9,7 +9,7 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.16.0**.
+Current version: **0.17.0**.
 
 - [What VESPER does](#what-vesper-does)
 - [How VESPER is different](#how-vesper-is-different)
@@ -38,6 +38,8 @@ question needs a look-up, fetches what it needs and cites it:
   "document, page X".
 - **Your own documents**: attach a PDF, Word, text or Markdown file to a chat and ask about it; answers cite "file,
   page X", and each cited passage can be opened under the answer.
+- **VESPER Agent**: a separate voice agent next to the chat. The glowing orb opens a full-screen animated core; talk or
+  type, it answers out loud, does tasks with the same tools, and confirms what it did.
 - **Your spreadsheets**: attach a CSV or Excel file and ask questions about it; totals, averages, counts and trends are
   calculated exactly over every row, the answer says what was calculated, and each result comes with a chart or table
   you can download as CSV.
@@ -153,6 +155,20 @@ choices:
   in order for summaries and given pages, and cites them as "(report.pdf, page 12)". Under the answer, each cited
   passage is a chip; open it to see the text that was used. **Check** works on these answers too.
 - A scanned PDF (pictures of pages) has no text to read: convert it to text first.
+
+**VESPER Agent** (v0.17.0)
+- The glowing orb in the bottom-right corner opens it (the normal chat stays as it is). The screen dims, the core boots
+  up and VESPER greets you by name, on screen and out loud.
+- Type, or tap the microphone and speak: listening stops by itself when you stop talking, and your words are turned
+  into text (the same free speech-to-text as the 🎤 in the chat). **Hands-free** listens again after each answer, for a
+  real back-and-forth. The core reacts: it pulses with your voice, spins faster while thinking and pulses while
+  speaking. Tap the core to stop it talking.
+- Answers are short and spoken (the device's own voices; the speaker button switches voice off), shown as floating
+  text around the core. The step being done is shown ("Checking your calendar…"), and tasks end with a one-sentence
+  confirmation. Emails, events and GitHub changes appear on the usual approval cards beside the core and are sent only
+  when you press Approve.
+- Each session is saved as a normal chat in the sidebar; **Open in chat** shows the full answer there. Esc, ✕ or the
+  phone's Back button closes it back into the orb (and turns the microphone off).
 
 **Storage meter** (v0.16.0)
 - Admin panel → App settings → **Storage** shows the database's size against the free plan's 500 MB, and the text kept
@@ -408,6 +424,8 @@ only when the admin turns on **Local models for users**.
   the answer, with **Download CSV**.
 - **Documents**: use the paperclip to attach a PDF, Word, text or Markdown file (up to three per message), wait until
   its chip is ready, then ask about it. Open a cited passage's chip under the answer to see where it came from.
+- **VESPER Agent**: click the glowing orb (bottom right), then talk or type. Turn on **Hands-free** for a spoken
+  conversation; press Esc or ✕ to close. Headphones help in hands-free mode, so it doesn't hear itself.
 - **Under each answer**: copy, read aloud, 👍/👎, **Check** (when the answer used sources) and regenerate.
 - **GitHub changes**: ask for an issue, a comment or a pull request; read the card under the answer, then **Approve**
   or **Reject**.
@@ -534,6 +552,9 @@ losing data; a test applies every migration over existing data to check nothing 
 - **Google asks to reconnect**: while VESPER's Google app is in testing, Google ends the connection every 7 days;
   reconnect in Settings → Connections. **"Gmail (or Google Calendar) isn't switched on"**: the administrator needs to
   enable that API in Google Cloud.
+- **VESPER Agent doesn't hear you**: allow the microphone for the site (the padlock in the address bar). If it stops
+  too early or too late in a noisy room, tap the microphone again to finish. **It doesn't speak**: the device needs a
+  speech voice (most phones and computers have one); the speaker button must be on.
 - **A document is refused**: the message says why (over 20 MB or 300 pages, no readable text such as a scanned PDF,
   or not a PDF, Word .docx, text or Markdown file). Split a long file, or save an old .doc as .docx.
 - **A spreadsheet is refused**: the message says why (over 10 MB or 50,000 rows, password-protected, or not a CSV,

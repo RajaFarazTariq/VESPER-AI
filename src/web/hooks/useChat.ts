@@ -16,6 +16,8 @@ interface Options {
   onError: (message: string) => void;
   /** A cloud reply finished (e.g. to read it aloud). */
   onReplyDone?: (message: MessageDto) => void;
+  /** VESPER Agent (v0.17.0): every request asks for the agent's short spoken replies (`agent: true`). */
+  agent?: boolean;
 }
 
 const placeholder = (id: string, provider: string | null = null, model: string | null = null): UiMessage => ({
@@ -203,7 +205,7 @@ export function useChat(options: Options) {
       };
 
       try {
-        await streamChat(body, onEvent, controller.signal);
+        await streamChat(optionsRef.current.agent ? { ...body, agent: true } : body, onEvent, controller.signal);
         settle();
         if (controller.signal.aborted) {
           setMessages((prev) =>

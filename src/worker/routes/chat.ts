@@ -86,6 +86,8 @@ const chatSchema = z
     images: z.array(chatImageSchema).max(MAX_IMAGES_PER_MESSAGE, `Up to ${MAX_IMAGES_PER_MESSAGE} images per message.`).optional(),
     /** Deep research: plan → several searches → read pages → a written brief. */
     research: z.boolean().optional(),
+    /** Agent mode (v0.17.0): the message comes from VESPER Agent (voice or text); replies are short and spoken. */
+    agent: z.boolean().optional(),
     /** A spreadsheet added beforehand through /api/files (only with a new message, v0.14.0). */
     files: z.array(z.uuid()).max(TABLE_LIMITS.perMessage, "Attach one spreadsheet per message.").optional(),
     /** Documents added beforehand through /api/documents (only with a new message, v0.16.0). */
@@ -95,6 +97,7 @@ const chatSchema = z
       .optional(),
   })
   .refine((d) => !(d.research && d.images?.length), { message: "Deep research works with text questions only. Remove the images." })
+  .refine((d) => !(d.research && d.agent), { message: "Deep research isn't available in VESPER Agent. Ask in the chat instead." })
   .refine((d) => !(d.research && d.files?.length), { message: "Deep research works with text questions only. Remove the spreadsheet." })
   .refine((d) => !(d.research && d.documents?.length), { message: "Deep research works with text questions only. Remove the documents." })
   .refine((d) => !d.files?.length || (!d.regenerate && !d.edit), { message: "Spreadsheets can only be attached to a new message." })
@@ -195,6 +198,8 @@ async function prepareTurn(
     sendImages?: string[];
     /** Deep research: the system prompt gets the research rules instead of tool lines. */
     research?: boolean;
+    /** Agent mode (v0.17.0): short spoken replies that confirm what was done. */
+    agent?: boolean;
     /** May ask a model to summarise the older part of a long chat (cloud turns; not local models). */
     summarize?: boolean;
     /** GitHub changes are offered: the prompt lists what happened to the ones prepared in this chat (v0.13.0). */
@@ -290,6 +295,7 @@ async function prepareTurn(
       ...(extras.knowledge ? { knowledge: extras.knowledge } : {}),
       ...(extras.sendImages?.length ? { images: true } : {}),
       ...(extras.research ? { research: true } : {}),
+      ...(extras.agent ? { agent: true } : {}),
       ...(summary ? { summary } : {}),
       ...(githubChanges.length ? { githubChanges } : {}),
       ...(tables.length ? { tables } : {}),
@@ -512,6 +518,7 @@ export const chatRoutes = new Hono<AppEnv>()
         ...(!research && tools.some((t) => t.name === "search_knowledge") ? { knowledge } : {}),
         sendImages,
         research,
+        agent: Boolean(body.agent),
         summarize: true,
         githubChanges: githubActionsOn,
         google: google ? { email: google.email } : null,

@@ -529,3 +529,830 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
+
+/* ==========================================================================================================
+ * Agent mode (v0.17.0)
+ * VESPER Agent's full-screen mode: its own always-dark tokens (--ag-*), the dimmed backdrop, HUD panels and labels,
+ * the floating text, the launcher orb and the animated core (components/AgentCore.tsx). The normal app's "no glow"
+ * rule doesn't apply here: glow, cyan HUD lines and motion are the owner's explicit choice for this mode, kept to
+ * thin crisp lines. Everything that moves stands still for prefers-reduced-motion (the core then shows its state by
+ * colour only). The classes sit in the components layer, so utility classes on the same element (position, size,
+ * z-index, padding) still win.
+ * ========================================================================================================== */
+
+/* The core's state colours, registered so a state change fades them instead of switching at once. */
+@property --agc-line {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #22d3ee;
+}
+@property --agc-accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #3b82f6;
+}
+@property --agc-hot {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #cffafe;
+}
+@property --agc-glow {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #22d3ee;
+}
+
+@layer components {
+  /* --ag-cyan-soft is a translucent cyan for fills (like --accent-soft); --ag-panel is the HUD panel surface. */
+  .agent-mode,
+  .agent-launcher {
+    --ag-bg: #04080f;
+    --ag-cyan: #22d3ee;
+    --ag-cyan-soft: rgb(34 211 238 / 0.14);
+    --ag-blue: #3b82f6;
+    --ag-text: #dff7ff;
+    --ag-text-soft: #8fb4c6;
+    --ag-panel: rgb(6 16 27 / 0.74);
+    --ag-border: rgb(34 211 238 / 0.24);
+    --ag-warn: #f59e0b;
+  }
+
+  /* The overlay itself: near-black with a faint cyan haze behind the core; translucent, so the dimmed page shows
+     through a little. */
+  .agent-mode {
+    color: var(--ag-text);
+    background:
+      radial-gradient(48% 40% at 50% 42%, rgb(14 74 104 / 0.24), transparent 72%),
+      radial-gradient(120% 90% at 50% 40%, transparent 55%, rgb(0 0 0 / 0.45)),
+      rgb(4 8 15 / 0.86);
+    color-scheme: dark;
+    animation: ag-fade-in 360ms ease-out both;
+  }
+
+  /* Full-screen dim behind the overlay. */
+  .agent-dim {
+    position: fixed;
+    inset: 0;
+    background: rgb(1 3 8 / 0.62);
+    -webkit-backdrop-filter: blur(6px) saturate(0.8);
+    backdrop-filter: blur(6px) saturate(0.8);
+    animation: ag-fade-in 300ms ease-out both;
+  }
+
+  /* HUD panel (cards, sources): translucent, a thin cyan border and small corner marks. */
+  .agent-panel {
+    --ag-tick: color-mix(in srgb, var(--ag-cyan, #22d3ee) 80%, transparent);
+    position: relative;
+    padding: 10px;
+    border: 1px solid var(--ag-border, rgb(34 211 238 / 0.24));
+    border-radius: 8px;
+    background:
+      linear-gradient(var(--ag-tick), var(--ag-tick)) left 4px top 4px / 9px 1px no-repeat,
+      linear-gradient(var(--ag-tick), var(--ag-tick)) left 4px top 4px / 1px 9px no-repeat,
+      linear-gradient(var(--ag-tick), var(--ag-tick)) right 4px top 4px / 9px 1px no-repeat,
+      linear-gradient(var(--ag-tick), var(--ag-tick)) right 4px top 4px / 1px 9px no-repeat,
+      linear-gradient(var(--ag-tick), var(--ag-tick)) left 4px bottom 4px / 9px 1px no-repeat,
+      linear-gradient(var(--ag-tick), var(--ag-tick)) left 4px bottom 4px / 1px 9px no-repeat,
+      linear-gradient(var(--ag-tick), var(--ag-tick)) right 4px bottom 4px / 9px 1px no-repeat,
+      linear-gradient(var(--ag-tick), var(--ag-tick)) right 4px bottom 4px / 1px 9px no-repeat,
+      linear-gradient(180deg, rgb(34 211 238 / 0.06), transparent 45%),
+      var(--ag-panel, rgb(6 16 27 / 0.74));
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    box-shadow:
+      0 18px 48px -16px rgb(0 0 0 / 0.8),
+      inset 0 1px 0 rgb(103 232 249 / 0.07);
+  }
+
+  /* Floating text (the user's words, VESPER's reply): fades and rises in, slightly out of focus at first. */
+  .agent-text-in {
+    animation: ag-text-in 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  /* Tiny uppercase HUD label (status lines, tool steps, chips). */
+  .agent-hud-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    line-height: 1.3;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ag-text-soft, #8fb4c6);
+  }
+
+  /* ---------- Launcher orb (AgentLauncher) ----------
+   * The button is only the hit area and focus ring; the visible orb is the inner body, so the user's positioning
+   * classes (including Tailwind's translate/scale) never fight the orb's own hover and hide motion. */
+  .agent-launcher {
+    display: inline-block;
+    width: 56px;
+    height: 56px;
+    padding: 0;
+    border: 0;
+    border-radius: 9999px;
+    background: transparent;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+      opacity 240ms ease,
+      visibility 0s linear 0s;
+  }
+  .agent-launcher--hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      opacity 180ms ease,
+      visibility 0s linear 180ms;
+  }
+  .agent-launcher:focus-visible {
+    outline: 2px solid #67e8f9;
+    outline-offset: 3px;
+  }
+  .agent-launcher__body {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    border: 1px solid rgb(34 211 238 / 0.45);
+    background: radial-gradient(circle at 50% 50%, #0b2a40 0%, #06121e 58%, var(--ag-bg) 100%);
+    box-shadow:
+      0 0 0 1px rgb(2 6 12 / 0.65),
+      0 10px 26px -10px rgb(0 0 0 / 0.75),
+      0 0 20px -4px rgb(34 211 238 / 0.55),
+      inset 0 0 14px rgb(34 211 238 / 0.2);
+    transition:
+      transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1),
+      border-color 220ms ease,
+      box-shadow 220ms ease;
+  }
+  .agent-launcher:hover .agent-launcher__body,
+  .agent-launcher:focus-visible .agent-launcher__body {
+    transform: scale(1.06);
+    border-color: rgb(103 232 249 / 0.85);
+    box-shadow:
+      0 0 0 1px rgb(2 6 12 / 0.65),
+      0 10px 26px -10px rgb(0 0 0 / 0.75),
+      0 0 28px -2px rgb(34 211 238 / 0.75),
+      inset 0 0 16px rgb(34 211 238 / 0.3);
+  }
+  .agent-launcher:active .agent-launcher__body {
+    transform: scale(0.96);
+  }
+  .agent-launcher--hidden .agent-launcher__body {
+    transform: scale(0.55);
+  }
+  .agent-launcher__svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .agent-launcher__line {
+    fill: none;
+    stroke: var(--ag-cyan);
+  }
+  .agent-launcher__nucleus {
+    fill: #ffffff;
+  }
+  .agl-stop-white {
+    stop-color: #ffffff;
+  }
+  .agl-stop-hot {
+    stop-color: #cffafe;
+  }
+  .agl-stop-cyan {
+    stop-color: var(--ag-cyan);
+  }
+  .agl-stop-blue {
+    stop-color: var(--ag-blue);
+  }
+  .agent-launcher__core {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: agl-breathe 3.4s ease-in-out infinite;
+  }
+  .agent-launcher__ring {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: ag-spin 14s linear infinite;
+  }
+  .agent-launcher__beacon {
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    border: 1px solid rgb(34 211 238 / 0.5);
+    opacity: 0;
+    animation: agl-beacon 3.4s ease-out infinite;
+  }
+
+  /* ---------- The core (AgentCore) ----------
+   * Stacked full-size layers. Colours come from the four registered --agc-* properties, which each state sets;
+   * the rings' speed per state is set from the component (playback rate), so it eases instead of jumping. */
+  .agent-core {
+    --agc-line: var(--ag-cyan, #22d3ee);
+    --agc-accent: var(--ag-blue, #3b82f6);
+    --agc-hot: #cffafe;
+    --agc-glow: var(--ag-cyan, #22d3ee);
+    position: relative;
+    display: block;
+    flex: none;
+    isolation: isolate;
+    transition:
+      --agc-line 600ms ease,
+      --agc-accent 600ms ease,
+      --agc-hot 600ms ease,
+      --agc-glow 600ms ease;
+  }
+  .agent-core--listening {
+    --agc-line: #5eeaff;
+    --agc-hot: #ffffff;
+    --agc-glow: #38e1ff;
+  }
+  .agent-core--thinking {
+    --agc-accent: #60a5fa;
+    --agc-glow: #38bdf8;
+  }
+  .agent-core--speaking {
+    --agc-hot: #ecfeff;
+    --agc-glow: #67e8f9;
+  }
+  /* Errors tint quickly (an alert); going back to cyan uses the calmer 600 ms. */
+  .agent-core--error {
+    --agc-line: var(--ag-warn, #f59e0b);
+    --agc-accent: #ef4444;
+    --agc-hot: #fde68a;
+    --agc-glow: #f97316;
+    transition-duration: 250ms;
+  }
+
+  .ag-layer {
+    position: absolute;
+    inset: 0;
+  }
+  .ag-svg {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  /* Rotation. Each ring is its own <svg>, turned as a whole around its centre. */
+  .ag-spin,
+  .ag-scan {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: ag-spin 90s linear infinite;
+  }
+  .ag-spin--r2 {
+    animation-name: ag-spin-ccw;
+    animation-duration: 56s;
+  }
+  .ag-spin--r3 {
+    animation-duration: 34s;
+  }
+  .ag-spin--r4 {
+    animation-name: ag-spin-ccw;
+    animation-duration: 24s;
+  }
+  .ag-spin--iris {
+    animation-duration: 48s;
+  }
+  .ag-scan {
+    animation: ag-scan 1.5s linear infinite;
+  }
+
+  /* Strokes and fills. */
+  .ag-line {
+    fill: none;
+    stroke: var(--agc-line);
+  }
+  .ag-accent {
+    fill: none;
+    stroke: var(--agc-accent);
+  }
+  .ag-hot {
+    fill: none;
+    stroke: var(--agc-hot);
+  }
+  .ag-fill {
+    fill: var(--agc-line);
+  }
+  .ag-hot-fill {
+    fill: var(--agc-hot);
+  }
+  .ag-scale {
+    stroke-opacity: 0.45;
+  }
+  .ag-ticks {
+    stroke-opacity: 0.32;
+  }
+  .ag-ticks--major {
+    stroke-opacity: 0.7;
+  }
+  .ag-faint {
+    stroke-opacity: 0.16;
+  }
+  .ag-index {
+    fill-opacity: 0.9;
+  }
+  .ag-index--soft {
+    fill-opacity: 0.4;
+  }
+  .ag-flank {
+    stroke-opacity: 0.4;
+  }
+  .ag-flank-dot {
+    fill-opacity: 0.7;
+  }
+  .ag-label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.3em;
+    text-anchor: middle;
+    dominant-baseline: central;
+    fill: var(--agc-line);
+    fill-opacity: 0.85;
+  }
+  .ag-label--state {
+    fill: var(--agc-hot);
+    fill-opacity: 0.7;
+    animation: ag-fade-in 420ms ease-out both;
+  }
+  .ag-r1-arc {
+    stroke-opacity: 0.55;
+  }
+  .ag-r1-caps {
+    stroke-opacity: 0.5;
+  }
+  .ag-r1-dot {
+    fill-opacity: 0.6;
+  }
+  .ag-r1-hatch {
+    stroke-opacity: 0.45;
+  }
+  .ag-band {
+    fill: none;
+    stroke: color-mix(in srgb, var(--agc-accent) 55%, var(--agc-line));
+    stroke-opacity: 0.4;
+    transition: stroke-opacity 600ms ease;
+  }
+  .ag-bright {
+    stroke-opacity: 0.95;
+  }
+  .ag-r3 {
+    stroke-opacity: 0.5;
+  }
+  .ag-r3-arc {
+    stroke-opacity: 0.8;
+  }
+  .ag-shell {
+    stroke-opacity: 0.55;
+  }
+  .ag-shell-inner {
+    stroke-opacity: 0.16;
+  }
+  .ag-iris {
+    stroke-opacity: 0.35;
+  }
+  .ag-iris-arc {
+    stroke-opacity: 0.55;
+  }
+  .ag-nucleus-glow {
+    fill-opacity: 0.9;
+  }
+  .ag-stop-white {
+    stop-color: #ffffff;
+  }
+  .ag-stop-hot {
+    stop-color: var(--agc-hot);
+  }
+  .ag-stop-line {
+    stop-color: var(--agc-line);
+  }
+  .ag-stop-accent {
+    stop-color: var(--agc-accent);
+  }
+
+  /* Soft bloom behind everything. */
+  .ag-bloom {
+    inset: 6%;
+    border-radius: 50%;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in srgb, var(--agc-glow) 46%, transparent) 0%,
+      color-mix(in srgb, var(--agc-glow) 20%, transparent) 28%,
+      color-mix(in srgb, var(--agc-accent) 9%, transparent) 58%,
+      transparent 100%
+    );
+    opacity: 0.72;
+    transition: opacity 600ms ease;
+  }
+
+  /* The core and the layers that only some states show. */
+  .ag-heart {
+    position: absolute;
+    inset: 0;
+  }
+  .ag-layer--scan,
+  .ag-layer--ripples {
+    opacity: 0;
+    transition: opacity 500ms ease;
+  }
+  .ag-ripple {
+    position: absolute;
+    left: 32.5%;
+    top: 32.5%;
+    width: 35%;
+    height: 35%;
+    border-radius: 50%;
+    border: 1.5px solid color-mix(in srgb, var(--agc-line) 85%, transparent);
+    box-shadow:
+      0 0 12px color-mix(in srgb, var(--agc-glow) 55%, transparent),
+      inset 0 0 12px color-mix(in srgb, var(--agc-glow) 35%, transparent);
+    opacity: 0;
+    animation: ag-ripple 2.3s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  }
+  .ag-ripple--late {
+    animation-delay: -1.15s;
+  }
+
+  /* Voice ring: the whole ring swells a little with the level, and each bar grows by its own amount. */
+  .ag-voice {
+    position: absolute;
+    inset: 0;
+    transform: scale(calc(1 + var(--ag-level, 0) * 0.07));
+    transition: transform 120ms ease-out;
+  }
+  .ag-bar {
+    --ag-k: 1;
+    fill: var(--agc-line);
+    fill-opacity: 0.34;
+    transform-box: fill-box;
+    transform-origin: 50% 100%;
+    transform: scaleY(calc(1 + var(--ag-level, 0) * var(--ag-k)));
+    transition:
+      transform 110ms ease-out,
+      fill-opacity 500ms ease;
+  }
+  .ag-bar--1 {
+    --ag-k: 0.6;
+  }
+  .ag-bar--2 {
+    --ag-k: 1.2;
+  }
+  .ag-bar--3 {
+    --ag-k: 1.8;
+  }
+  .ag-bar--4 {
+    --ag-k: 2.4;
+  }
+  .ag-bar--5 {
+    --ag-k: 3;
+  }
+
+  /* booting: the scale draws round, the rings swing in from the outside, then the core ignites (about 1.4 s). */
+  .agent-core--booting .ag-scale {
+    animation: ag-draw 1000ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  }
+  .agent-core--booting .ag-ticks,
+  .agent-core--booting .ag-index,
+  .agent-core--booting .ag-faint {
+    animation: ag-fade-in 600ms ease-out 200ms both;
+  }
+  .agent-core--booting .ag-label-group {
+    animation: ag-fade-in 500ms ease-out 850ms both;
+  }
+  .agent-core--booting .ag-layer--r1 {
+    animation: ag-ring-in 800ms cubic-bezier(0.16, 0.84, 0.3, 1) 100ms both;
+  }
+  .agent-core--booting .ag-layer--r2 {
+    animation: ag-ring-in-ccw 800ms cubic-bezier(0.16, 0.84, 0.3, 1) 220ms both;
+  }
+  .agent-core--booting .ag-layer--r3 {
+    animation: ag-ring-in 800ms cubic-bezier(0.16, 0.84, 0.3, 1) 340ms both;
+  }
+  .agent-core--booting .ag-layer--voice {
+    animation: ag-ring-in-ccw 800ms cubic-bezier(0.16, 0.84, 0.3, 1) 460ms both;
+  }
+  .agent-core--booting .ag-heart {
+    animation: ag-ignite 800ms cubic-bezier(0.2, 0.8, 0.2, 1) 600ms both;
+  }
+  .agent-core--booting .ag-bloom {
+    animation: ag-bloom-ignite 850ms ease-out 560ms both;
+  }
+
+  /* idle: slow turn, soft breathing glow. */
+  .agent-core--idle .ag-heart {
+    animation: ag-breathe 5.2s ease-in-out infinite;
+  }
+  .agent-core--idle .ag-bloom {
+    animation: ag-bloom-breathe 5.2s ease-in-out infinite;
+  }
+
+  /* listening: brighter; the voice ring, core and glow follow the level. */
+  .agent-core--listening .ag-bloom {
+    opacity: 1;
+    transform: scale(calc(1 + var(--ag-level, 0) * 0.16));
+    transition:
+      opacity 600ms ease,
+      transform 120ms ease-out;
+  }
+  .agent-core--listening .ag-heart {
+    transform: scale(calc(1 + var(--ag-level, 0) * 0.1));
+    transition: transform 110ms ease-out;
+  }
+  .agent-core--listening .ag-bar {
+    fill-opacity: 0.95;
+  }
+  .agent-core--listening .ag-band {
+    stroke-opacity: 0.45;
+  }
+
+  /* thinking: faster turn, the scanning arc, a quick shimmer in the core. */
+  .agent-core--thinking .ag-layer--scan {
+    opacity: 1;
+  }
+  .agent-core--thinking .ag-heart {
+    animation: ag-think 1.6s ease-in-out infinite;
+  }
+  .agent-core--thinking .ag-bloom {
+    animation: ag-bloom-breathe 1.6s ease-in-out infinite;
+  }
+
+  /* speaking: a rhythmic pulse and rings of light leaving the core. */
+  .agent-core--speaking .ag-layer--ripples {
+    opacity: 1;
+  }
+  .agent-core--speaking .ag-heart {
+    animation: ag-speak 1.15s ease-in-out infinite;
+  }
+  .agent-core--speaking .ag-bloom {
+    animation: ag-bloom-speak 1.15s ease-in-out infinite;
+  }
+  .agent-core--speaking .ag-bar {
+    fill-opacity: 0.6;
+  }
+
+  /* error: amber/red tint, a short flicker, rings slow down. */
+  .agent-core--error .ag-heart,
+  .agent-core--error .ag-layer--r2 {
+    animation: ag-fault 750ms ease-out both;
+  }
+  .agent-core--error .ag-bloom {
+    opacity: 0.6;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .agent-mode,
+    .agent-dim,
+    .agent-text-in,
+    .agent-launcher *,
+    .agent-core,
+    .agent-core * {
+      animation: none !important;
+    }
+    .agent-launcher__body,
+    .ag-voice,
+    .ag-bar,
+    .agent-core--listening .ag-heart,
+    .agent-core--listening .ag-bloom {
+      transform: none !important;
+    }
+    /* The level shows as brightness instead of size. */
+    .agent-core--listening .ag-layer--voice {
+      opacity: calc(0.45 + var(--ag-level, 0) * 0.55);
+    }
+    /* Speaking: two still halos around the core instead of moving ripples. */
+    .agent-core--speaking .ag-bloom {
+      opacity: 1;
+    }
+    .agent-core--speaking .ag-ripple {
+      opacity: 0.45;
+      transform: scale(1.4);
+    }
+    .agent-core--speaking .ag-ripple--late {
+      opacity: 0.2;
+      transform: scale(1.8);
+    }
+  }
+}
+
+@keyframes ag-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes ag-text-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+@keyframes ag-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ag-spin-ccw {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+@keyframes ag-scan {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ag-draw {
+  from {
+    stroke-dasharray: 0 960;
+  }
+  to {
+    stroke-dasharray: 960 0;
+  }
+}
+@keyframes ag-ring-in {
+  from {
+    opacity: 0;
+    transform: scale(0.84) rotate(-50deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ag-ring-in-ccw {
+  from {
+    opacity: 0;
+    transform: scale(0.84) rotate(50deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ag-ignite {
+  0% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes ag-bloom-ignite {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+  100% {
+    opacity: 0.72;
+    transform: scale(1);
+  }
+}
+@keyframes ag-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.035);
+  }
+}
+@keyframes ag-bloom-breathe {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.05);
+  }
+}
+@keyframes ag-think {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.965);
+    opacity: 0.82;
+  }
+}
+@keyframes ag-speak {
+  0%,
+  70%,
+  100% {
+    transform: scale(1);
+  }
+  14% {
+    transform: scale(1.07);
+  }
+  32% {
+    transform: scale(0.99);
+  }
+  50% {
+    transform: scale(1.045);
+  }
+}
+@keyframes ag-bloom-speak {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+  14% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+  32% {
+    opacity: 0.8;
+    transform: scale(1.01);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.07);
+  }
+  70% {
+    opacity: 0.78;
+    transform: scale(1);
+  }
+}
+@keyframes ag-ripple {
+  0% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  12% {
+    opacity: 0.75;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.05);
+  }
+}
+@keyframes ag-fault {
+  0%,
+  30%,
+  60%,
+  100% {
+    opacity: 1;
+  }
+  15% {
+    opacity: 0.35;
+  }
+  45% {
+    opacity: 0.5;
+  }
+}
+@keyframes agl-breathe {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+@keyframes agl-beacon {
+  0% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  15% {
+    opacity: 0.4;
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}

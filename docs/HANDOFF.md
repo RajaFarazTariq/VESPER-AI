@@ -22,8 +22,10 @@ Read this first when resuming work. Last updated: **2026-11-25**. No secrets are
   for v0.14.1 (charts + CSV download). He asks for work to be "perfect and accurate".
 - **GitHub set-up (unchanged):** "VESPER AI Reader" (read-only) and "VESPER AI Actions" (public since 2026-11-21);
   GitHub for users ON, GitHub changes for users ON (10/day). Test PR #15 and issue #14 are closed (owner, 2026-11-24).
-- **v0.16.0 built 2026-11-25, handed to the owner to push** (branch `release/v0.16.0-documents`): Documents in chat
-  + storage meter (section 0). Owner asked for it ("Proceed and use more agents to work faster and accurate") and for
+- **v0.17.0 built 2026-11-25, handed to the owner to push** (branch `release/v0.17.0-agent-mode`): **VESPER Agent**,
+  the owner's "Jarvis-style" mode (his spec pasted 2026-11-25; section 0). Owner's live test still to do.
+- **v0.16.0 live** (PR #21, merge `2c81069`; /api/health 0.16.0 on 2026-11-25): Documents in chat + storage meter
+  (section 0, "Previous"). Owner's live test still to do. Owner asked for it ("Proceed and use more agents to work faster and accurate") and for
   the storage meter ("Yes, add it").
 - **Owner's goal after that: VESPER as his own "Jarvis"** (asked 2026-11-25). Research done (no files): a web page
   can't listen when closed, so always-on needs device apps; Picovoice (Porcupine/Eagle) ended its free tier on
@@ -49,7 +51,38 @@ Read this first when resuming work. Last updated: **2026-11-25**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-25)
 
-**v0.16.0 built 2026-11-25, handed to the owner to push** (branch `release/v0.16.0-documents`). Built with three
+**v0.17.0 built 2026-11-25, handed to the owner to push** (branch `release/v0.17.0-agent-mode`). The owner pasted a
+spec for a "Jarvis-style AI agent mode" next to the unchanged chat: floating orb, dimmed screen with an animated
+cyan core (rings, HUD, boot-up, greeting), text or voice, reacts while listening/thinking/speaking, floating text not
+bubbles, does tasks and confirms them, ✕/Esc collapses it. His task list was left as "[list your tasks]" → it uses
+every existing tool for now; told him to name more. Named **"VESPER Agent"** on screen (JARVIS is Marvel's). The
+"no glow" design rule stays for the normal app; this mode is his explicit exception.
+1. **Visual** (`components/AgentCore.tsx` + "Agent mode (v0.17.0)" block at the end of `styles.css`, `--ag-*` tokens):
+   core + 4 rings at different speeds, outer scale with "VESPER" and a status word, states booting (≈1.4 s) / idle /
+   listening (bars follow the mic level) / thinking / speaking / error; static under reduced motion. Launcher orb.
+2. **Screen** (`components/AgentMode.tsx`, `lib/agent-voice.ts`): own `useChat({ agent: true })`, new chat per opening
+   (normal saved chats, in the sidebar), greeting by first name and time of day (spoken), text box, 🎤 with silence
+   detection (≈1.2 s after speech; 8 s no speech; 30 s max) → `/api/media/transcribe`, Hands-free (listens again after
+   each spoken answer), voice on/off (`vesper-agent-voice`), sentence-by-sentence speech while streaming, tool step
+   line, last two exchanges as floating text, source chips, approval cards in a HUD panel, Open in chat, Esc/✕/Back.
+3. **Server**: `agent: true` on `/api/chat` → `AGENT_RULES` in `llm/context.ts` (1–3 spoken sentences, plain text,
+   confirm tasks in one sentence, cards = waiting for approval, never claim unconfirmed actions); refused with research.
+4. **Review fixes** (one independent review, no blocking bugs): orb could cover the phone composer (now inside the
+   composer wrapper; lifts on the welcome screen), core could stay "speaking" (device polled), Back acted on the hidden
+   chat (history entry), Esc lost email edits in a card, error vs listening, hands-free during boot, sentence splitting
+   ("No.", "$3.50.").
+5. **348 tests** (new `tests/agent-web.test.ts` 17; agent flag in `tests/api.test.ts`), typecheck, build. Headless Edge
+   with a fake microphone file (tone then silence): orb clear of Send on desktop/phone (rects measured at 375×553,
+   390×844, 1366×900, empty / 3 lines / 15 lines), boot + spoken greeting, typed question answered, listening stopped
+   by itself after the silence → transcribed → answered, Esc/✕/Back close with focus back on the orb, 0 live mic tracks
+   after closing, normal chat unaffected, phone without sideways scroll, reduced motion greets at once.
+6. **Owner's live test after deploy**: (a) /api/health 0.17.0; (b) the orb bottom-right (on the phone just above the
+   message box); (c) open it: boot-up + greeting out loud; (d) type "what's the weather in Lahore?"; (e) tap 🎤, ask
+   "what's on my calendar tomorrow?" and stop talking (it should send by itself); (f) turn on Hands-free and have a
+   short back-and-forth (headphones help); (g) ask it to prepare an email to himself → card in the HUD → Approve;
+   (h) Esc / ✕ / phone Back close it; the session is in the sidebar.
+
+**Previous: v0.16.0 live 2026-11-25** (PR #21, merge `2c81069`, /api/health 0.16.0; branch `release/v0.16.0-documents`). Built with three
 parallel helpers (storage/upload, assistant tools/chat, screens) from one shared spec, then two independent reviews
 (server, browser); every finding was fixed.
 1. **Documents in chat**: 📎 (and drag/paste) takes PDF, Word (.docx), text and Markdown: 20 MB / 300 pages /
@@ -967,7 +1000,8 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Charts + CSV download (v0.14.1)**: each calculation under the answer as a line/bars/table card with Chart/Table switch, figure picker, hover and keyboard readouts, and an exact, Excel-safe CSV download; up to 500 groups / 200 listed rows | ✅ live (v0.14.1, PR #18, merge `fcbb551`); owner's live test with Gemini OK (chart, bars, totals) |
 | **Google Calendar + Gmail with approval (v0.15.0)**: connect Google (Calendar and/or sending email, PKCE, encrypted tokens), read the calendar and find free time exactly, events and emails prepared on cards (email editable) and added/sent only on Approve, daily limits, migration 0014 | ✅ live (v0.15.0, PR #19, merge `c204b7f`); set up 2026-11-24/25; live test OK (event, edited email) |
 | **Google and fallback fixes (v0.15.1)**: reminders on events (calendar's own zone for all-day), fallback models without tools told so and leaked tool text removed, admin sees rejection reasons, all-day cards without zone notes, chart years, no invented currency | ✅ live (v0.15.1, PR #20, merge `7e7a196`; /api/health 2026-11-25); owner's live test OK (birthday + reminder card, added) |
-| **Documents in chat + storage meter (v0.16.0)**: PDF/Word/text/Markdown on 📎, read in the browser, passages per chat with FTS5 (migration 0015), `search_documents` + `read_document`, page citations, excerpt on source chips, prefetch for messages about the documents, limits (20 MB / 300 pages, 3 per message, 5 per chat, 30 + 5 M chars per user, 10/day), admin switch + daily limit; admin storage meter (D1 size vs 500 MB); spreadsheet cap 1,000 M → 120 M characters | 🔨 built 2026-11-25 (330 tests, typecheck, build, headless Edge); to push |
+| **Documents in chat + storage meter (v0.16.0)**: PDF/Word/text/Markdown on 📎, read in the browser, passages per chat with FTS5 (migration 0015), `search_documents` + `read_document`, page citations, excerpt on source chips, prefetch for messages about the documents, limits (20 MB / 300 pages, 3 per message, 5 per chat, 30 + 5 M chars per user, 10/day), admin switch + daily limit; admin storage meter (D1 size vs 500 MB); spreadsheet cap 1,000 M → 120 M characters | ✅ live (v0.16.0, PR #21, merge `2c81069`, deployed 2026-11-25; 330 tests); owner's live test pending |
+| **VESPER Agent (v0.17.0)**: the owner's "Jarvis-style" mode next to the unchanged chat: glowing orb → dimmed screen with an animated core (rings, HUD, boot-up, spoken greeting), text or voice (silence detection → Whisper), Hands-free, spoken sentence-by-sentence replies, floating text, tool steps, approval cards in the HUD, Open in chat, Esc/✕/Back; `agent` flag → short spoken-reply rules; no new settings or migration | 🔨 built 2026-11-25 (348 tests, typecheck, build, headless Edge with a fake microphone); to push |
 | **Next: owner's "Jarvis" plan** (Talk mode → "Hey Vesper" → only my voice → reminders/briefing → Windows tray app → Android app); other options: second D1 database for files, Excel in the knowledge base, change/cancel events | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
@@ -1008,7 +1042,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 330 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 348 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

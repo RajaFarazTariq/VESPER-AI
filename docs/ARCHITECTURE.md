@@ -578,6 +578,35 @@ by the knowledge base, spreadsheets and documents against their caps (50, 120 an
 `GET /api/admin/settings` returns it as `storage`; the admin panel shows a meter with a note from 70% and a warning
 from 90%. The spreadsheet cap was 1,000 million characters until v0.16.0 (sized for 5 GB by mistake).
 
+## 5m. VESPER Agent: voice agent mode (v0.17.0)
+
+A separate full-screen agent next to the normal chat (which is unchanged). `components/AgentCore.tsx` draws the core
+(SVG + CSS: stacked rings that turn at different speeds, an outer scale, states booting / idle / listening / thinking /
+speaking / error, the microphone level through `--ag-level`; static under reduced motion) and the launcher orb;
+`components/AgentMode.tsx` is the dialog. It has its own `useChat({ agent: true })`, so its state never mixes with the
+chat's, and each opening starts a new conversation (a normal saved chat).
+
+- **Listening**: one microphone stream feeds `MediaRecorder` and an `AnalyserNode`. `SilenceDetector`
+  (`lib/agent-voice.ts`, pure and tested) learns the room's noise floor and ends a turn about 1.2 s after speech stops
+  (8 s without speech: "I didn't hear anything"; 30 s at most). The recording goes to the existing
+  `/api/media/transcribe` (daily speech minutes apply). Every way out stops the tracks and closes the AudioContext.
+- **Speaking**: `nextSentences` splits the streamed reply into finished sentences, which `speechSynthesis` reads in
+  order while the rest arrives (Markdown removed with `speakableText`, long sentences cut into short pieces). Starting
+  the agent's voice stops the chat's Read aloud. Some browsers send no end event for speech that was cancelled or never
+  started, so while sentences are queued the device is checked every 0.5 s: neither speaking nor waiting for about 1 s
+  means done (otherwise the core could stay "speaking" and hands-free would never listen again). **Hands-free** listens again after each
+  answer has been spoken (no listening while speaking, so it doesn't hear itself).
+- **Server**: `agent: true` on `POST /api/chat` adds `AGENT_RULES` to the system prompt: one to three spoken sentences,
+  plain text, tasks done with tools and confirmed in one sentence, prepared emails/events/GitHub changes described as
+  waiting on their card, never an action a tool didn't confirm. Not allowed with deep research.
+- **On screen**: the last two exchanges as floating text (older one faded), the current tool step, small source chips,
+  the existing approval cards in a HUD panel (dark tokens), "Open in chat". Dialog semantics, focus trap, Esc and ✕,
+  focus back to the orb, polite live regions for the state and the reply. Opening adds a history entry with the same
+  URL, so the phone's Back button closes the agent instead of changing the chat behind it; Esc inside an approval card
+  only leaves the card (a second Esc closes), so an edited email isn't lost.
+- **The orb**: in a chat it sits just above the message box (inside its wrapper, so it moves up as the box grows); on
+  the welcome screen it is in the bottom-right corner and lifts above the box only if a tall box reaches it.
+
 ## 6. Security model
 
 | Threat | Control |
@@ -655,6 +684,8 @@ tools are blocked once untrusted content is in context.
   can call the table tool: "total … by region" (bars), "… by month" (a line), "… by month and region" (one line per
   value), "… with the count" (two figures), "list …" (rows for a download), and the document tools: "summarise …"
   (read_document) and questions about "the document / file / page N" (search_documents).
+- `tests/agent-web.test.ts` (v0.17.0): greeting, sentence splitting for speech, speech chunks, loudness and the
+  silence detector. `tests/api.test.ts` covers the `agent` flag (rules only for agent messages; research refused).
 - `tests/documents.test.ts` (v0.16.0): the upload API (batches, repeats, limits, daily count and refund, privacy,
   switch), deletion with the chat including the full-text index, the daily clean-up, and the storage meter.
   `tests/document-tools.test.ts`: both tools (only this chat's passages, paging, pages), the prompt section, the
@@ -691,6 +722,10 @@ tools are blocked once untrusted content is in context.
   summary of a long document is built from the parts it read (up to five tool rounds of about 6,500 characters), not
   every page; documents go to cloud models only (not Ollama) and not to deep research; a single document can't be
   removed from a chat after it was sent (delete the chat).
+- VESPER Agent (v0.17.0): voices depend on the device; silence detection thresholds were tuned with a test signal,
+  not yet a real room (tap the microphone to finish early); no listening while it speaks, so it can't be interrupted
+  by voice (tap the core); iOS Safari may not speak the greeting before a tap. The wake word ("Hey Vesper"), voice
+  recognition of the owner and device apps are later steps of the owner's plan.
 - Storage: one free D1 database holds 500 MB; the meter shows it, but moving files to a second free database is not
   built yet.
 - Google (v0.15.0): sending only (no reading or replying in threads; no Gmail drafts); events are added to the primary
