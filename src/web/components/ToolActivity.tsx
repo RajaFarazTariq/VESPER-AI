@@ -1,4 +1,7 @@
 import {
+  Bell,
+  BellOff,
+  BellPlus,
   BookOpen,
   BookOpenText,
   Bookmark,
@@ -71,6 +74,10 @@ export const TOOL_ICONS: Record<string, typeof Wrench> = {
   // Documents the user attached to the chat (v0.16.0): find passages, or read a document in order.
   search_documents: FileSearch,
   read_document: BookOpenText,
+  // Reminders (v0.18.0): VESPER's own notifications at a time the user asked for.
+  set_reminder: BellPlus,
+  list_reminders: Bell,
+  cancel_reminder: BellOff,
 };
 
 /**
@@ -299,6 +306,9 @@ const PLAIN: Record<string, [running: string, done: string]> = {
   gmail_send: ["Preparing the email…", "Prepared an email for your approval"],
   search_documents: ["Searching your documents…", "Searched your documents"],
   read_document: ["Reading the document…", "Read the document"],
+  set_reminder: ["Setting a reminder…", "Set a reminder"],
+  list_reminders: ["Checking your reminders…", "Checked your reminders"],
+  cancel_reminder: ["Cancelling a reminder…", "Cancelled a reminder"],
 };
 
 /** One step in plain words, e.g. "Reading your calendar…" while it runs (also VESPER Agent's step line, v0.17.0). */

@@ -19,6 +19,7 @@ import { knowledgeRoutes } from "./routes/knowledge";
 import { mediaRoutes } from "./routes/media";
 import { memoryRoutes, toolRoutes } from "./routes/memories";
 import { modelRoutes } from "./routes/models";
+import { notificationRoutes, reminderRoutes } from "./routes/notifications";
 import { settingsRoutes } from "./routes/settings";
 import { VERSION } from "./version";
 
@@ -53,6 +54,8 @@ app.route("/api/github-actions", githubActionRoutes);
 app.route("/api/google-actions", googleActionRoutes);
 app.route("/api/files", fileRoutes);
 app.route("/api/documents", documentRoutes);
+app.route("/api/notifications", notificationRoutes);
+app.route("/api/reminders", reminderRoutes);
 app.route("/api/admin/knowledge", knowledgeRoutes);
 app.route("/api/admin", adminRoutes);
 

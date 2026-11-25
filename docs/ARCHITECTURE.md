@@ -616,6 +616,32 @@ chat's, and each opening starts a new conversation (a normal saved chat).
 - **The orb**: in a chat it sits just above the message box (inside its wrapper, so it moves up as the box grows); on
   the welcome screen it is in the bottom-right corner and lifts above the box only if a tall box reaches it.
 
+## 5n. Proactive VESPER: notifications, reminders, briefing (v0.18.0)
+
+VESPER starts things itself: reminders, a daily briefing and meeting alerts arrive as notifications on the user's
+devices, even with no VESPER tab open (the browser must be running).
+
+- **Web Push** (`worker/push/`): RFC 8291 `aes128gcm` payload encryption and RFC 8292 VAPID (ES256 JWT) with WebCrypto
+  only; tested against the RFC 8291 Appendix A example byte for byte. The VAPID key pair is made on first use and kept
+  in D1 (`push_keys`; trade-off: someone with database access could push to the stored subscriptions, whose endpoints
+  are in the same database anyway). Subscriptions (`push_subscriptions`) are accepted only for known push-service hosts
+  (Google, Microsoft, Mozilla, Apple), so the server never posts to arbitrary addresses; 404/410 removes a device,
+  5 failures in a row too. Payload `{ title, body, url, tag, kind }`; the service worker (`public/sw.js`) shows it and
+  opens or focuses VESPER on click (same-origin URLs only).
+- **Cron** (`worker/jobs/proactive.ts`, trigger `* * * * *`; `index.ts` dispatches on `controller.cron`): due reminders
+  (claimed atomically, so overlapping runs can't send one twice), meeting alerts (each opted-in calendar read at most
+  every 5 minutes, deduped per event in `meeting_alerts_sent`), daily briefings (claimed once per local day in
+  `notification_prefs.last_briefing_day`). Work per run is capped (25 pushes, 10 calendar reads) to stay inside the
+  free plan's 10 ms of CPU; the rest waits a minute. The briefing notification is built without a model call (counts
+  of events and reminders, the first event); tapping it opens `/?agent=briefing`, and VESPER Agent (after a tap, for
+  sound) sends "Brief me for tomorrow/today." with `briefing: true`, which adds briefing rules to the prompt.
+- **Reminders** (`tools/reminders.ts`): `set_reminder` parses "5 PM", "in 20 minutes", "tomorrow at 9" in the user's
+  time zone with the DST-safe helpers from `tools/google.ts`; `list_reminders`, `cancel_reminder`. They only change
+  VESPER's own data (like memory), so no approval card. Limits: 50 pending, 30 new a day, 1 minute to 1 year ahead.
+- **Time zones**: the browser's zone is saved with the notification settings and each reminder; the briefing time is
+  local (22:00 Asia/Karachi for the owner); from 15:00 local the briefing is about tomorrow.
+- **Spoken progress** (VESPER Agent): on a turn's first tool step a short line ("Let me check your calendar.").
+
 ## 6. Security model
 
 | Threat | Control |
@@ -638,6 +664,7 @@ chat's, and each opening starts a new conversation (a normal saved chat).
 | Unwanted emails or calendar events (v0.15.0) | Only prepared by the assistant; added or sent only from the owner's approval card, once, as shown (or as the owner edited it), within daily limits; cautions for addresses the user never typed, text by others and private data read before an email; the account is checked again at Approve; permissions limited to events on owned calendars and sending (no inbox); tokens encrypted with their own key; calendar text passed as data |
 | Spreadsheet content and queries (v0.14.0) | Files are read in the browser and re-checked on upload (cell types, row widths, sizes, row counts must match the overview); only the owner can add to, finish, send or delete an unsent file, and only their chats see its tables; SQL is built from fixed parts with column positions we control and every value bound, so neither the model nor cell text can change the query; column names and cell values are passed to the model as data; per-day file limit, per-chat/per-user caps, app-wide storage and daily read budget. Results under the answer (v0.14.1) are drawn as text nodes and SVG (never HTML from the file), and the CSV download keeps text that Excel could run as a formula (=, +, -, @) as plain text |
 | Document content (v0.16.0) | Files are read in the browser; the server re-checks every passage (number in range, length) and every size limit; only the owner can add to, finish, send or delete an unsent document; searches and reads are limited in SQL to the ready documents of the current chat of the current user, so one chat (or user) never sees another's text; passages are wrapped as untrusted data and the prompt says never to follow instructions in them; the excerpt on a source chip is drawn as text, never as HTML; per-day, per-message, per-chat, per-user and app-wide limits |
+| Push notifications (v0.18.0) | Subscriptions only for known push-service hosts (no requests to arbitrary addresses); payloads encrypted end to end (RFC 8291) so push services can't read them; VAPID-signed; only the user's own devices (own-only device and reminder routes); notification clicks open same-origin VESPER pages only; calendar titles shown as plain text |
 | Unwanted GitHub changes (v0.13.0) | Separate Actions app with its own repo choice; only repos the user can write to (v0.13.1, checked at prepare and approve); tools only prepare; sending happens only from `POST /api/github-actions/:id/approve` by the change's owner, once (atomic claim), before it expires; card shows the exact text / every changed line; prompt forbids preparing changes because content asks for it; warnings for others' text and private-to-public; stale files refused; no existing branch, merge, delete or workflow file is ever touched |
 
 Prompt injection becomes the main risk once tools exist (Phase 5+). The plan for that: tool results are wrapped
@@ -735,6 +762,9 @@ tools are blocked once untrusted content is in context.
   not yet a real room (tap the microphone to finish early); no listening while it speaks, so it can't be interrupted
   by voice (tap the core); iOS Safari may not speak the greeting before a tap. The wake word ("Hey Vesper"), voice
   recognition of the owner and device apps are later steps of the owner's plan.
+- Proactive (v0.18.0): notifications need the browser running (Windows: Chrome/Opera in the background); iPhone/iPad
+  need a Home Screen web app, which VESPER doesn't offer yet; briefings and alerts can be up to a minute late (the cron
+  runs every minute), a briefing up to 30 minutes if runs are missed; delivery can't be tested offline.
 - Storage: one free D1 database holds 500 MB; the meter shows it, but moving files to a second free database is not
   built yet.
 - Google (v0.15.0): sending only (no reading or replying in threads; no Gmail drafts); events are added to the primary

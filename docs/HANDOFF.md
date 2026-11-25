@@ -22,13 +22,23 @@ Read this first when resuming work. Last updated: **2026-11-25**. No secrets are
   for v0.14.1 (charts + CSV download). He asks for work to be "perfect and accurate".
 - **GitHub set-up (unchanged):** "VESPER AI Reader" (read-only) and "VESPER AI Actions" (public since 2026-11-21);
   GitHub for users ON, GitHub changes for users ON (10/day). Test PR #15 and issue #14 are closed (owner, 2026-11-24).
-- **v0.17.1 built 2026-11-25, handed to the owner to push** (branch `release/v0.17.1-agent-voice`): **Agent voice**.
+- **v0.18.0 built 2026-11-25, handed to the owner to push** (branch `release/v0.18.0-proactive`; section 0). Owner:
+  "Also update Readme accordingly and creatively" + "add Vesper AI Agent image in readme" → README now opens with the
+  core image (`docs/images/vesper-core.png`), a "Meet VESPER Agent" section with the agent screenshot
+  (`docs/images/vesper-agent.png`, greeting without a name) and a "You say / VESPER does" table. Owner packed up after
+  this release ("This will be last task of today").
+- **v0.18.0 "Proactive VESPER"** (owner: "Yes, start v0.18.0, briefing at 10 PM PST" —
+  PST read as Pakistan time, Asia/Karachi): reminders as notifications (Web Push, works with VESPER closed while the
+  browser runs), a daily briefing (default 22:00 local; from 15:00 it is about tomorrow), meeting alerts before Google
+  Calendar events, spoken progress lines in VESPER Agent. Asked "how to advance it like a realistic AI agent" → agreed
+  roadmap: proactive (this) → natural conversation (voice interrupt with headphones) → more tasks (notes/to-dos,
+  change/cancel events, open sites, phone drafts) → "Hey Vesper" + only-my-voice → Windows tray app → Android app → eyes.
+- **v0.17.1 live** (PR #23, merge `fc12fe6`; /api/health 0.17.1 on 2026-11-25): **Agent voice**. Owner's live test pending.
   Owner: "I need a beautiful lady voice for Agent" → chose **both**: Cloudflare studio voice (Aura "Luna", daily
   app-wide cap 3,000 characters) with the best female device voice as fallback. His laptop browsers: **Chrome and
   Opera** on Windows (their own voices are robotic; Google UK English Female is the best of them); phone: Android.
-- **v0.17.0 live** (/api/health 0.17.0 on 2026-11-25; commit `a475a5b`, merged by the owner): **VESPER Agent**, the
-  owner's "Jarvis-style" mode (section 0). His local copy was still on the release branch: told him to switch to
-  main and pull. Owner's live test still to do.
+- **v0.17.0 live** (PR #22, merge `74c680b`; /api/health 0.17.0 on 2026-11-25): **VESPER Agent**, the owner's
+  "Jarvis-style" mode (section 0). Owner's live test still to do.
 - **v0.16.0 live** (PR #21, merge `2c81069`; /api/health 0.16.0 on 2026-11-25): Documents in chat + storage meter
   (section 0, "Previous"). Owner's live test still to do. Owner asked for it ("Proceed and use more agents to work faster and accurate") and for
   the storage meter ("Yes, add it").
@@ -56,7 +66,37 @@ Read this first when resuming work. Last updated: **2026-11-25**. No secrets are
 
 ## 0. ▶ Resume here (where we stopped on 2026-11-25)
 
-**v0.17.1 built 2026-11-25, handed to the owner to push** (branch `release/v0.17.1-agent-voice`): the agent's voice.
+**v0.18.0 built 2026-11-25, handed to the owner to push** (branch `release/v0.18.0-proactive`): VESPER acts on its own.
+1. **Web Push** (`worker/push/`: RFC 8291 encryption tested byte for byte against the RFC example, RFC 8292 VAPID
+   ES256; keys made on first use and kept in D1), devices per user (≤ 10, known push-service hosts only), service
+   worker `public/sw.js`, icon `public/notification-icon.png`.
+2. **Cron `* * * * *`** (new trigger in `wrangler.jsonc`, next to the daily clean-up): due reminders (atomic claim),
+   meeting alerts (calendar read ≤ every 5 min, deduped), daily briefing (claimed once per local day; from 15:00 about
+   tomorrow; deterministic text, no model call), capped per run (25 pushes, 10 calendar reads).
+3. **Reminders**: tools `set_reminder` / `list_reminders` / `cancel_reminder` (VESPER's own data, no approval card;
+   50 pending, 30 new a day); "remind me…" no longer triggers a web search first (prefetch).
+4. **Settings → Notifications**: switch on per device, test, devices list, daily briefing (on once a device is added,
+   default 22:00 local = the owner's choice, Pakistan time), meeting alerts (on, 10 min), upcoming reminders + Cancel.
+5. **VESPER Agent**: `/?agent=briefing` opens it with "Tap to hear your briefing" (sound needs a tap), sends
+   `briefing: true` (briefing rules in the prompt); spoken progress lines on a turn's first tool step.
+6. **385 tests** (new `tests/proactive.test.ts`, `tests/notifications-web.test.ts`); on this PC the full run sometimes
+   times out 2–3 heavy tests under load (they pass alone in ~0.3–1 s). Headless Edge (frontend engineer): real
+   subscribe with Edge's push service, test notification "Sent to 1 device", reminder listed and cancelled, briefing
+   link → tap → spoken briefing. Real delivery to a closed browser can't be tested offline.
+7. **Owner's live test after deploy**: (a) /api/health 0.18.0; (b) Settings → Notifications → switch on (laptop Chrome,
+   then phone) → Send a test notification; (c) in the Agent: "remind me in 2 minutes to stretch" → notification after
+   2 minutes (also with VESPER closed, Chrome running); (d) check the briefing time shows 22:00 · Asia/Karachi;
+   at 22:00 the briefing arrives → tap → tap the core → it speaks; (e) meeting alert before a test event in Google
+   Calendar. Open items: no web app manifest (iPhone not supported yet), a one-colour Android badge icon would look
+   better, the studio voice spends ~25 characters per spoken progress line. **The main web bundle is 899.99 kB, at
+   Vite's 900 kB warning**: split it (e.g. lazy-load the admin panel, Markdown/highlighting, AgentMode) or raise
+   `chunkSizeWarningLimit` in the next web change.
+8. **Review fixes** (independent review): timezone formatters memoized (the per-minute run could exceed 10 ms CPU),
+   a reminder/briefing whose every device failed is retried instead of lost, the briefing link carries its day
+   (`/?agent=briefing&day=YYYY-MM-DD` → `briefingDay` on `/api/chat`), DST-safe briefing window, meeting alerts look at
+   50 events, signing out removes this browser's notifications (device, subscription, saved id).
+
+**Previous: v0.17.1 live 2026-11-25** (PR #23, merge `fc12fe6`; branch `release/v0.17.1-agent-voice`): the agent's voice.
 1. **Server**: `POST /api/media/speech` (text ≤ 600 chars → MP3, Workers AI `@cf/deepgram/aura-1`, speaker from the
    admin setting, default Luna; female speakers offered: luna, asteria, stella, athena, hera), app-wide daily
    character cap counted atomically in `rate_limits` (`voice:studio_chars`, refunded on failure), 60/min per user;
@@ -1027,8 +1067,9 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Google Calendar + Gmail with approval (v0.15.0)**: connect Google (Calendar and/or sending email, PKCE, encrypted tokens), read the calendar and find free time exactly, events and emails prepared on cards (email editable) and added/sent only on Approve, daily limits, migration 0014 | ✅ live (v0.15.0, PR #19, merge `c204b7f`); set up 2026-11-24/25; live test OK (event, edited email) |
 | **Google and fallback fixes (v0.15.1)**: reminders on events (calendar's own zone for all-day), fallback models without tools told so and leaked tool text removed, admin sees rejection reasons, all-day cards without zone notes, chart years, no invented currency | ✅ live (v0.15.1, PR #20, merge `7e7a196`; /api/health 2026-11-25); owner's live test OK (birthday + reminder card, added) |
 | **Documents in chat + storage meter (v0.16.0)**: PDF/Word/text/Markdown on 📎, read in the browser, passages per chat with FTS5 (migration 0015), `search_documents` + `read_document`, page citations, excerpt on source chips, prefetch for messages about the documents, limits (20 MB / 300 pages, 3 per message, 5 per chat, 30 + 5 M chars per user, 10/day), admin switch + daily limit; admin storage meter (D1 size vs 500 MB); spreadsheet cap 1,000 M → 120 M characters | ✅ live (v0.16.0, PR #21, merge `2c81069`, deployed 2026-11-25; 330 tests); owner's live test pending |
-| **VESPER Agent (v0.17.0)**: the owner's "Jarvis-style" mode next to the unchanged chat: glowing orb → dimmed screen with an animated core (rings, HUD, boot-up, spoken greeting), text or voice (silence detection → Whisper), Hands-free, spoken sentence-by-sentence replies, floating text, tool steps, approval cards in the HUD, Open in chat, Esc/✕/Back; `agent` flag → short spoken-reply rules; no new settings or migration | ✅ live (v0.17.0, commit `a475a5b`, /api/health 2026-11-25; 348 tests); owner's live test pending |
-| **Agent voice (v0.17.1)**: studio voice from Workers AI (Deepgram Aura, female speakers, default Luna) via `POST /api/media/speech` with an app-wide daily character cap (3,000) and refunds; Web Audio playback with prefetch; best female device voice as fallback; voice menu with Test; admin switch, cap, speaker and "Used today" | 🔨 built 2026-11-25 (358 tests, typecheck, build, headless Edge with stubbed studio audio); to push |
+| **VESPER Agent (v0.17.0)**: the owner's "Jarvis-style" mode next to the unchanged chat: glowing orb → dimmed screen with an animated core (rings, HUD, boot-up, spoken greeting), text or voice (silence detection → Whisper), Hands-free, spoken sentence-by-sentence replies, floating text, tool steps, approval cards in the HUD, Open in chat, Esc/✕/Back; `agent` flag → short spoken-reply rules; no new settings or migration | ✅ live (v0.17.0, PR #22, merge `74c680b`, 2026-11-25; 348 tests); owner's live test pending |
+| **Agent voice (v0.17.1)**: studio voice from Workers AI (Deepgram Aura, female speakers, default Luna) via `POST /api/media/speech` with an app-wide daily character cap (3,000) and refunds; Web Audio playback with prefetch; best female device voice as fallback; voice menu with Test; admin switch, cap, speaker and "Used today" | ✅ live (v0.17.1, PR #23, merge `fc12fe6`, 2026-11-25; 358 tests); owner's live test pending |
+| **Proactive VESPER (v0.18.0)**: Web Push (RFC 8291/8292, WebCrypto, auto VAPID keys), per-minute cron (reminders, daily briefing at a local time, meeting alerts), reminder tools, Settings → Notifications, briefing in VESPER Agent, spoken progress lines; migration 0016; README with VESPER Agent images | 🔨 built 2026-11-25 (385 tests, typecheck, build, headless Edge); to push |
 | **Next: owner's "Jarvis" plan** (Talk mode → "Hey Vesper" → only my voice → reminders/briefing → Windows tray app → Android app); other options: second D1 database for files, Excel in the knowledge base, change/cancel events | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
@@ -1069,7 +1110,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 358 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 385 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

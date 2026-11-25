@@ -153,13 +153,21 @@ export function describeWhen(e: { start: string; end: string; allDay: boolean })
   return sd === ed ? `${dayLabel(sd)}, ${st}–${et}` : `${dayLabel(sd)} ${st} – ${dayLabel(ed)} ${et}`;
 }
 
-const validTimeZone = (tz: string | undefined): string | null => {
-  if (!tz) return null;
-  try {
-    return new Intl.DateTimeFormat("en-US", { timeZone: tz }).resolvedOptions().timeZone;
-  } catch {
-    return null;
+/** Checked zones, remembered: making a date formatter costs a lot of CPU, and the cron checks a zone per user (v0.18.0). */
+const knownZones = new Map<string, string | null>();
+export const validTimeZone = (tz: string | undefined | null): string | null => {
+  if (!tz || tz.length > 64) return null;
+  let known = knownZones.get(tz);
+  if (known === undefined) {
+    try {
+      known = new Intl.DateTimeFormat("en-US", { timeZone: tz }).resolvedOptions().timeZone;
+    } catch {
+      known = null;
+    }
+    if (knownZones.size > 500) knownZones.clear();
+    knownZones.set(tz, known);
   }
+  return known;
 };
 
 // ---------------------------------------------------------------- email (pure)
@@ -263,6 +271,8 @@ interface GEvent {
   end?: { dateTime?: string; date?: string };
   attendees?: { email?: string; self?: boolean; responseStatus?: string }[];
   organizer?: { email?: string; self?: boolean };
+  /** The Google Meet link, when the event has one. */
+  hangoutLink?: string;
 }
 interface GEventList {
   timeZone?: string;
@@ -298,7 +308,7 @@ function eventTimes(e: GEvent, timeZone: string): { start: string; end: string; 
 }
 
 const EVENT_FIELDS =
-  "timeZone,nextPageToken,items(id,summary,description,location,status,htmlLink,transparency,start,end,attendees(email,self,responseStatus),organizer(email,self))";
+  "timeZone,nextPageToken,items(id,summary,description,location,status,htmlLink,hangoutLink,transparency,start,end,attendees(email,self,responseStatus),organizer(email,self))";
 
 /** Events overlapping [from, to), all pages up to `max` events. */
 async function listEvents(
@@ -330,6 +340,41 @@ async function listEvents(
     if (!pageToken || events.length > options.max) break;
   }
   return { events: events.slice(0, options.max), more: events.length > options.max || Boolean(pageToken), calendarTimeZone };
+}
+
+/** An event as notifications show it (v0.18.0): the title is other people's text, so plain text on one line. */
+export interface CalendarItem {
+  /** The event and its start, for "already announced". */
+  key: string;
+  title: string;
+  start: number;
+  end: number;
+  allDay: boolean;
+  /** It has a Google Meet link. */
+  meet: boolean;
+}
+
+/** Control and direction-changing characters, which could make a notification read differently from the event. */
+const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]/g;
+export const plainTitle = (text: string | undefined, max = 80) => clip((text ?? "").replace(UNSAFE_CHARS, " "), max) || "(no title)";
+
+/** The user's events overlapping [from, to), except ones they declined: for the briefing and meeting alerts (v0.18.0). */
+export async function calendarItems(g: GoogleAccess, range: { from: number; to: number }, timeZone: string, max: number): Promise<CalendarItem[]> {
+  const { events } = await listEvents(g, range, timeZone, { max });
+  return events.flatMap((e) => {
+    const span = declinedByYou(e) ? null : eventSpan(e, timeZone);
+    if (!span) return [];
+    return [
+      {
+        key: clip(`${e.id ?? plainTitle(e.summary, 60)}@${span.start}`, 200),
+        title: plainTitle(e.summary),
+        start: span.start,
+        end: span.end,
+        allDay: Boolean(e.start?.date && !e.start.dateTime),
+        meet: typeof e.hangoutLink === "string" && /^https:\/\/meet\.google\.com\//.test(e.hangoutLink),
+      },
+    ];
+  });
 }
 
 // ---------------------------------------------------------------- shared tool plumbing

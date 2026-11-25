@@ -26,7 +26,7 @@ const ATTRIBUTION = /\b[Aa]ccording to\b|\b(?:[Dd]oes|[Dd]id)\s+[A-Z][\w&.'-]*(?
 const ARITHMETIC = /^\s*(?:what\s+is\s+|what's\s+|calculate\s+|compute\s+)?[\d\s+\-*/().,%^=x×÷]+(?:\s*(?:plus|minus|times|divided by|of)\s*[\d\s+\-*/().,%^=x×÷]+)*\s*\??\s*$/i;
 /** Requests the model handles without the web (or with its own dedicated tool). */
 const NOT_A_LOOKUP =
-  /^\s*(?:please\s+)?(?:write|draft|compose|translate|summari[sz]e|rewrite|rephrase|paraphrase|correct|proofread|explain this|fix|debug|refactor|code|generate|create|make)\b/i;
+  /^\s*(?:please\s+)?(?:write|draft|compose|translate|summari[sz]e|rewrite|rephrase|paraphrase|correct|proofread|explain this|fix|debug|refactor|code|generate|create|make|remind|set a reminder)\b/i;
 const HAS_OWN_TOOL = /\b(?:weather|temperature|forecast|rain|humidity|convert|conversion|exchange rate)\b/i;
 const MAX_QUESTION_CHARS = 600;
 

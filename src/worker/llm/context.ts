@@ -2,6 +2,8 @@ import { READ_DOCUMENT_TOOL, SEARCH_DOCUMENTS_TOOL } from "../../shared/document
 import type { ChatDocumentKind, GithubActionDto, GoogleActionDto, MemoryDto, MessageDocumentDto, MessageDto, MessageFileDto } from "../../shared/types";
 import type { ChatDocumentMeta } from "../db/document-search";
 import type { TableMeta } from "../db/tables";
+import { BRIEFING_TOMORROW_FROM } from "../db/notifications";
+import { addDays, dayLabel, isValidDate, validTimeZone, wallClock } from "../tools/google";
 import { TABLE_TOOL, tableOverview } from "../tools/tables";
 /** Plain text messages (no tool calls): what conversation history is made of. `images` only on the current question. */
 export type PlainMessage = { role: "system" | "user" | "assistant"; content: string; images?: string[] };
@@ -38,6 +40,46 @@ export interface SystemPromptInput {
   documents?: ChatDocumentMeta[];
   /** Agent mode (v0.17.0): the user talks to VESPER Agent by voice or text; replies are spoken aloud. */
   agent?: boolean;
+  /** The spoken daily briefing in VESPER Agent (v0.18.0): the day it is about. */
+  briefing?: BriefingDay;
+}
+
+/** The day a briefing is about (v0.18.0). */
+export interface BriefingDay {
+  day: "yesterday" | "today" | "tomorrow";
+  /** The local date, YYYY-MM-DD. */
+  date: string;
+}
+
+/**
+ * The day the briefing notification was about (`asked`, from its link) when that is yesterday, today or tomorrow in
+ * the user's time zone; otherwise today before 15:00 local time and tomorrow from 15:00.
+ */
+export function briefingDay(now: number, timeZone: string, asked?: string): BriefingDay {
+  const local = wallClock(now, timeZone);
+  if (asked && isValidDate(asked)) {
+    if (asked === local.date) return { day: "today", date: asked };
+    if (asked === addDays(local.date, 1)) return { day: "tomorrow", date: asked };
+    if (asked === addDays(local.date, -1)) return { day: "yesterday", date: asked };
+  }
+  const [h, m] = local.time.split(":").map(Number) as [number, number];
+  return h * 60 + m >= BRIEFING_TOMORROW_FROM ? { day: "tomorrow", date: addDays(local.date, 1) } : { day: "today", date: local.date };
+}
+
+/** How the spoken briefing is given (v0.18.0): one answer, reading only what the offered tools return. */
+export function briefingRules(briefing: BriefingDay, has: (name: string) => boolean): string[] {
+  return [
+    `Briefing: the user asked for their daily briefing. Give a spoken briefing about ${briefing.day}, ${dayLabel(briefing.date)}, in 4–6 short sentences, in this order:`,
+    has("calendar_events")
+      ? `- Calendar: call calendar_events with from and to both "${briefing.date}", then say how many events there are and the first one or two with their times.`
+      : "- No calendar is connected: leave the calendar out.",
+    ...(has("list_reminders") ? [`- Reminders: call list_reminders with day "${briefing.date}" and mention them.`] : []),
+    ...(has("weather")
+      ? ["- Weather: only if the saved notes say which city the user lives in, call weather for that city and give one short line; otherwise leave it out."]
+      : []),
+    "- Anything urgent or unusual (an early start, back-to-back meetings, a clash).",
+    "- Plain text, no lists. Never invent events or reminders: say only what the tools returned. End with one short question, like \"Anything you want me to prepare?\"",
+  ];
 }
 
 /**
@@ -206,13 +248,7 @@ export const RESEARCH_RULES = [
 
 /** Returns the time zone if the runtime knows it (e.g. "Asia/Karachi"), otherwise undefined. */
 export function normalizeTimeZone(value: string | undefined | null): string | undefined {
-  const tz = value?.trim();
-  if (!tz || tz.length > 64) return undefined;
-  try {
-    return new Intl.DateTimeFormat("en-US", { timeZone: tz }).resolvedOptions().timeZone;
-  } catch {
-    return undefined;
-  }
+  return validTimeZone(value?.trim()) ?? undefined;
 }
 
 /** e.g. "Wednesday, 11 November 2026, 04:03 (Asia/Karachi, GMT+05:00)" */
@@ -264,6 +300,12 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         : []),
       ...(has("weather") ? ["- For weather questions use the weather tool; never guess temperatures or forecasts."] : []),
       ...(has("currency") ? ["- For exchange rates and currency conversion use the currency tool; never guess rates."] : []),
+      ...(has("set_reminder")
+        ? [
+            "- For \"remind me…\" requests call set_reminder and confirm the exact local time it returns. It is a VESPER notification on the user's devices where notifications are on: never say a phone alarm or alarm clock was set." +
+              (has("calendar_create_event") ? " (A reminder about a calendar event you are preparing goes on that event instead.)" : ""),
+          ]
+        : []),
       ...(has("search_knowledge")
         ? [
             `- You have a knowledge base: documents the administrator of ${input.appName} added. Folders:`,
@@ -374,6 +416,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     );
   }
   if (input.agent && !input.research) lines.push("", ...AGENT_RULES);
+  if (input.agent && input.briefing && !input.research) lines.push("", ...briefingRules(input.briefing, has));
   const admin = input.adminInstructions?.trim();
   if (admin) {
     lines.push("", `Instructions from the administrator of ${input.appName} (they apply to every conversation):`, admin);

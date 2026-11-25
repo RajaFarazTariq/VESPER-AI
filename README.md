@@ -1,7 +1,18 @@
-# VESPER
+<p align="center">
+  <img src="docs/images/vesper-core.png" alt="The VESPER Agent core, online" width="460">
+</p>
 
-**A private, multi-user AI assistant that runs entirely on free tiers, answers from evidence, and shows you where
-every answer came from.**
+<h1 align="center">VESPER</h1>
+
+<p align="center">
+  <b>Your own AI assistant and voice agent. It answers from evidence, talks back, reminds you, and runs entirely on
+  free tiers.</b>
+</p>
+
+<p align="center">
+  Chat · VESPER Agent (voice) · Reminders and briefings · Web, documents, spreadsheets · Calendar, email, GitHub
+  with your approval
+</p>
 
 VESPER is a ChatGPT-style assistant you host yourself: a web app where people sign in, chat, search the live web,
 ask about documents, spreadsheets and their own GitHub code, and get answers with sources they can check. It runs on Cloudflare's
@@ -9,8 +20,9 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.17.1**.
+Current version: **0.18.0**.
 
+- [Meet VESPER Agent](#meet-vesper-agent)
 - [What VESPER does](#what-vesper-does)
 - [How VESPER is different](#how-vesper-is-different)
 - [Features](#features)
@@ -22,6 +34,30 @@ Current version: **0.17.1**.
 - [Troubleshooting](#troubleshooting)
 
 ---
+
+## Meet VESPER Agent
+
+![VESPER Agent: the animated core, a greeting and the voice bar](docs/images/vesper-agent.png)
+
+Next to the normal chat sits **VESPER Agent**: tap the glowing orb in the corner, the screen dims, the core boots up
+and VESPER greets you. Then just talk (or type). It listens until you stop, thinks, says what it's doing ("Let me
+check your calendar."), answers in a natural voice, and confirms what it did. Turn on **Hands-free** and it listens
+again after every answer, for a real back-and-forth.
+
+Things you can say:
+
+| You say | VESPER does |
+|---|---|
+| "What's on my calendar tomorrow?" | Reads your Google Calendar and tells you, in order |
+| "Remind me at 5 PM to call Ali." | Saves a reminder; at 5 PM a notification pops up on your laptop and phone |
+| "Email Sara that the report is ready." | Prepares the email on a card; it's sent only when you press **Approve** |
+| "Summarise this PDF." | Reads the document you attached and cites the pages |
+| "What were total sales by region?" | Calculates it exactly from your spreadsheet and shows a chart |
+| "What's the weather in Lahore this weekend?" | Checks the forecast and answers in a sentence |
+
+And it doesn't wait to be asked: every evening (or morning, you choose) a **briefing** notification sums up the day
+ahead, and a **meeting alert** arrives a few minutes before each event. Tap the briefing, tap the core, and VESPER
+reads it to you.
 
 ## What VESPER does
 
@@ -40,6 +76,8 @@ question needs a look-up, fetches what it needs and cites it:
   page X", and each cited passage can be opened under the answer.
 - **VESPER Agent**: a separate voice agent next to the chat. The glowing orb opens a full-screen animated core; talk or
   type, it answers out loud, does tasks with the same tools, and confirms what it did.
+- **It acts on its own**: reminders ("remind me at 5 PM…"), a daily briefing and meeting alerts arrive as
+  notifications on your laptop and phone, even when VESPER isn't open.
 - **Your spreadsheets**: attach a CSV or Excel file and ask questions about it; totals, averages, counts and trends are
   calculated exactly over every row, the answer says what was calculated, and each result comes with a chart or table
   you can download as CSV.
@@ -173,6 +211,20 @@ choices:
 - Each session is saved as a normal chat in the sidebar; **Open in chat** shows the full answer there. Esc, ✕ or the
   phone's Back button closes it back into the orb (and turns the microphone off).
 
+**Proactive VESPER: reminders, briefing, meeting alerts** (v0.18.0)
+- Settings → **Notifications** → switch notifications on for this device (do it once on each laptop and phone you
+  use; up to 10). A test button checks it works. Notifications arrive while the browser is running, even when no
+  VESPER tab is open.
+- **Reminders**: ask "remind me at 5 PM to call Ali", "in 20 minutes", or "tomorrow at 9". VESPER confirms the exact
+  time in your time zone and the notification arrives then. Upcoming reminders are listed in Settings → Notifications,
+  where you can cancel them (or ask "what are my reminders?" / "cancel the Ali reminder").
+- **Daily briefing**: at the time you pick (22:00 by default), one notification sums up the day ahead: from 15:00 it is
+  about tomorrow, before that about today. It counts your calendar events and the first one (Google connected) and
+  your reminders. Tap it: VESPER Agent opens; tap the core (browsers allow sound only after a tap) and it reads you a
+  short spoken briefing.
+- **Meeting alerts**: 5, 10, 15 or 30 minutes before each Google Calendar event ("In 10 minutes: Design review").
+- In VESPER Agent, short spoken lines while it works ("Let me check your calendar.") instead of silence.
+
 **Storage meter** (v0.16.0)
 - Admin panel → App settings → **Storage** shows the database's size against the free plan's 500 MB, and the text kept
   by the knowledge base, spreadsheets and documents in chat against each one's own cap, with a note when it gets full.
@@ -277,6 +329,8 @@ More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 |---|---|---|---|
 | Hosting + API | Cloudflare Workers (Free plan) | 100,000 requests/day, 10 ms CPU per request | Requests fail until 00:00 UTC. **No billing.** |
 | Web app files | Workers static assets | Unlimited requests | n/a |
+| Scheduled checks | Workers cron triggers | A run every minute (reminders, briefings, meeting alerts) and a daily clean-up | Each run does a capped amount of work; the rest waits for the next minute |
+| Notifications | The browsers' own push services (Google, Microsoft, Mozilla, Apple) | Free | n/a |
 | Database | Cloudflare D1 | 500 MB per database (5 GB per account, up to 10 databases), 5M rows read/day, 100k rows written/day | Queries fail until 00:00 UTC (a full database refuses writes until space is freed). **No billing.** Spreadsheet calculations have their own daily share (2M rows by default), so they can't use it all up. Spreadsheets, the knowledge base and documents in chat each have a storage cap, and the admin panel shows how full the database is. |
 | AI | Groq free plan | ~30 req/min, ~1,000 req/day, 8K tokens/min per model | VESPER switches provider |
 | AI | Google Gemini free tier | Per-project limits (Flash-Lite allows the most) | VESPER switches provider |
@@ -427,6 +481,8 @@ only when the admin turns on **Local models for users**.
   the answer, with **Download CSV**.
 - **Documents**: use the paperclip to attach a PDF, Word, text or Markdown file (up to three per message), wait until
   its chip is ready, then ask about it. Open a cited passage's chip under the answer to see where it came from.
+- **Notifications**: Settings → Notifications → switch them on for this device, then ask VESPER to remind you of
+  something, or set your daily briefing time and meeting alerts there.
 - **VESPER Agent**: click the glowing orb (bottom right), then talk or type. Turn on **Hands-free** for a spoken
   conversation; press Esc or ✕ to close. Headphones help in hands-free mode, so it doesn't hear itself.
 - **Under each answer**: copy, read aloud, 👍/👎, **Check** (when the answer used sources) and regenerate.
@@ -516,6 +572,10 @@ losing data; a test applies every migration over existing data to check nothing 
   approval card, exactly as shown (or as you edited it), once, by its owner only, within the daily limits. The prepared
   text is kept only until you decide (at most 24 hours); afterwards a log line (subject or title, who or when, outcome)
   stays 90 days. Calendar text is passed to the model as data, never as instructions.
+- **Notifications**: they go to your devices through your browser's own push service (Google for Chrome and Opera,
+  Microsoft for Edge, Mozilla for Firefox), end-to-end encrypted (the standard Web Push encryption), so the push service
+  can't read them. Only the devices you switched on get them; removing a device in Settings stops them at once.
+  Reminder text is kept in your Cloudflare database; notifications themselves aren't stored.
 - **Documents in chat**: only the text is stored (the file itself stays on your computer), with the chat (deleted with
   it), visible only to its owner. Searches are limited to the documents of that one chat. The text is passed to the
   model as data, never as instructions.
@@ -555,6 +615,11 @@ losing data; a test applies every migration over existing data to check nothing 
 - **Google asks to reconnect**: while VESPER's Google app is in testing, Google ends the connection every 7 days;
   reconnect in Settings → Connections. **"Gmail (or Google Calendar) isn't switched on"**: the administrator needs to
   enable that API in Google Cloud.
+- **Notifications don't arrive**: the browser must be running (on Windows, let Chrome or Opera keep running in the
+  background) and allowed to show notifications (padlock in the address bar → Notifications → Allow; on Windows also
+  check Focus assist / Do not disturb). Use **Send a test notification** in Settings → Notifications. On a phone,
+  allow notifications for Chrome and don't let battery saving stop it. iPhone and iPad aren't supported yet (Safari
+  allows notifications only for web apps added to the Home Screen, which VESPER doesn't offer yet).
 - **VESPER Agent doesn't hear you**: allow the microphone for the site (the padlock in the address bar). If it stops
   too early or too late in a noisy room, tap the microphone again to finish. **It doesn't speak**: the device needs a
   speech voice (most phones and computers have one); the speaker button must be on.

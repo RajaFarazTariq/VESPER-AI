@@ -9,6 +9,7 @@ import { searchKnowledge } from "./knowledge";
 import { GITHUB_TOOLS } from "./github";
 import { GITHUB_ACTION_TOOLS } from "./github-actions";
 import { GOOGLE_TOOLS } from "./google";
+import { REMINDER_TOOLS } from "./reminders";
 import { queryTable } from "./tables";
 import { define, ToolInputError, type AgentTool, type ToolServerState, type WebToolContext } from "./types";
 import { WEB_TOOLS } from "./web";
@@ -139,6 +140,8 @@ export const ALL_TOOLS: AgentTool[] = [
   datetime,
   remember,
   forget,
+  // Reminders sent as notifications to the user's devices (v0.18.0).
+  ...REMINDER_TOOLS,
   ...WEB_TOOLS,
   searchKnowledge,
   // Exact figures from spreadsheets attached to the chat (v0.14.0).

@@ -25,6 +25,9 @@ import type {
   MessageDto,
   MessageFeedbackDto,
   ModelsResponse,
+  NotificationPrefsDto,
+  NotificationsDto,
+  PushDeviceDto,
   PublicConfigDto,
   TableChunkInput,
   TableFileDto,
@@ -54,6 +57,10 @@ export type ChatRequestBody = {
   documents?: string[];
   /** VESPER Agent (v0.17.0): short spoken replies; tasks are done with the tools and confirmed in a sentence. */
   agent?: boolean;
+  /** VESPER Agent's daily briefing (v0.18.0), only with `agent`: a short spoken briefing for today or tomorrow. */
+  briefing?: boolean;
+  /** The day the briefing is about ("YYYY-MM-DD"), from the notification's link. */
+  briefingDay?: string;
 };
 
 export class ApiError extends Error {
@@ -223,6 +230,23 @@ export const api = {
       }),
     remove: (documentId: string) => request<{ ok: true }>(`/api/documents/${encodeURIComponent(documentId)}`, { method: "DELETE" }),
   },
+  /**
+   * Settings → Notifications (v0.18.0): this user's devices with notifications on, the briefing and meeting-alert
+   * settings, and pending reminders. Every change sends the browser's time zone.
+   */
+  notifications: {
+    get: () => request<NotificationsDto>("/api/notifications"),
+    /** Saves this browser's push subscription (the same endpoint again updates it). */
+    addDevice: (body: { endpoint: string; keys: { p256dh: string; auth: string }; label: string; timeZone: string }) =>
+      request<{ device: PushDeviceDto }>("/api/notifications/devices", { method: "POST", body: JSON.stringify(body) }),
+    removeDevice: (id: string) => request<{ ok: true }>(`/api/notifications/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    /** "VESPER notifications are on" to every device: how many it reached. */
+    test: () => request<{ sent: number; failed: number }>("/api/notifications/test", { method: "POST", body: "{}" }),
+    updatePrefs: (patch: { briefingEnabled?: boolean; briefingTime?: string; meetingAlerts?: boolean; meetingMinutes?: number }) =>
+      request<{ prefs: NotificationPrefsDto }>("/api/notifications/prefs", { method: "PUT", body: JSON.stringify({ ...patch, ...browserTimeZone() }) }),
+  },
+  /** Cancels a pending reminder (it won't be sent). */
+  cancelReminder: (id: string) => request<{ ok: true }>(`/api/reminders/${encodeURIComponent(id)}`, { method: "DELETE" }),
   listMemories: () => request<{ memories: MemoryDto[] }>("/api/memories"),
   addMemory: (content: string) => request<{ memory: MemoryDto }>("/api/memories", { method: "POST", body: JSON.stringify({ content }) }),
   /** Edit the text and/or pin ("always use") a memory. */

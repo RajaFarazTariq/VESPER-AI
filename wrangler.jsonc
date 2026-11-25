@@ -33,8 +33,9 @@
   },
 
   // Daily housekeeping: remove expired sessions, old rate-limit windows and old usage rows.
+  // Every minute (v0.18.0): due reminders, meeting alerts and daily briefings as notifications (src/worker/jobs/proactive.ts).
   "triggers": {
-    "crons": ["17 3 * * *"]
+    "crons": ["17 3 * * *", "* * * * *"]
   },
 
   // All configuration lives in the Cloudflare dashboard (Settings -> Variables and Secrets)
