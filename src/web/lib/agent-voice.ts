@@ -290,3 +290,62 @@ export class SilenceDetector {
     return "listening";
   }
 }
+
+// ------------------------------------------------------------------ Proactive VESPER (v0.18.0): the briefing and the spoken progress line
+
+/** A calendar date "YYYY-MM-DD" that exists, as days since 1970 (null otherwise). */
+function dayNumber(day: string): number | null {
+  const t = /^\d{4}-\d{2}-\d{2}$/.test(day) ? Date.parse(`${day}T00:00:00Z`) : NaN;
+  // "2026-02-30" isn't a date (it would roll over into March).
+  return Number.isNaN(t) || new Date(t).toISOString().slice(0, 10) !== day ? null : t / 86_400_000;
+}
+
+/** The day a briefing notification is about ("/?agent=briefing&day=2026-11-26"), or null when missing or not a date. */
+export function briefingDayOf(search: string): string | null {
+  const day = new URLSearchParams(search).get("day")?.trim() ?? "";
+  return dayNumber(day) === null ? null : day;
+}
+
+/**
+ * What the agent sends to start the briefing. With the notification's day: "Brief me for today." / "Brief me for
+ * tomorrow." / "Brief me for Friday." against this browser's date. Without one: about today before 15:00 local time,
+ * about tomorrow from then.
+ */
+export function briefingRequest(now = new Date(), day?: string | null): string {
+  const target = day ? dayNumber(day) : null;
+  if (target === null) return now.getHours() < 15 ? "Brief me for today." : "Brief me for tomorrow.";
+  const diff = target - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86_400_000;
+  if (diff === 0) return "Brief me for today.";
+  if (diff === 1) return "Brief me for tomorrow.";
+  const weekday = new Date(target * 86_400_000).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+  return `Brief me for ${weekday}.`;
+}
+
+/** How a notification's link opens VESPER Agent: "/?agent=briefing" starts the briefing, "/?agent=1" just opens it. */
+export function agentLink(search: string): "briefing" | "open" | null {
+  const value = new URLSearchParams(search).get("agent");
+  if (value === null) return null;
+  return value.trim().toLowerCase() === "briefing" ? "briefing" : "open";
+}
+
+/** Said on a turn's first tool step, so VESPER isn't silent while it works. */
+const PROGRESS: Record<string, string> = Object.fromEntries(
+  (
+    [
+      ["Let me check your calendar.", "calendar_events calendar_free_time"],
+      ["Let me look that up.", "web_search wikipedia read_page"],
+      ["Checking the weather.", "weather"],
+      ["Let me look in your documents.", "search_documents read_document"],
+      ["Setting that reminder.", "set_reminder"],
+      ["Let me check your reminders.", "list_reminders"],
+      ["Cancelling that reminder.", "cancel_reminder"],
+      ["Preparing that for you.", "gmail_send calendar_create_event"],
+    ] as const
+  ).flatMap(([line, tools]) => tools.split(" ").map((tool) => [tool, line])),
+);
+/** The short line for a tool's step ("Let me check your calendar."), or null for a step that says nothing. */
+export function progressLine(toolName: string): string | null {
+  // A long chat's older part kept as notes isn't the user's task: nothing is said for it.
+  if (toolName === "context_summary") return null;
+  return PROGRESS[toolName] ?? "One moment.";
+}

@@ -396,7 +396,8 @@ describe("tool settings", () => {
     expect(enabledTools({ ...DEFAULT_SETTINGS, toolsEnabled: false })).toEqual([]);
     expect(enabledTools({ ...DEFAULT_SETTINGS, disabledTools: ["calculator"] }).map((t) => t.name)).not.toContain("calculator");
     const noMemory = enabledTools({ ...DEFAULT_SETTINGS, memoryEnabled: false }).map((t) => t.name);
-    expect(noMemory).toEqual(["calculator", "current_datetime", "read_page", "weather", "wikipedia", "currency"]);
+    // Reminders (v0.18.0) are the user's own VESPER data but don't need memory switched on.
+    expect(noMemory).toEqual(["calculator", "current_datetime", "set_reminder", "list_reminders", "cancel_reminder", "read_page", "weather", "wikipedia", "currency"]);
   });
 
   it("puts memories and tool guidance into the system prompt", () => {

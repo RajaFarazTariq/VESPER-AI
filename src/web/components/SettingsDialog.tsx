@@ -1,5 +1,5 @@
 import { Check, Download, Monitor, Moon, Pencil, Pin, PinOff, Plus, Sun, Trash2, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import type { FeaturesDto, MemoryDto, ModelsResponse, SpeechLanguage, ToolInfoDto, UserSettings } from "../../shared/types";
 import { api, ApiError } from "../api/client";
 import { selectionLabel } from "../lib/format";
@@ -8,8 +8,11 @@ import { getThemePreference, setThemePreference, type ThemePreference } from "..
 import { canRecord, canSpeak } from "../lib/voice";
 import { ConnectionsTab } from "./ConnectionsTab";
 
+// Settings → Notifications (v0.18.0) is downloaded when the tab is opened.
+const NotificationsTab = lazy(() => import("./NotificationsTab").then((m) => ({ default: m.NotificationsTab })));
+
 // Provider status moved to the admin panel (AdminDialog), since only the administrator manages keys.
-export type SettingsTab = "general" | "tools" | "memory" | "voice" | "local" | "connections" | "appearance";
+export type SettingsTab = "general" | "tools" | "memory" | "voice" | "local" | "connections" | "notifications" | "appearance";
 type Tab = SettingsTab;
 
 interface Props {
@@ -110,6 +113,8 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
     ...(features?.github?.available || features?.githubActions?.available || features?.google?.available
       ? ([["connections", "Connections"]] as [Tab, string][])
       : []),
+    // Reminders, the daily briefing and meeting alerts on the user's devices (v0.18.0): for everyone.
+    ["notifications", "Notifications"],
     ["appearance", "Appearance"],
   ];
 
@@ -402,6 +407,12 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
           ) : null}
 
           {tab === "connections" ? <ConnectionsTab /> : null}
+
+          {tab === "notifications" ? (
+            <Suspense fallback={<p className="text-sm text-[var(--text-soft)]">Loading…</p>}>
+              <NotificationsTab />
+            </Suspense>
+          ) : null}
 
           {tab === "appearance" ? (
             <Field label="Theme">

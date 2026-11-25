@@ -49,7 +49,8 @@ import { AppError, badRequest, notFound } from "../lib/errors";
 import { CHAT_BODY_LIMIT, chatImageSchema, MAX_IMAGES_PER_MESSAGE } from "../lib/images";
 import { parseJson } from "../lib/validation";
 import { getProviderModels } from "../llm/catalog";
-import { buildContext, buildSystemPrompt, messageChars, normalizeTimeZone, oldestFitting, usableMessage } from "../llm/context";
+import { briefingDay, buildContext, buildSystemPrompt, messageChars, normalizeTimeZone, oldestFitting, usableMessage, type BriefingDay } from "../llm/context";
+import { getPrefsRow } from "../db/notifications";
 import { KEEP_SHARE, MAX_SUMMARY_CHARS, summarizeEarlier, summaryEvent } from "../llm/summary";
 import { presentEvent, presentMessage, viewerOf } from "../lib/present";
 import { getProviders } from "../llm/registry";
@@ -88,6 +89,10 @@ const chatSchema = z
     research: z.boolean().optional(),
     /** Agent mode (v0.17.0): the message comes from VESPER Agent (voice or text); replies are short and spoken. */
     agent: z.boolean().optional(),
+    /** The spoken daily briefing (v0.18.0, only with `agent`): the prompt gets the briefing rules for today or tomorrow. */
+    briefing: z.boolean().optional(),
+    /** The day the briefing notification was about (from its link); used when it is yesterday, today or tomorrow. */
+    briefingDay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.").optional(),
     /** A spreadsheet added beforehand through /api/files (only with a new message, v0.14.0). */
     files: z.array(z.uuid()).max(TABLE_LIMITS.perMessage, "Attach one spreadsheet per message.").optional(),
     /** Documents added beforehand through /api/documents (only with a new message, v0.16.0). */
@@ -98,6 +103,8 @@ const chatSchema = z
   })
   .refine((d) => !(d.research && d.images?.length), { message: "Deep research works with text questions only. Remove the images." })
   .refine((d) => !(d.research && d.agent), { message: "Deep research isn't available in VESPER Agent. Ask in the chat instead." })
+  .refine((d) => !d.briefing || d.agent, { message: "The briefing is only available in VESPER Agent." })
+  .refine((d) => !d.briefingDay || d.briefing, { message: "briefingDay goes with briefing: true." })
   .refine((d) => !(d.research && d.files?.length), { message: "Deep research works with text questions only. Remove the spreadsheet." })
   .refine((d) => !(d.research && d.documents?.length), { message: "Deep research works with text questions only. Remove the documents." })
   .refine((d) => !d.files?.length || (!d.regenerate && !d.edit), { message: "Spreadsheets can only be attached to a new message." })
@@ -200,6 +207,8 @@ async function prepareTurn(
     research?: boolean;
     /** Agent mode (v0.17.0): short spoken replies that confirm what was done. */
     agent?: boolean;
+    /** The spoken daily briefing (v0.18.0): which day it is about. */
+    briefing?: BriefingDay;
     /** May ask a model to summarise the older part of a long chat (cloud turns; not local models). */
     summarize?: boolean;
     /** GitHub changes are offered: the prompt lists what happened to the ones prepared in this chat (v0.13.0). */
@@ -296,6 +305,7 @@ async function prepareTurn(
       ...(extras.sendImages?.length ? { images: true } : {}),
       ...(extras.research ? { research: true } : {}),
       ...(extras.agent ? { agent: true } : {}),
+      ...(extras.agent && extras.briefing ? { briefing: extras.briefing } : {}),
       ...(summary ? { summary } : {}),
       ...(githubChanges.length ? { githubChanges } : {}),
       ...(tables.length ? { tables } : {}),
@@ -508,6 +518,13 @@ export const chatRoutes = new Hono<AppEnv>()
     const offered = new Set(tools.map((t) => t.name));
     const documentTools = offered.has(SEARCH_DOCUMENTS_TOOL) || offered.has(READ_DOCUMENT_TOOL);
     const timeZone = normalizeTimeZone(body.timeZone);
+    // The briefing (v0.18.0): the day its notification was about (sent along from its link), else today before 15:00
+    // and tomorrow from 15:00, in the time zone saved with the notification settings (else this browser's).
+    let briefing: BriefingDay | undefined;
+    if (body.briefing && body.agent) {
+      const savedZone = normalizeTimeZone((await getPrefsRow(c.env.DB, user.id))?.time_zone);
+      briefing = briefingDay(Date.now(), savedZone ?? timeZone ?? "UTC", body.briefingDay);
+    }
     let turn: Awaited<ReturnType<typeof prepareTurn>>;
     try {
       turn = await prepareTurn(c, user, { ...body, files: newFiles, documents: newDocuments }, selection, {
@@ -519,6 +536,7 @@ export const chatRoutes = new Hono<AppEnv>()
         sendImages,
         research,
         agent: Boolean(body.agent),
+        ...(briefing ? { briefing } : {}),
         summarize: true,
         githubChanges: githubActionsOn,
         google: google ? { email: google.email } : null,
@@ -639,14 +657,17 @@ export const chatRoutes = new Hono<AppEnv>()
             // Questions that clearly need a look-up are searched first, so the model answers in one request. Not in chats
             // with a spreadsheet: "sales in 2026" is about the file, not the web (the model can still search itself).
             // In chats with documents (v0.16.0) only the documents are read or searched first (see llm/prefetch.ts).
-            prefetch: documentTools
-              ? planPrefetch(turn.userMessage.content, offered, {
-                  attached: Boolean(turn.userMessage.documents?.length),
-                  list: turn.documents,
-                })
-              : hasTables
-                ? null
-                : planPrefetch(turn.userMessage.content, offered),
+            // The briefing (v0.18.0) follows its own rules ("Brief me for today." is no web question).
+            prefetch: briefing
+              ? null
+              : documentTools
+                ? planPrefetch(turn.userMessage.content, offered, {
+                    attached: Boolean(turn.userMessage.documents?.length),
+                    list: turn.documents,
+                  })
+                : hasTables
+                  ? null
+                  : planPrefetch(turn.userMessage.content, offered),
             events,
           });
         }

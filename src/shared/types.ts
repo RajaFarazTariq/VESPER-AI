@@ -524,6 +524,60 @@ export interface MessageFileDto {
   rows: number;
 }
 
+// ------------------------------------------------------------------ Proactive VESPER: notifications, reminders, briefing (v0.18.0)
+
+/** A device (browser) where the user switched notifications on. */
+export interface PushDeviceDto {
+  id: string;
+  /** e.g. "Chrome on Windows", "Chrome on Android". */
+  label: string;
+  createdAt: number;
+  /** When a notification last reached it (null = none yet). */
+  lastOkAt: number | null;
+}
+
+export interface NotificationPrefsDto {
+  /** The user's IANA time zone, saved from their browser (e.g. "Asia/Karachi"). */
+  timeZone: string;
+  /** A daily briefing notification (about today before 15:00, about tomorrow from 15:00). */
+  briefingEnabled: boolean;
+  /** Local time "HH:MM" (default "22:00"). */
+  briefingTime: string;
+  /** A notification before each Google Calendar event. */
+  meetingAlerts: boolean;
+  /** Minutes before the event: 5, 10, 15 or 30 (default 10). */
+  meetingMinutes: number;
+}
+
+export interface ReminderDto {
+  id: string;
+  text: string;
+  dueAt: number;
+  timeZone: string;
+  status: "pending" | "sent" | "cancelled";
+}
+
+/** What a push notification carries (encrypted on the way; shown by the service worker). */
+export interface PushPayload {
+  title: string;
+  body: string;
+  /** Opened when the notification is clicked, e.g. "/" or "/?agent=briefing". */
+  url: string;
+  /** Notifications with the same tag replace each other. */
+  tag: string;
+  kind: "reminder" | "briefing" | "meeting" | "test";
+}
+
+/** `GET /api/notifications`. */
+export interface NotificationsDto {
+  /** The app's VAPID public key (base64url, uncompressed P-256 point) for `pushManager.subscribe`. */
+  publicKey: string;
+  devices: PushDeviceDto[];
+  prefs: NotificationPrefsDto;
+  /** Pending reminders, soonest first. */
+  reminders: ReminderDto[];
+}
+
 // ------------------------------------------------------------------ Storage meter (admin, v0.16.0)
 
 /** The free plan's limit for one D1 database (5 GB is the whole account's total, across up to 10 databases). */

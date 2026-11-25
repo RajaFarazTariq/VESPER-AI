@@ -321,6 +321,8 @@ export function useChat(options: Options) {
       research = false,
       files: MessageFileDto[] = [],
       documents: MessageDocumentDto[] = [],
+      /** VESPER Agent's daily briefing (v0.18.0), about `day` ("YYYY-MM-DD") when the notification said which. */
+      briefing: { day?: string | null } | null = null,
     ) => {
       const body = {
         ...(conversationId ? { conversationId } : {}),
@@ -328,6 +330,7 @@ export function useChat(options: Options) {
         model,
         ...(images.length ? { images } : {}),
         ...(research ? { research: true } : {}),
+        ...(briefing ? { briefing: true, ...(briefing.day ? { briefingDay: briefing.day } : {}) } : {}),
         // Spreadsheets and documents go with cloud models only (the message box checks this before sending).
         ...(files.length ? { files: files.map((f) => f.id) } : {}),
         ...(documents.length ? { documents: documents.map((d) => d.id) } : {}),

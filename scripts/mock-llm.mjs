@@ -88,6 +88,19 @@ function pickTool(text, names, system = "") {
       return { name: "query_table", args: { ...(groups.length ? { group_by: groups } : {}), metrics: [{ op, column: number }, ...(/\bcount\b/i.test(text) ? ["count"] : [])] } };
     }
   }
+  // Reminders (v0.18.0): "remind me in 2 minutes to stretch", "remind me at 17:00 to call Ali", "remind me tomorrow at
+  // 09:00 to …" (no time given: in 2 minutes).
+  const remind = /\bremind me\b(.*)$/i.exec(text);
+  if (remind && names.includes("set_reminder")) {
+    const rest = remind[1];
+    const found =
+      /\bin \d+ (?:minutes?|mins?|hours?)\b/i.exec(rest) ??
+      /\btomorrow(?: at)? \d{1,2}(?::\d{2})?(?: ?[ap]m)?/i.exec(rest) ??
+      /\bat \d{1,2}(?::\d{2})?(?: ?[ap]m)?/i.exec(rest);
+    const when = found ? found[0].replace(/^at /i, "") : "in 2 minutes";
+    const what = (found ? rest.replace(found[0], " ") : rest).replace(/^\s*(?:to|that|about)\s+/i, "").replace(/[\s.!?]+$/, "").replace(/\s+/g, " ").trim();
+    return { name: "set_reminder", args: { text: what || "Reminder", when } };
+  }
   const time = /time in ([A-Za-z_]+\/[A-Za-z_]+)/i.exec(text);
   if (time && names.includes("current_datetime")) return { name: "current_datetime", args: { timezone: time[1] } };
   const remember = /remember (?:that )?(.+)/i.exec(text);
@@ -96,6 +109,22 @@ function pickTool(text, names, system = "") {
   if (calc && names.includes("calculator")) return { name: "calculator", args: { expression: calc[1].trim() } };
   return null;
 }
+
+/** A tool call, streamed in two fragments like real providers do. */
+async function streamToolCall(res, call) {
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+  const args = JSON.stringify(call.args);
+  const half = Math.ceil(args.length / 2);
+  res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_mock1", type: "function", function: { name: call.name, arguments: args.slice(0, half) } }] } }] })}\n\n`);
+  await sleep(15);
+  res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: args.slice(half) } }] }, finish_reason: "tool_calls" }] })}\n\n`);
+  res.end("data: [DONE]\n\n");
+}
+
+/** The spoken briefing (v0.18.0): short, plain text, ending with a question. */
+const briefingText = (day) =>
+  `Here's your briefing for ${day}. You have two events: the team standup at 10 and a client call at 2 PM. ` +
+  "Nothing looks urgent, and there's a short gap for lunch. Anything you want me to prepare?";
 
 async function streamText(res, text) {
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
@@ -201,25 +230,22 @@ const server = createServer(async (req, res) => {
     const fromDocuments = documentCitation(lastMessage?.role === "tool" ? lastMessage.content : (prefetched ?? ""));
     if (fromDocuments) return streamText(res, documentAnswer(fromDocuments));
 
+    // "Brief me for tomorrow." (v0.18.0): reads the reminders first when offered (a tool step), then the canned briefing.
+    const toolNames = Array.isArray(body.tools) ? body.tools.map((t) => t.function?.name) : [];
+    if (/\bbrief me\b/i.test(String(last))) {
+      const day = /\btoday\b/i.test(String(last)) ? "today" : "tomorrow";
+      if (toolNames.includes("list_reminders") && lastMessage?.role !== "tool") return streamToolCall(res, { name: "list_reminders", args: { day } });
+      return streamText(res, briefingText(day));
+    }
+
     // Tool calling: decide on a tool for recognisable requests, then answer from the tool result.
-    if (Array.isArray(body.tools) && body.tools.length > 0) {
-      const toolNames = body.tools.map((t) => t.function?.name);
+    if (toolNames.length > 0) {
       if (lastMessage?.role === "tool") {
         return streamText(res, `Done. The tool returned: ${lastMessage.content}`);
       }
       const system = String((body.messages ?? []).find((m) => m.role === "system")?.content ?? "");
       const call = pickTool(String(last), toolNames, system);
-      if (call) {
-        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-        const args = JSON.stringify(call.args);
-        const half = Math.ceil(args.length / 2);
-        // Stream the call in two fragments, like real providers do.
-        res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_mock1", type: "function", function: { name: call.name, arguments: args.slice(0, half) } }] } }] })}\n\n`);
-        await sleep(15);
-        res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: args.slice(half) } }] }, finish_reason: "tool_calls" }] })}\n\n`);
-        res.end("data: [DONE]\n\n");
-        return;
-      }
+      if (call) return streamToolCall(res, call);
     }
     const reply =
       `**Mock reply** from \`${provider}\` (model \`${body.model}\`).\n\n` +

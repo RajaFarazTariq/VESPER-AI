@@ -21,6 +21,7 @@ import { documentErrorMessage, messageDocument, readDocument, uploadDocument, ty
 import { ImageError, prepareImage, type PendingImage } from "./lib/images";
 import { messageFile, readInBackground, tableErrorMessage, uploadTables, type PendingTable } from "./lib/tables";
 import { explainOllamaError, listOllamaModels } from "./lib/ollama";
+import { agentLink, briefingDayOf } from "./lib/agent-voice";
 import { canSpeak, speak, stopSpeaking } from "./lib/voice";
 import { VesperMark } from "./components/VesperMark";
 
@@ -109,6 +110,21 @@ const readCollapsed = () => {
   }
 };
 
+/**
+ * Signing out (v0.18.0): this browser stops getting the account's notifications (a shared computer must not show the
+ * last user's reminders): the server forgets this device, the browser drops its subscription and the saved id. Best
+ * effort, and never holds the sign-out up for more than 2.5 seconds. (The push code is loaded only now.)
+ */
+async function forgetPushDevice(): Promise<void> {
+  const work = (async () => {
+    const push = await import("./lib/push");
+    const id = push.savedDeviceId();
+    push.saveDeviceId(null);
+    await Promise.allSettled([id ? api.notifications.removeDevice(id) : Promise.resolve(), push.unsubscribe()]);
+  })().catch(() => {});
+  await Promise.race([work, new Promise((resolve) => setTimeout(resolve, 2500))]);
+}
+
 const conversationIdFromPath = () => /^\/c\/([0-9a-f-]{36})$/i.exec(window.location.pathname)?.[1] ?? null;
 
 /**
@@ -195,6 +211,11 @@ function ChatApp({
   /** VESPER Agent (v0.17.0): open over the chat, growing out of the launcher at `agentOrigin`. */
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentOrigin, setAgentOrigin] = useState<{ x: number; y: number } | null>(null);
+  /** Opened from the daily briefing's notification (v0.18.0); each such opening starts a fresh agent view. */
+  const [agentBriefing, setAgentBriefing] = useState(false);
+  /** The day that briefing is about ("YYYY-MM-DD", from the link), when it says. */
+  const [agentBriefingDay, setAgentBriefingDay] = useState<string | null>(null);
+  const [agentRun, setAgentRun] = useState(0);
   const agentOpenRef = useRef(false);
   agentOpenRef.current = agentOpen;
   const launcher = useRef<HTMLButtonElement>(null);
@@ -522,14 +543,48 @@ function ChatApp({
     if (ignorePop.current) clearTimeout(ignorePop.current);
     ignorePop.current = setTimeout(() => (ignorePop.current = null), 1000);
   };
-  const openAgent = () => {
+  const openAgent = (briefing = false, briefingDay: string | null = null) => {
     const rect = launcher.current?.getBoundingClientRect();
     setAgentOrigin(rect && rect.width > 0 ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null);
     setSidebarOpen(false);
-    window.history.pushState({ vesperAgent: true }, "", window.location.href);
-    agentEntry.current = true;
+    // Already open (a notification clicked meanwhile): it keeps its history entry.
+    if (!agentOpenRef.current) {
+      window.history.pushState({ vesperAgent: true }, "", window.location.href);
+      agentEntry.current = true;
+    }
+    setAgentBriefing(briefing);
+    setAgentBriefingDay(briefing ? briefingDay : null);
+    setAgentRun((n) => n + 1);
     setAgentOpen(true);
   };
+  /**
+   * A notification's link (v0.18.0), by its query: "?agent=briefing&day=YYYY-MM-DD" starts the briefing (about that
+   * day), "?agent=1" opens VESPER Agent.
+   */
+  const openFromLink = (search: string) => {
+    const link = agentLink(search);
+    if (link === "briefing") openAgent(true, briefingDayOf(search));
+    else if (link && !agentOpenRef.current) openAgent();
+  };
+  const openFromLinkRef = useRef(openFromLink);
+  openFromLinkRef.current = openFromLink;
+  // A notification clicked while VESPER is open in this tab: the service worker brings the tab forward and says what to open.
+  useEffect(() => {
+    const worker = navigator.serviceWorker;
+    if (!worker) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: unknown; url?: unknown } | null;
+      if (data?.type !== "vesper:open" || typeof data.url !== "string") return;
+      try {
+        const url = new URL(data.url, window.location.origin);
+        if (url.origin === window.location.origin) openFromLinkRef.current(url.search);
+      } catch {
+        // not a link of ours
+      }
+    };
+    worker.addEventListener("message", onMessage);
+    return () => worker.removeEventListener("message", onMessage);
+  }, []);
   /** Closed with ✕ or Esc: its history entry goes again. */
   const closeAgent = useCallback(() => {
     setAgentOpen(false);
@@ -564,7 +619,7 @@ function ChatApp({
     launcher.current?.focus();
   }, [agentOpen]);
   /** VESPER Agent's launcher, placed by the screen it is on (welcome screen or conversation). */
-  const agentLauncher = (className = "") => <AgentLauncher ref={launcher} onClick={openAgent} hidden={agentOpen} className={className} />;
+  const agentLauncher = (className = "") => <AgentLauncher ref={launcher} onClick={() => openAgent()} hidden={agentOpen} className={className} />;
   const agentConversationCreated = useCallback(
     (conversation: ConversationDto) => setConversations((list) => [conversation, ...list.filter((c) => c.id !== conversation.id)]),
     [],
@@ -613,9 +668,14 @@ function ChatApp({
       toast(message, kind);
       setSettingsTab("connections");
     }
+    // From a notification (v0.18.0): /?agent=briefing or /?agent=1 opens VESPER Agent (below, once the address is clean).
+    const search = window.location.search;
     const initial = conversationIdFromPath();
-    if (initial) void openConversation(initial, false);
-    else if (window.location.search) window.history.replaceState(null, "", "/");
+    if (initial) {
+      if (agentLink(search)) window.history.replaceState(null, "", window.location.pathname);
+      void openConversation(initial, false);
+    } else if (search) window.history.replaceState(null, "", "/");
+    openFromLink(search);
     const onPop = (event: PopStateEvent) => {
       // VESPER Agent (v0.17.0): none of these move the chat. Our own step back after closing the agent; Back while it
       // is open (closes it); Forward into an earlier agent entry (stepped back over).
@@ -831,6 +891,7 @@ function ChatApp({
           setSidebarOpen(false);
         }}
         onLogout={async () => {
+          await forgetPushDevice();
           await api.logout().catch(() => {});
           window.history.replaceState(null, "", "/");
           onSignedOut();
@@ -992,6 +1053,9 @@ function ChatApp({
       ) : null}
       {agentOpen ? (
         <AgentMode
+          key={agentRun}
+          briefing={agentBriefing}
+          briefingDay={agentBriefingDay}
           firstName={firstName}
           settings={settings}
           features={features}

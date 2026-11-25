@@ -6,9 +6,11 @@ import { api, ApiError } from "../api/client";
 import { useChat, type UiMessage } from "../hooks/useChat";
 import {
   agentGreeting,
+  briefingRequest,
   loudness,
   nextSentences,
   nextUtcMidnight,
+  progressLine,
   rankVoices,
   SilenceDetector,
   speechChunks,
@@ -667,6 +669,9 @@ const saveChoice = (choice: string) => {
   }
 };
 const TEST_SENTENCE = "Hello, I'm VESPER. How can I help?";
+/** Opened from the daily briefing's notification (v0.18.0): sound may only start after a tap, so it waits for one. */
+const BRIEFING_READY = "Your briefing is ready. Tap the core to hear it.";
+const BRIEFING_TAP = "Tap to hear your briefing";
 
 /** The device's voices (they load a moment after the page: "voiceschanged"). */
 function useDeviceVoices(): SpeechSynthesisVoice[] {
@@ -755,6 +760,13 @@ export interface AgentModeProps {
   onOpenInChat: (conversationId: string) => void;
   onConversationCreated: (conversation: ConversationDto) => void;
   onConversationActivity: (id: string) => void;
+  /**
+   * Opened from the daily briefing's notification (v0.18.0): the greeting says the briefing is ready, and tapping the
+   * core asks for it ("Brief me for today/tomorrow.", sent with `briefing: true`) with the sound unlocked by that tap.
+   */
+  briefing?: boolean;
+  /** The day the briefing is about ("YYYY-MM-DD", from the notification); null: today or tomorrow by the time. */
+  briefingDay?: string | null;
 }
 
 /**
@@ -762,10 +774,28 @@ export interface AgentModeProps {
  * thinking or speaking; your words and the reply float around it. Its conversations are normal saved chats (its own
  * chat state, so the normal chat stays as it was). Outward actions keep their Approve cards.
  */
-export function AgentMode({ firstName, settings, features, origin, onClose, onOpenInChat, onConversationCreated, onConversationActivity }: AgentModeProps) {
+export function AgentMode({
+  firstName,
+  settings,
+  features,
+  origin,
+  onClose,
+  onOpenInChat,
+  onConversationCreated,
+  onConversationActivity,
+  briefing = false,
+  briefingDay = null,
+}: AgentModeProps) {
   const [calm] = useState(prefersCalm);
   const [booting, setBooting] = useState(!calm);
-  const [greeting] = useState(() => agentGreeting(firstName));
+  const [greeting] = useState(() => (briefing ? BRIEFING_READY : agentGreeting(firstName)));
+  /** The briefing waits for a tap on the core (until then, or until something else is sent). */
+  const [briefingWaiting, setBriefingWaitingState] = useState(briefing);
+  const briefingWaitingRef = useRef(briefing);
+  const setBriefingWaiting = (on: boolean) => {
+    briefingWaitingRef.current = on;
+    setBriefingWaitingState(on);
+  };
   const [entered, setEntered] = useState(calm);
   const [closing, setClosing] = useState(false);
   const [phase, setPhaseState] = useState<Phase>("idle");
@@ -795,8 +825,11 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
   const alive = useRef(true);
   const [levels] = useState(levelStore);
   const [voice] = useState(() => new AgentVoice({ onChange: setSpeaking, onLevel: levels.set, onStudioIssue: setStudioIssue }));
-  /** The turn being spoken: which one (counted by your messages), how much of its reply was handed to the voice. */
-  const spoken = useRef({ turn: -1, upTo: 0, muted: false });
+  /**
+   * The turn being spoken: which one (counted by your messages), how much of its reply was handed to the voice, and
+   * whether its spoken progress line (v0.18.0) was dealt with.
+   */
+  const spoken = useRef({ turn: -1, upTo: 0, muted: false, progress: false });
   /** Hands-free: listen again once this turn's reply has been written and spoken. */
   const listenAfterTurn = useRef(false);
   /** Words that arrived while the previous reply was still being written: sent once it has stopped. */
@@ -875,10 +908,12 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
     say(text);
   }
 
-  const sendText = (raw: string): boolean => {
+  const sendText = (raw: string, asBriefing: { day: string | null } | null = null): boolean => {
     const text = raw.trim();
     const c = live.current.chat;
     if (!text || closingRef.current) return false;
+    // Anything sent instead of the briefing: it no longer waits.
+    setBriefingWaiting(false);
     if (c.streaming) {
       // You moved on: stop the reply being written, then send this.
       pendingSend.current = text;
@@ -890,10 +925,10 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
     }
     voice.stop();
     setFlash(null);
-    spoken.current = { turn: live.current.userCount + 1, upTo: 0, muted: false };
+    spoken.current = { turn: live.current.userCount + 1, upTo: 0, muted: false, progress: false };
     listenAfterTurn.current = true;
     lastSent.current = text;
-    void c.send(text, live.current.model).then((accepted) => {
+    void c.send(text, live.current.model, [], false, [], [], asBriefing).then((accepted) => {
       if (!accepted) listenAfterTurn.current = false;
     });
     return true;
@@ -1007,11 +1042,12 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
     const greet = () => {
       setBooting(false);
       setReplyNote(greeting);
-      if (phaseRef.current === "idle" && live.current.chat.messages.length === 0) say(greeting);
+      // The briefing's note isn't spoken: no tap yet, so the browser wouldn't play it.
+      if (phaseRef.current === "idle" && live.current.chat.messages.length === 0 && !briefingWaitingRef.current) say(greeting);
     };
     if (calm) {
       let current = true;
-      void voice.unlock().then(() => current && greet());
+      void (briefing ? Promise.resolve() : voice.unlock()).then(() => current && greet());
       return () => {
         current = false;
         voice.stop();
@@ -1035,9 +1071,11 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
     };
   }, [calm]);
 
-  // The launcher's tap (this runs while it is being handled): the studio voice's output may start now.
+  // The launcher's tap (this runs while it is being handled): the studio voice's output may start now. Not when opened
+  // from the briefing's notification: there was no tap, and the core's tap unlocks it.
   useLayoutEffect(() => {
-    void voice.unlock();
+    if (!briefing) void voice.unlock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voice]);
 
   // Focus moves into the view: the text field (on touch screens the view itself, so the keyboard doesn't cover the core).
@@ -1122,6 +1160,18 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replyContent, replyDone, userCount]);
 
+  // Spoken progress (v0.18.0): the turn's first tool step gets a short line ("Let me check your calendar."), so VESPER
+  // isn't silent while it works. Once per turn, and not when the reply itself has already started.
+  const firstStep = reply?.streaming ? reply.tools?.find((t) => progressLine(t.name) !== null) : undefined;
+  useEffect(() => {
+    const s = spoken.current;
+    if (!firstStep || s.turn !== userCount || s.progress) return;
+    s.progress = true;
+    if (s.muted || s.upTo > 0 || replyContent.trim() || voice.speaking || !maySpeak()) return;
+    voice.say(progressLine(firstStep.name)!);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firstStep?.id, userCount]);
+
   // A turn ended: the screen reader hears the reply (or the error, and the core flashes).
   useEffect(() => {
     if (chat.streaming) {
@@ -1176,22 +1226,35 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
     else if (phaseRef.current === "idle") void startListening();
   };
 
-  /** Tapping the core: stops VESPER talking; while listening, ends your turn; otherwise starts listening. */
+  /** The briefing waits for this tap (v0.18.0). */
+  const briefingReady = briefingWaiting && !booting && phase === "idle" && !chat.streaming;
+  /**
+   * Tapping the core: stops VESPER talking; while listening, ends your turn; with the briefing waiting, starts it;
+   * otherwise starts listening.
+   */
   const coreAction = speaking
     ? "Stop speaking"
     : phase === "listening"
       ? "Stop listening and send"
-      : phase === "idle" && sttOn && !booting && !chat.streaming
-        ? "Start listening"
-        : null;
+      : briefingReady
+        ? BRIEFING_TAP
+        : phase === "idle" && sttOn && !booting && !chat.streaming
+          ? "Start listening"
+          : null;
   const onCore = () => {
-    void voice.unlock();
+    const unlocked = voice.unlock();
     if (voice.speaking) {
       voice.stop();
       spoken.current.muted = true;
       listenAfterTurn.current = false;
     } else if (phaseRef.current === "listening") void finishListening("done");
-    else if (phaseRef.current === "idle" && sttOn && !booting && !live.current.chat.streaming) void startListening();
+    else if (briefingWaitingRef.current && phaseRef.current === "idle" && !booting && !live.current.chat.streaming) {
+      setBriefingWaiting(false);
+      // Asked for once the sound this tap allowed is running (at most half a second), so the first words are heard.
+      void unlocked.then(() => {
+        if (alive.current && !closingRef.current && phaseRef.current === "idle") sendText(briefingRequest(new Date(), briefingDay), { day: briefingDay });
+      });
+    } else if (phaseRef.current === "idle" && sttOn && !booting && !live.current.chat.streaming) void startListening();
   };
 
   /** The voice menu closes back onto its button. */
@@ -1294,7 +1357,9 @@ export function AgentMode({ firstName, settings, features, origin, onClose, onOp
               ? "Thinking…"
               : speaking
                 ? "Speaking · tap the core to stop"
-                : "";
+                : briefingReady
+                  ? BRIEFING_TAP
+                  : "";
 
   // The last two exchanges: the latest in full, the one before fading; older ones are gone.
   const exchanges = useMemo(() => {
