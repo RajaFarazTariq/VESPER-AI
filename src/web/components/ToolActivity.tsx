@@ -7,8 +7,10 @@ import {
   Bookmark,
   BookmarkMinus,
   CalendarClock,
+  CalendarCog,
   CalendarDays,
   CalendarPlus,
+  CalendarX,
   Calculator,
   ChevronRight,
   CircleAlert,
@@ -22,9 +24,11 @@ import {
   GitPullRequest,
   GitPullRequestArrow,
   CircleDot,
+  ExternalLink,
   FileSpreadsheet,
   Library,
   ListChecks,
+  ListTodo,
   Loader2,
   Mail,
   MessageSquare,
@@ -32,6 +36,7 @@ import {
   Search,
   SearchCode,
   ShieldCheck,
+  StickyNote,
   Telescope,
   Wrench,
   X,
@@ -39,7 +44,7 @@ import {
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { SourceDto, ToolEventDto } from "../../shared/types";
 import { useMenuLayout } from "../hooks/useMenuLayout";
-import { chipLabels } from "../lib/format";
+import { chipLabels, websiteLinks } from "../lib/format";
 
 export const TOOL_ICONS: Record<string, typeof Wrench> = {
   calculator: Calculator,
@@ -78,6 +83,12 @@ export const TOOL_ICONS: Record<string, typeof Wrench> = {
   set_reminder: BellPlus,
   list_reminders: Bell,
   cancel_reminder: BellOff,
+  // v0.19.0: lists and notes (VESPER's own), opening a website, changing or cancelling an event (with approval).
+  lists: ListTodo,
+  notes: StickyNote,
+  open_website: ExternalLink,
+  calendar_update_event: CalendarCog,
+  calendar_delete_event: CalendarX,
 };
 
 /**
@@ -132,6 +143,27 @@ export function SourceList({ sources, more = [] }: { sources: SourceDto[]; more?
         </button>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * "Open youtube.com" buttons for websites the user asked to open (v0.19.0). Browsers block opening a tab by itself,
+ * so it is a link the user taps; it always shows the whole domain and opens in a new tab without telling the site
+ * where it came from. `className` styles each button (the chat and VESPER Agent's HUD look different).
+ */
+export function WebsiteButtons({ tools, className }: { tools: ToolEventDto[] | null | undefined; className: string }) {
+  const links = websiteLinks(tools);
+  if (links.length === 0) return null;
+  return (
+    <>
+      {links.map((link) => (
+        <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer" title={link.url} className={className}>
+          <ExternalLink size={14} className="shrink-0" aria-hidden="true" />
+          <span className="[overflow-wrap:anywhere]">Open {link.domain}</span>
+          <span className="sr-only">{link.title !== link.domain ? ` (${link.title}, opens in a new tab)` : " (opens in a new tab)"}</span>
+        </a>
+      ))}
+    </>
   );
 }
 
@@ -309,6 +341,12 @@ const PLAIN: Record<string, [running: string, done: string]> = {
   set_reminder: ["Setting a reminder…", "Set a reminder"],
   list_reminders: ["Checking your reminders…", "Checked your reminders"],
   cancel_reminder: ["Cancelling a reminder…", "Cancelled a reminder"],
+  // The same step reads or changes a list or the notes (users don't see which), so the words fit both.
+  lists: ["Opening your lists…", "Used your lists"],
+  notes: ["Opening your notes…", "Used your notes"],
+  open_website: ["Finding the link…", "Found the link"],
+  calendar_update_event: ["Preparing the change…", "Prepared a change for your approval"],
+  calendar_delete_event: ["Preparing the cancellation…", "Prepared a cancellation for your approval"],
 };
 
 /** One step in plain words, e.g. "Reading your calendar…" while it runs (also VESPER Agent's step line, v0.17.0). */

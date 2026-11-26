@@ -20,11 +20,13 @@ import type {
   KnowledgeDocKind,
   KnowledgeDocumentDto,
   KnowledgeUsageDto,
+  ListDto,
   LocalPrepareResponse,
   MemoryDto,
   MessageDto,
   MessageFeedbackDto,
   ModelsResponse,
+  NoteDto,
   NotificationPrefsDto,
   NotificationsDto,
   PushDeviceDto,
@@ -131,6 +133,17 @@ export const api = {
     }),
   deleteConversation: (id: string) =>
     request<{ ok: true }>(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** Archived chats (v0.19.0): hidden from the sidebar, kept until restored or deleted (newest first, 50 at a time). */
+  listArchivedConversations: (before?: number) =>
+    request<{ conversations: ConversationDto[]; hasMore: boolean }>(
+      `/api/conversations?limit=50&archived=1${before ? `&before=${before}` : ""}`,
+    ),
+  /** Archive (out of the sidebar) or restore a chat. Sending a message in an archived chat restores it too. */
+  archiveConversation: (id: string, archived: boolean) =>
+    request<{ conversation: ConversationDto }>(`/api/conversations/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ archived }),
+    }),
 
   models: (refresh = false) => request<ModelsResponse>(`/api/models${refresh ? "?refresh=1" : ""}`),
   updateSettings: (patch: Partial<UserSettings>) =>
@@ -244,6 +257,29 @@ export const api = {
     test: () => request<{ sent: number; failed: number }>("/api/notifications/test", { method: "POST", body: "{}" }),
     updatePrefs: (patch: { briefingEnabled?: boolean; briefingTime?: string; meetingAlerts?: boolean; meetingMinutes?: number }) =>
       request<{ prefs: NotificationPrefsDto }>("/api/notifications/prefs", { method: "PUT", body: JSON.stringify({ ...patch, ...browserTimeZone() }) }),
+  },
+  /**
+   * Settings → Lists & notes (v0.19.0): the lists and notes VESPER keeps for this user (lists most recently changed
+   * first, items in the order added; notes newest first). Each change returns the list as it now is.
+   */
+  lists: {
+    get: () => request<{ lists: ListDto[]; notes: NoteDto[] }>("/api/lists"),
+    rename: (listId: string, name: string) =>
+      request<{ list: ListDto }>(`/api/lists/${encodeURIComponent(listId)}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+    remove: (listId: string) => request<{ ok: true }>(`/api/lists/${encodeURIComponent(listId)}`, { method: "DELETE" }),
+    /** Tick or untick an item, or change its text. */
+    updateItem: (listId: string, itemId: string, patch: { done?: boolean; text?: string }) =>
+      request<{ list: ListDto }>(`/api/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(itemId)}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      }),
+    removeItem: (listId: string, itemId: string) =>
+      request<{ list: ListDto }>(`/api/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(itemId)}`, { method: "DELETE" }),
+  },
+  notes: {
+    update: (noteId: string, text: string) =>
+      request<{ note: NoteDto }>(`/api/notes/${encodeURIComponent(noteId)}`, { method: "PATCH", body: JSON.stringify({ text }) }),
+    remove: (noteId: string) => request<{ ok: true }>(`/api/notes/${encodeURIComponent(noteId)}`, { method: "DELETE" }),
   },
   /** Cancels a pending reminder (it won't be sent). */
   cancelReminder: (id: string) => request<{ ok: true }>(`/api/reminders/${encodeURIComponent(id)}`, { method: "DELETE" }),

@@ -15,6 +15,7 @@ import { vapidKeys } from "../src/worker/push/keys";
 import { vapidToken } from "../src/worker/push/vapid";
 import { addDays, dayLabel, validTimeZone, wallClock, zonedInstant } from "../src/worker/tools/google";
 import { CALENDAR_SCOPE, googleTokenOwner } from "../src/worker/tools/google-client";
+import { LIST_TOOLS } from "../src/worker/tools/lists";
 import { REMINDER_TOOLS } from "../src/worker/tools/reminders";
 import type { ToolContext } from "../src/worker/tools/types";
 
@@ -158,7 +159,7 @@ async function connectGoogle(userId: string) {
     .run();
 }
 
-const tool = (name: string) => REMINDER_TOOLS.find((t) => t.name === name)!;
+const tool = (name: string) => [...REMINDER_TOOLS, ...LIST_TOOLS].find((t) => t.name === name)!;
 const ctxFor = (userId: string, now = T0): ToolContext => ({ db: env.DB, userId, settings: DEFAULT_SETTINGS, now: new Date(now), timeZone: TZ });
 const run = async (name: string, args: object, ctx: ToolContext) => JSON.parse((await tool(name).run(tool(name).schema.parse(args), ctx)).content);
 
@@ -336,6 +337,10 @@ describe("the every-minute run", () => {
     await send("PUT", "/api/notifications/prefs", { meetingAlerts: false }, owner.cookie);
     await connectGoogle(owner.id);
     await run("set_reminder", { text: "Send the report", when: "2026-12-07 09:00" }, ctxFor(owner.id));
+    // Open to-dos (v0.19.0): the To-do list only, done items and other lists left out.
+    await run("lists", { action: "add", items: ["Call Ali", "Pay rent", "Book flights"] }, ctxFor(owner.id));
+    await run("lists", { action: "done", items: ["pay rent"] }, ctxFor(owner.id));
+    await run("lists", { action: "add", list: "Shopping", items: ["Milk"] }, ctxFor(owner.id));
     // Someone without Google gets the reminders part only.
     const ann = await login("ann");
     const annBrowser = await browser();
@@ -352,7 +357,7 @@ describe("the every-minute run", () => {
     expect(mine.headers.get("urgency")).toBe("normal");
     expect(await decrypt(mine.body, chrome)).toEqual({
       title: "Your briefing for tomorrow",
-      body: "2 events, first at 10:00 (Team standup) · 1 reminder. Tap to hear it.",
+      body: "2 events, first at 10:00 (Team standup) · 1 reminder · 2 open to-dos. Tap to hear it.",
       url: "/?agent=briefing&day=2026-12-07",
       tag: "briefing",
       kind: "briefing",
@@ -367,7 +372,7 @@ describe("the every-minute run", () => {
     // (The 09:00 reminder, overdue by then, goes out in the same run.)
     expect(await runProactive(testEnv(), at22 + 86_400_000)).toMatchObject({ briefings: 1, reminders: 1 });
     const received = await Promise.all(pushed.map((p) => decrypt(p.body, chrome)));
-    expect(received.find((n) => n.kind === "briefing").body).toBe("No events. Tap to hear it.");
+    expect(received.find((n) => n.kind === "briefing").body).toBe("No events · 2 open to-dos. Tap to hear it.");
   });
 
   it("alerts once, 10 minutes before each meeting, with plain text from the calendar", async () => {

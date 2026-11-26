@@ -398,6 +398,40 @@ describe("conversations and settings", () => {
     expect((await call("/api/conversations/not-a-uuid", { cookie: owner })).response.status).toBe(404);
   });
 
+  it("archives chats: out of the list, under ?archived=1, back on unarchive or a new message, own only (v0.19.0)", async () => {
+    const owner = await login("octocat");
+    mockFetch(() => sseResponse(["hi"]));
+    const start = async (message: string) =>
+      (parseEvents((await call("/api/chat", { method: "POST", body: JSON.stringify({ message }), cookie: owner, env: PROVIDERS })).text)[0] as Extract<
+        ChatStreamEvent,
+        { type: "conversation" }
+      >).conversation.id;
+    const old = await start("old chat");
+    const recent = await start("recent chat");
+    const ids = async (query = "") => (await call(`/api/conversations${query}`, { cookie: owner })).json.conversations.map((c: any) => c.id);
+    const archive = (id: string, archived: boolean, cookie = owner) => call(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ archived }), cookie });
+
+    const archived = await archive(old, true);
+    expect(archived.json.conversation).toMatchObject({ id: old, title: "old chat", archivedAt: expect.any(Number) });
+    expect(await ids()).toEqual([recent]);
+    expect(await ids("?archived=1")).toEqual([old]);
+    // It still opens; someone else can't archive (or find) it.
+    expect((await call(`/api/conversations/${old}`, { cookie: owner })).json.conversation.archivedAt).toEqual(expect.any(Number));
+    const intruder = await login("second-user");
+    expect((await archive(recent, true, intruder)).response.status).toBe(404);
+    expect((await call("/api/conversations?archived=1", { cookie: intruder })).json.conversations).toEqual([]);
+    expect(await ids()).toEqual([recent]);
+
+    expect((await archive(old, false)).json.conversation.archivedAt).toBeNull();
+    expect(await ids("?archived=1")).toEqual([]);
+    // A new message in an archived chat brings it back (to the top).
+    await archive(old, true);
+    await call("/api/chat", { method: "POST", body: JSON.stringify({ conversationId: old, message: "one more thing" }), cookie: owner, env: PROVIDERS });
+    expect(await ids()).toEqual([old, recent]);
+    expect(await ids("?archived=1")).toEqual([]);
+    expect((await call(`/api/conversations/${old}`, { method: "PATCH", body: JSON.stringify({}), cookie: owner })).response.status).toBe(400);
+  });
+
   it("updates settings partially and validates them", async () => {
     const cookie = await login();
     const ok = await call("/api/settings", {
@@ -475,6 +509,9 @@ describe("phase 5: tools and memory over HTTP", () => {
       "set_reminder",
       "list_reminders",
       "cancel_reminder",
+      "lists",
+      "notes",
+      "open_website",
       "read_page",
       "weather",
       "wikipedia",
@@ -566,6 +603,10 @@ describe("phase 5: tools and memory over HTTP", () => {
       ["set_reminder", "write"],
       ["list_reminders", "read"],
       ["cancel_reminder", "write"],
+      // Lists and notes (the user's own data) and an Open button for a website (v0.19.0).
+      ["lists", "write"],
+      ["notes", "write"],
+      ["open_website", "read"],
       ["read_page", "read"],
       ["weather", "read"],
       ["wikipedia", "read"],

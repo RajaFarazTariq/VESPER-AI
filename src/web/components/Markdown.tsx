@@ -1,14 +1,17 @@
 import { Check, Copy } from "lucide-react";
-import { lazy, memo, Suspense, useState, type ComponentProps, type ReactNode } from "react";
+import { memo, Suspense, useState, type ComponentProps, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
-import type { Pluggable } from "unified";
 import { normalizeMath } from "../../shared/math";
 import { remarkLineBreakTags } from "../lib/markdown";
+import { lazyPart, LoadBoundary } from "./LoadBoundary";
 
 // KaTeX (~80 KB gzipped) is only downloaded when a reply actually contains math.
-const MathMarkdown = lazy(() => import("./MathMarkdown"));
+const MathMarkdown = lazyPart(() => import("./MathMarkdown").then((m) => m.default));
+// Likewise the code highlighter (v0.19.0): only for a code block that names its language ("```ts"), the only kind it
+// colours. A loose match: a false hit just loads it.
+const CodeMarkdown = lazyPart(() => import("./CodeMarkdown").then((m) => m.default));
+const CODE_PATTERN = /(?:```|~~~)[ \t]*[^\s`~]/;
 /** normalizeMath() has already turned \[ … \] and \( … \) into $$ … $$. */
 const MATH_PATTERN = /\$\$/;
 
@@ -82,11 +85,9 @@ export const components: Components = {
   },
 };
 
-export const highlightPlugin: Pluggable = [rehypeHighlight, { detect: false, ignoreMissing: true }];
-
 function PlainMarkdown({ text }: { text: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm, remarkLineBreakTags]} rehypePlugins={[highlightPlugin]} components={components}>
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkLineBreakTags]} components={components}>
       {text}
     </ReactMarkdown>
   );
@@ -94,12 +95,19 @@ function PlainMarkdown({ text }: { text: string }) {
 
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   const normalized = normalizeMath(text);
+  const part = MATH_PATTERN.test(normalized) ? MathMarkdown : CODE_PATTERN.test(normalized) ? CodeMarkdown : null;
   return (
     <div className="md">
-      {MATH_PATTERN.test(normalized) ? (
-        <Suspense fallback={<PlainMarkdown text={normalized} />}>
-          <MathMarkdown text={normalized} />
-        </Suspense>
+      {part ? (
+        // While the extra part downloads, and if it can't be, the same text shows without math or colours (a later
+        // answer tries the download again).
+        <LoadBoundary fallback={<PlainMarkdown text={normalized} />} parts={[part]}>
+          {() => (
+            <Suspense fallback={<PlainMarkdown text={normalized} />}>
+              <part.Component text={normalized} />
+            </Suspense>
+          )}
+        </LoadBoundary>
       ) : (
         <PlainMarkdown text={normalized} />
       )}

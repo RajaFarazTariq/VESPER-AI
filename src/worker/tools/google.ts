@@ -7,18 +7,29 @@
  * Changing: calendar_create_event and gmail_send only PREPARE an event or an email. It is stored as pending and shown
  * on a card with exactly what will happen (for an email, the user may still edit it there); nothing reaches Google
  * until the user presses Approve (routes/google-actions.ts → executeGoogleAction), which sends it once.
+ * v0.19.0: calendar_update_event and calendar_delete_event prepare a change to, or the cancellation of, an event the
+ * user organises (found by its id from calendar_events), shown as before → after. Approving first checks that the
+ * event is still exactly as it was (Google's etag), then changes or cancels it with sendUpdates=all, so guests get
+ * Google's update or cancellation email. For a repeating event only that one occurrence (its instance id) changes.
  *
  * Times: the model gives local times ("2026-12-02T10:00") in the user's time zone (from their device; otherwise the
  * calendar's). Converting to and from instants is done here with the time zone rules, daylight saving included.
  */
 import { z } from "zod";
-import type { GoogleEmailPreviewDto, GoogleEventPreviewDto } from "../../shared/types";
-import { countPendingGoogleActions, createGoogleAction, type GooglePayload } from "../db/google";
+import type { GoogleEmailPreviewDto, GoogleEventOp, GoogleEventPreviewDto } from "../../shared/types";
+import {
+  countPendingGoogleActions,
+  createGoogleAction,
+  type EventDeletePayload,
+  type EventUpdatePayload,
+  type GoogleGuest,
+  type GooglePayload,
+} from "../db/google";
 import { GoogleError, type GoogleAccess, type GoogleAccount } from "./google-client";
 import { clip } from "./net";
 import { define, ToolInputError, type AgentTool, type ToolContext, type ToolOutput } from "./types";
 
-export const GOOGLE_ACTION_TOOL_NAMES = new Set(["calendar_create_event", "gmail_send"]);
+export const GOOGLE_ACTION_TOOL_NAMES = new Set(["calendar_create_event", "calendar_update_event", "calendar_delete_event", "gmail_send"]);
 export const GOOGLE_TOOL_NAMES = new Set(["calendar_events", "calendar_free_time", ...GOOGLE_ACTION_TOOL_NAMES]);
 /** Cards one answer may prepare (shared with GitHub changes), and emails/events that may wait for a decision at once. */
 const MAX_PER_ANSWER = 3;
@@ -261,6 +272,9 @@ export const emailTarget = (e: { to: string[]; cc: string[] }) => clip(`to ${e.t
 
 interface GEvent {
   id?: string;
+  /** Changes whenever the event changes (v0.19.0: a change card is approved only while it is the same). */
+  etag?: string;
+  updated?: string;
   summary?: string;
   description?: string;
   location?: string;
@@ -269,10 +283,15 @@ interface GEvent {
   transparency?: string;
   start?: { dateTime?: string; date?: string };
   end?: { dateTime?: string; date?: string };
-  attendees?: { email?: string; self?: boolean; responseStatus?: string }[];
+  attendees?: { email?: string; self?: boolean; responseStatus?: string; optional?: boolean; displayName?: string }[];
   organizer?: { email?: string; self?: boolean };
   /** The Google Meet link, when the event has one. */
   hangoutLink?: string;
+  /** Set on one occurrence of a repeating event. */
+  recurringEventId?: string;
+  /** Set on a repeating event's series itself (changing that would change every occurrence). */
+  recurrence?: string[];
+  reminders?: { useDefault?: boolean; overrides?: { method?: string; minutes?: number }[] };
 }
 interface GEventList {
   timeZone?: string;
@@ -308,7 +327,10 @@ function eventTimes(e: GEvent, timeZone: string): { start: string; end: string; 
 }
 
 const EVENT_FIELDS =
-  "timeZone,nextPageToken,items(id,summary,description,location,status,htmlLink,hangoutLink,transparency,start,end,attendees(email,self,responseStatus),organizer(email,self))";
+  "timeZone,nextPageToken,items(id,summary,description,location,status,htmlLink,hangoutLink,transparency,recurringEventId,start,end,attendees(email,self,responseStatus),organizer(email,self))";
+/** One event, as changing or cancelling it needs it (v0.19.0). */
+const ONE_EVENT_FIELDS =
+  "id,etag,updated,summary,description,location,status,htmlLink,hangoutLink,transparency,recurringEventId,recurrence,start,end,attendees(email,self,responseStatus,optional,displayName),organizer(email,self),reminders";
 
 /** Events overlapping [from, to), all pages up to `max` events. */
 async function listEvents(
@@ -447,7 +469,8 @@ async function prepared(ctx: ToolContext, item: { title: string; target: string;
     payload: item.payload,
   });
   if (ctx.turn) ctx.turn.prepared++;
-  const verb = item.payload.kind === "email" ? "sent" : "added to the calendar";
+  const op = item.payload.kind === "event" ? item.payload.op : undefined;
+  const verb = item.payload.kind === "email" ? "sent" : op === "update" ? "changed" : op === "delete" ? "cancelled" : "added to the calendar";
   return {
     content: JSON.stringify({
       status: "waiting_for_the_users_approval",
@@ -459,7 +482,7 @@ async function prepared(ctx: ToolContext, item: { title: string; target: string;
         `Tell them in one or two sentences what you prepared and that it is waiting for their approval. Never say it was ${verb}.`,
     }),
     summary: `Prepared ${item.what} (waiting for approval)`,
-    google: { id: action.id, kind: action.kind, title: action.title },
+    google: { id: action.id, kind: action.kind, title: action.title, ...(op ? { op } : {}) },
   };
 }
 
@@ -534,6 +557,8 @@ const calendarEvents = define({
       const guests = (e.attendees ?? []).filter((a) => !a.self).length;
       return [
         {
+          // The id is what calendar_update_event / calendar_delete_event need (v0.19.0).
+          ...(e.id ? { id: e.id } : {}),
           title: clip(e.summary?.trim() || "(no title)", 150),
           day: dayLabel(times.start.slice(0, 10)),
           start: times.start.replace("T", " "),
@@ -543,6 +568,7 @@ const calendarEvents = define({
           ...(e.status === "tentative" ? { tentative: true } : {}),
           ...(declinedByYou(e) ? { you_declined: true } : {}),
           ...(e.transparency === "transparent" ? { shown_as_free: true } : {}),
+          ...(e.recurringEventId ? { repeats: true } : {}),
           ...(guests ? { guests } : {}),
           ...(e.organizer && !e.organizer.self && e.organizer.email ? { organizer: clip(e.organizer.email, 100) } : {}),
           ...(e.description?.trim() ? { description: clip(e.description.replace(/\s+/g, " ").trim(), 300) } : {}),
@@ -670,6 +696,38 @@ const calendarFreeTime = define({
 
 // ---------------------------------------------------------------- preparing an event
 
+/** When a reminder fires, as a local time, for an event starting at `startsAt`. */
+const reminderAt = (startsAt: number, minutes: number, timeZone: string) => {
+  const at = wallClock(startsAt - minutes * 60_000, timeZone);
+  return { at: `${at.date}T${at.time}`, minutes };
+};
+
+/**
+ * Pop-up reminders given as minutes before the start (30) or as local times ("2026-11-25T23:00"), as Google stores
+ * them (minutes before the start): without repeats, longest first. Throws in words for the model.
+ */
+function reminderList(input: readonly (number | string)[], startsAt: number, timeZone: string): { at: string; minutes: number }[] {
+  const list = input.map((r) => {
+    let minutes: number;
+    if (typeof r === "number") minutes = r;
+    else {
+      const at = parseWhen(r, timeZone);
+      if (!at || at.time === null) throw new ToolInputError(`Write a reminder as minutes before (e.g. 30) or a local time (2026-11-25T23:00); got "${clip(r, 40)}".`);
+      minutes = Math.round((startsAt - zonedInstant(at.date, at.time, timeZone)) / 60_000);
+    }
+    if (!Number.isInteger(minutes) || minutes < 0 || minutes > MAX_REMINDER_MINUTES) {
+      throw new ToolInputError("A reminder must be at the start or before it, at most 4 weeks before.");
+    }
+    return reminderAt(startsAt, minutes, timeZone);
+  });
+  return [...new Map(list.map((r) => [r.minutes, r])).values()].sort((a, b) => b.minutes - a.minutes);
+}
+
+/** "30" and 30 both mean minutes before; anything else is a local time. */
+const REMINDERS = z
+  .array(z.union([z.number(), z.string().trim().max(40)]).transform((v) => (typeof v === "string" && /^\d{1,5}$/.test(v) ? Number(v) : v)))
+  .max(5);
+
 const calendarCreateEvent = define({
   name: "calendar_create_event",
   label: "Prepare a calendar event",
@@ -710,11 +768,7 @@ const calendarCreateEvent = define({
     description: z.string().max(MAX_DESCRIPTION).optional(),
     attendees: z.union([z.array(z.string().max(300)).max(MAX_RECIPIENTS * 2), z.string().max(4_000)]).optional(),
     meet: z.boolean().optional(),
-    // "30" and 30 both mean minutes before; anything else is a local time.
-    reminders: z
-      .array(z.union([z.number(), z.string().trim().max(40)]).transform((v) => (typeof v === "string" && /^\d{1,5}$/.test(v) ? Number(v) : v)))
-      .max(5)
-      .optional(),
+    reminders: REMINDERS.optional(),
   }),
   async run(args, ctx): Promise<ToolOutput> {
     const { g, account } = await access(ctx, "calendar");
@@ -764,20 +818,7 @@ const calendarCreateEvent = define({
     // Reminders: Google counts them in minutes before the start, and for an all-day event from midnight in the
     // CALENDAR's own time zone, so a reminder given as a local time is converted from that point.
     const startsAt = allDay ? zonedInstant(event.start, "00:00", existing.calendarTimeZone ?? timeZone) : event.from;
-    const reminders = (args.reminders ?? []).map((r) => {
-      let minutes: number;
-      if (typeof r === "number") minutes = r;
-      else {
-        const at = parseWhen(r, timeZone);
-        if (!at || at.time === null) throw new ToolInputError(`Write a reminder as minutes before (e.g. 30) or a local time (2026-11-25T23:00); got "${clip(r, 40)}".`);
-        minutes = Math.round((startsAt - zonedInstant(at.date, at.time, timeZone)) / 60_000);
-      }
-      if (!Number.isInteger(minutes) || minutes < 0 || minutes > MAX_REMINDER_MINUTES) {
-        throw new ToolInputError("A reminder must be at the start or before it, at most 4 weeks before.");
-      }
-      const at = wallClock(startsAt - minutes * 60_000, timeZone);
-      return { at: `${at.date}T${at.time}`, minutes };
-    });
+    const reminders = reminderList(args.reminders ?? [], startsAt, timeZone);
     const preview: GoogleEventPreviewDto = {
       title: args.title,
       start: event.start,
@@ -791,7 +832,7 @@ const calendarCreateEvent = define({
       meet: args.meet === true,
       clashes,
       account: account.email,
-      ...(reminders.length ? { reminders: [...new Map(reminders.map((r) => [r.minutes, r])).values()].sort((a, b) => b.minutes - a.minutes) } : {}),
+      ...(reminders.length ? { reminders } : {}),
     };
     const warnings = googleWarnings("event", {
       used: ctx.turn?.used ?? [],
@@ -807,6 +848,302 @@ const calendarCreateEvent = define({
       warnings,
       payload: { kind: "event", event: preview },
       what: `the event "${clip(args.title, 80)}" on ${when}${attendees.length ? ` with ${attendees.length} guest${attendees.length === 1 ? "" : "s"}` : ""}${clashes.length ? ` (it clashes with ${clashes.length} existing event${clashes.length === 1 ? "" : "s"}, shown on the card)` : ""}`,
+    });
+  },
+});
+
+// ---------------------------------------------------------------- changing or cancelling an event (v0.19.0)
+
+const EVENT_ID = z
+  .string()
+  .trim()
+  .min(1)
+  .max(1_024)
+  .regex(/^[\w@.-]+$/, "Use the event's id from calendar_events.");
+
+const eventPath = (eventId: string) => `/calendars/primary/events/${encodeURIComponent(eventId)}`;
+/** What a change card is checked against when it is approved. */
+const versionOf = (e: GEvent) => e.etag ?? e.updated ?? "";
+export const STALE_EVENT_MESSAGE = "This event changed since VESPER prepared the card. Ask again.";
+
+/** The event as it is now; it must be in the user's calendar and organised by them (Google sends guests the change). */
+async function currentEvent(g: GoogleAccess, eventId: string, account: GoogleAccount): Promise<GEvent> {
+  let event: GEvent | null;
+  try {
+    event = await g.request<GEvent>("calendar", "GET", eventPath(eventId), { query: { fields: ONE_EVENT_FIELDS } });
+  } catch (error) {
+    if (error instanceof GoogleError && error.code === "not_found") {
+      throw new ToolInputError(`There is no event with id "${clip(eventId, 80)}" in the user's calendar. Use calendar_events to find the event and its id.`);
+    }
+    throw error;
+  }
+  if (!event || event.status === "cancelled") throw new ToolInputError("That event has already been cancelled.");
+  // A whole series (its own id, not one day's): changing it would change every occurrence.
+  if (event.recurrence?.length) throw new ToolInputError("This is a repeating event; pick one day of it from your calendar list.");
+  const organizer = event.organizer?.email;
+  if (organizer && event.organizer?.self !== true && organizer.toLowerCase() !== account.email.toLowerCase()) {
+    throw new ToolInputError(
+      `This event was organised by ${clip(organizer, 100)}: only they can change or cancel it for everyone. Tell the user to reply to the invitation in Google Calendar instead.`,
+    );
+  }
+  return event;
+}
+
+/** A Google event as a card shows it (its guests, reminders and Meet link included). */
+function previewOf(e: GEvent, timeZone: string, calendarTimeZone: string | null, account: string): GoogleEventPreviewDto {
+  const times = eventTimes(e, timeZone);
+  if (!times) throw new ToolInputError("VESPER can't read this event's start and end.");
+  const startsAt = times.allDay ? zonedInstant(times.start, "00:00", calendarTimeZone ?? timeZone) : Date.parse(e.start!.dateTime!);
+  // Google's own reminders when the event has them set (useDefault false: possibly none at all).
+  const reminders =
+    e.reminders?.useDefault === false
+      ? [...new Set((e.reminders.overrides ?? []).map((r) => r.minutes).filter((m): m is number => Number.isInteger(m) && m! >= 0))]
+          .sort((a, b) => b - a)
+          .map((m) => reminderAt(startsAt, m, timeZone))
+      : undefined;
+  return {
+    title: clip(e.summary?.trim() || "(no title)", MAX_TITLE),
+    start: times.start,
+    end: times.end,
+    allDay: times.allDay,
+    timeZone,
+    calendarTimeZone: calendarTimeZone && calendarTimeZone !== timeZone ? calendarTimeZone : null,
+    location: clip(e.location?.trim() ?? "", MAX_LOCATION),
+    description: (e.description ?? "").trim().slice(0, MAX_DESCRIPTION),
+    attendees: [...new Set((e.attendees ?? []).flatMap((a) => (a.email && !a.self ? [a.email.toLowerCase()] : [])))],
+    meet: typeof e.hangoutLink === "string" && /^https:\/\/meet\.google\.com\//.test(e.hangoutLink),
+    clashes: [],
+    account,
+    ...(reminders ? { reminders } : {}),
+  };
+}
+
+const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+const reminderMinutes = (e: GoogleEventPreviewDto) => (e.reminders ? e.reminders.map((r) => r.minutes).join(",") : "default");
+const timeOf = (e: GoogleEventPreviewDto) => `${e.allDay}|${e.start}|${e.end}`;
+const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY_MS);
+/** "Tue 2 Dec 2026, 10:00–11:00 (Asia/Karachi)" for a log line (an all-day event is the same days everywhere). */
+const logWhen = (e: GoogleEventPreviewDto) => clip(`${describeWhen(e)}${!e.allDay && e.timeZone !== "UTC" ? ` (${e.timeZone})` : ""}`, 200);
+
+/**
+ * The event's new times. Only what is given changes: a new start keeps the length (and a date alone keeps the time
+ * of day), an all-day event stays all-day unless a time is given or all_day says otherwise.
+ */
+function newTimes(
+  args: { start?: string; end?: string; all_day?: boolean },
+  old: { start: string; end: string; allDay: boolean; from: number; to: number },
+  timeZone: string,
+): { start: string; end: string; allDay: boolean; from: number; to: number } {
+  const start = args.start ? parseWhen(args.start, timeZone) : null;
+  if (args.start && !start) throw new ToolInputError(`Write "start" as a local time (2026-12-02T10:00) or a date (2026-12-02); got "${clip(args.start, 40)}".`);
+  const end = args.end ? parseWhen(args.end, timeZone) : null;
+  if (args.end && !end) throw new ToolInputError(`Write "end" as a local time (2026-12-02T11:00) or a date; got "${clip(args.end, 40)}".`);
+  // all_day false on an all-day event without any time is a filled-in default, not a request.
+  const allDayArg = args.all_day === false && old.allDay && !start?.time && !end?.time ? undefined : args.all_day;
+  if (!start && !end && (allDayArg === undefined || allDayArg === old.allDay)) return old;
+  const allDay = allDayArg ?? (start?.time || end?.time ? false : old.allDay);
+  if (allDay) {
+    const first = start?.date ?? old.start.slice(0, 10);
+    const last = end?.date ?? (old.allDay ? addDays(first, daysBetween(old.start, old.end)) : first);
+    if (last < first) throw new ToolInputError("The last day can't be before the first.");
+    if (last > addDays(first, 30)) throw new ToolInputError("An all-day event can last at most 31 days.");
+    return { start: first, end: last, allDay: true, from: zonedInstant(first, "00:00", timeZone), to: zonedInstant(addDays(last, 1), "00:00", timeZone) };
+  }
+  let from: number;
+  if (start?.time) from = zonedInstant(start.date, start.time, timeZone);
+  else if (!old.allDay) from = zonedInstant(start?.date ?? old.start.slice(0, 10), old.start.slice(11, 16), timeZone);
+  else throw new ToolInputError('Give a start time (like 2026-12-02T10:00) to give this all-day event a time.');
+  let to: number;
+  if (end) {
+    if (end.time === null) throw new ToolInputError(`Write "end" as a local time (2026-12-02T11:00); got "${clip(args.end!, 40)}".`);
+    to = zonedInstant(end.date, end.time, timeZone);
+  } else {
+    to = from + (old.allDay ? 60 * 60_000 : old.to - old.from);
+  }
+  if (to <= from) throw new ToolInputError("The event must end after it starts.");
+  if (to - from > 14 * DAY_MS) throw new ToolInputError("A timed event can last at most 14 days.");
+  const a = wallClock(from, timeZone);
+  const b = wallClock(to, timeZone);
+  return { start: `${a.date}T${a.time}`, end: `${b.date}T${b.time}`, allDay: false, from, to };
+}
+
+const ADDRESSES = z.union([z.array(z.string().max(300)).max(MAX_RECIPIENTS * 2), z.string().max(4_000)]);
+/** Weaker models fill optional fields with "": that means "not given" (so nothing is ever cleared by accident). */
+const optionalText = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .transform((s) => s.trim() || undefined)
+    .optional();
+
+const calendarUpdateEvent = define({
+  name: "calendar_update_event",
+  label: "Prepare an event change",
+  description: "Prepare a change to an event (event_id from calendar_events); give only what changes.",
+  risk: "approval",
+  requiresMemory: false,
+  isAvailable: (server) => server.googleCalendar === true,
+  parameters: {
+    type: "object",
+    properties: {
+      event_id: { type: "string" },
+      title: { type: "string" },
+      start: { type: "string", description: "Local time (2026-12-02T10:00) or date." },
+      end: { type: "string", description: "All-day: the last day." },
+      all_day: { type: "boolean" },
+      location: { type: "string" },
+      description: { type: "string" },
+      add_guests: { type: "array", items: { type: "string" } },
+      remove_guests: { type: "array", items: { type: "string" } },
+      reminders: { type: "array", items: { type: "string" }, description: 'Local times or minutes before ("30").' },
+    },
+    required: ["event_id"],
+  },
+  schema: z.object({
+    event_id: EVENT_ID,
+    title: optionalText(MAX_TITLE),
+    start: optionalText(40),
+    end: optionalText(40),
+    all_day: z.boolean().optional(),
+    location: optionalText(MAX_LOCATION),
+    description: optionalText(MAX_DESCRIPTION),
+    add_guests: ADDRESSES.optional(),
+    remove_guests: ADDRESSES.optional(),
+    reminders: REMINDERS.optional(),
+  }),
+  async run(args, ctx): Promise<ToolOutput> {
+    const { g, account } = await access(ctx, "calendar");
+    await canPrepare(ctx);
+    const timeZone = zoneOf(ctx);
+    const current = await currentEvent(g, args.event_id, account);
+    const oldTimes = eventTimes(current, timeZone);
+    const oldSpan = eventSpan(current, timeZone);
+    if (!oldTimes || !oldSpan) throw new ToolInputError("VESPER can't read this event's start and end.");
+    const next = newTimes(args, { ...oldTimes, from: oldSpan.start, to: oldSpan.end }, timeZone);
+    // What else is at the new time (and the calendar's own time zone, for all-day reminders).
+    const around = await listEvents(g, { from: next.from, to: next.to }, timeZone, { max: 7 });
+    const before = previewOf(current, timeZone, around.calendarTimeZone, account.email);
+
+    const added = parseAddresses(args.add_guests);
+    const removed = parseAddresses(args.remove_guests);
+    const bad = [...added.bad, ...removed.bad];
+    if (bad.length) throw new ToolInputError(`These aren't valid email addresses: ${bad.join(", ")}.`);
+    const notGuests = removed.list.filter((a) => !before.attendees.includes(a));
+    if (notGuests.length) throw new ToolInputError(`Not a guest of this event: ${notGuests.join(", ")}. Its guests: ${before.attendees.join(", ") || "none"}.`);
+    const newGuests = added.list.filter((a) => !before.attendees.includes(a) && a !== account.email.toLowerCase() && !removed.list.includes(a));
+    const attendees = [...before.attendees.filter((a) => !removed.list.includes(a)), ...newGuests];
+    if (attendees.length > MAX_RECIPIENTS) throw new ToolInputError(`An event can have at most ${MAX_RECIPIENTS} guests here.`);
+
+    const startsAt = next.allDay ? zonedInstant(next.start, "00:00", around.calendarTimeZone ?? timeZone) : next.from;
+    // Reminders keep their minutes before the start (so they move with it) unless new ones are given ([] = not given).
+    const reminders = args.reminders?.length
+      ? reminderList(args.reminders, startsAt, timeZone)
+      : before.reminders?.map((r) => reminderAt(startsAt, r.minutes, timeZone));
+    const timeChanged = next.allDay !== before.allDay || next.start !== before.start || next.end !== before.end;
+    const after: GoogleEventPreviewDto = {
+      ...before,
+      title: args.title ?? before.title,
+      start: next.start,
+      end: next.end,
+      allDay: next.allDay,
+      location: args.location ?? before.location,
+      description: args.description ?? before.description,
+      attendees,
+      // Clashes only matter at a new time; the event itself isn't one.
+      clashes: timeChanged
+        ? around.events
+            .filter((e) => isBusy(e) && e.id !== current.id && e.id !== args.event_id)
+            .slice(0, 5)
+            .flatMap((e) => {
+              const times = eventTimes(e, timeZone);
+              return times ? [{ title: clip(e.summary?.trim() || "(no title)", 120), start: times.start, end: times.end, allDay: times.allDay }] : [];
+            })
+        : [],
+    };
+    delete after.reminders;
+    if (reminders) after.reminders = reminders;
+
+    const changes = [
+      after.title !== before.title ? "title" : "",
+      timeOf(after) !== timeOf(before) ? "time" : "",
+      after.location !== before.location ? "place" : "",
+      after.description !== before.description ? "description" : "",
+      sameSet(after.attendees, before.attendees) ? "" : "guests",
+      reminderMinutes(after) !== reminderMinutes(before) ? "reminders" : "",
+    ].filter(Boolean);
+    if (changes.length === 0) throw new ToolInputError("Nothing would change: the event is already like that. Ask the user what to change.");
+
+    const warnings = googleWarnings("event", {
+      used: ctx.turn?.used ?? [],
+      privateRead: ctx.turn?.privateRead ?? false,
+      unknownAddresses: addressesNotTyped(newGuests, ctx.userText),
+      past: timeChanged && next.to <= ctx.now.getTime(),
+    });
+    if (current.recurringEventId) warnings.push("This is one occurrence of a repeating event: only this one changes.");
+    const guests: GoogleGuest[] = (current.attendees ?? []).flatMap((a) =>
+      a.email
+        ? [
+            {
+              email: a.email,
+              ...(a.self ? { self: true } : {}),
+              ...(a.optional ? { optional: true } : {}),
+              ...(a.responseStatus ? { responseStatus: a.responseStatus } : {}),
+              ...(a.displayName ? { displayName: a.displayName } : {}),
+            },
+          ]
+        : [],
+    );
+    const payload: EventUpdatePayload = { kind: "event", op: "update", eventId: args.event_id, version: versionOf(current), ...(current.etag ? { etag: true } : {}), before, after, guests };
+    const told = attendees.length || before.attendees.length;
+    return prepared(ctx, {
+      title: before.title,
+      target: logWhen(after),
+      warnings,
+      payload,
+      what:
+        `a change to the event "${clip(before.title, 80)}" (${changes.join(", ")}${timeChanged ? `: now ${describeWhen(after)}` : ""})` +
+        `${after.clashes.length ? `, which clashes with ${after.clashes.length} other event${after.clashes.length === 1 ? "" : "s"} (shown on the card)` : ""}` +
+        `${told ? "; its guests get Google's update email when the user approves" : ""}`,
+    });
+  },
+});
+
+const calendarDeleteEvent = define({
+  name: "calendar_delete_event",
+  label: "Prepare cancelling an event",
+  description: "Prepare cancelling an event (event_id from calendar_events).",
+  risk: "approval",
+  requiresMemory: false,
+  isAvailable: (server) => server.googleCalendar === true,
+  parameters: {
+    type: "object",
+    properties: { event_id: { type: "string" } },
+    required: ["event_id"],
+  },
+  schema: z.object({ event_id: EVENT_ID }),
+  async run(args, ctx): Promise<ToolOutput> {
+    const { g, account } = await access(ctx, "calendar");
+    await canPrepare(ctx);
+    const timeZone = zoneOf(ctx);
+    const current = await currentEvent(g, args.event_id, account);
+    // An all-day event's reminders count from midnight in the calendar's own zone: only then is it asked for.
+    let calendarTimeZone: string | null = null;
+    const span = eventSpan(current, timeZone);
+    if (current.start?.date && current.reminders?.useDefault === false && current.reminders.overrides?.length && span) {
+      calendarTimeZone = (await listEvents(g, { from: span.start, to: span.end }, timeZone, { max: 1 })).calendarTimeZone;
+    }
+    const before = previewOf(current, timeZone, calendarTimeZone, account.email);
+    const warnings = googleWarnings("event", { used: ctx.turn?.used ?? [], privateRead: ctx.turn?.privateRead ?? false, unknownAddresses: [] });
+    if (current.recurringEventId) warnings.push("This is one occurrence of a repeating event: only this one is cancelled.");
+    const payload: EventDeletePayload = { kind: "event", op: "delete", eventId: args.event_id, version: versionOf(current), ...(current.etag ? { etag: true } : {}), before };
+    return prepared(ctx, {
+      title: before.title,
+      target: logWhen(before),
+      warnings,
+      payload,
+      what:
+        `cancelling the event "${clip(before.title, 80)}" on ${describeWhen(before)}` +
+        `${before.attendees.length ? `; its ${before.attendees.length} guest${before.attendees.length === 1 ? "" : "s"} get Google's cancellation email when the user approves` : ""}`,
     });
   },
 });
@@ -858,7 +1195,7 @@ const gmailSend = define({
   },
 });
 
-export const GOOGLE_TOOLS: AgentTool[] = [calendarEvents, calendarFreeTime, calendarCreateEvent, gmailSend];
+export const GOOGLE_TOOLS: AgentTool[] = [calendarEvents, calendarFreeTime, calendarCreateEvent, calendarUpdateEvent, calendarDeleteEvent, gmailSend];
 
 // ---------------------------------------------------------------- sending an approved email or event
 
@@ -883,10 +1220,72 @@ export function eventBody(e: GoogleEventPreviewDto, requestId: string): Record<s
   };
 }
 
+/**
+ * The approved change as a PATCH (v0.19.0): only what changed. Google merges a patch into the event, so a start or
+ * end names both forms (the unused one null), and the guest list is sent whole, keeping each guest's reply.
+ */
+export function patchBody(p: EventUpdatePayload): Record<string, unknown> {
+  const { before: b, after: a } = p;
+  const body: Record<string, unknown> = {};
+  if (a.title !== b.title) body.summary = a.title;
+  if (a.location !== b.location) body.location = a.location;
+  if (a.description !== b.description) body.description = a.description;
+  if (timeOf(a) !== timeOf(b)) {
+    body.start = a.allDay ? { date: a.start, dateTime: null, timeZone: null } : { dateTime: `${a.start}:00`, timeZone: a.timeZone, date: null };
+    // All-day: Google's end date is the day AFTER the last day.
+    body.end = a.allDay ? { date: addDays(a.end, 1), dateTime: null, timeZone: null } : { dateTime: `${a.end}:00`, timeZone: a.timeZone, date: null };
+  }
+  if (!sameSet(a.attendees, b.attendees)) {
+    const known = new Set(p.guests.map((x) => x.email.toLowerCase()));
+    body.attendees = [
+      ...p.guests.filter((x) => x.self || a.attendees.includes(x.email.toLowerCase())).map(({ self: _self, ...guest }) => guest),
+      ...a.attendees.filter((email) => !known.has(email)).map((email) => ({ email })),
+    ];
+  }
+  if (reminderMinutes(a) !== reminderMinutes(b)) {
+    body.reminders = a.reminders ? { useDefault: false, overrides: a.reminders.map((r) => ({ method: "popup", minutes: r.minutes })) } : { useDefault: true };
+  }
+  return body;
+}
+
+/**
+ * Changes or cancels the event (v0.19.0), only while it is exactly as it was on the card: Google checks the etag
+ * (If-Match) in the same request, so a guest's reply arriving in between isn't overwritten (412 → refused). Without
+ * an etag on the card, the event is read first and compared. Guests get Google's update or cancellation email.
+ * Returns the event's link (none once cancelled).
+ */
+async function changeEvent(g: GoogleAccess, payload: EventUpdatePayload | EventDeletePayload): Promise<string | null> {
+  const path = eventPath(payload.eventId);
+  const gone = "This event is no longer in your calendar. Nothing was changed.";
+  try {
+    if (!payload.etag) {
+      const current = await g.request<GEvent>("calendar", "GET", path, { query: { fields: "id,etag,updated,status" } });
+      if (!current || current.status === "cancelled") throw new GoogleActionFailed(gone);
+      if (versionOf(current) !== payload.version) throw new GoogleActionFailed(STALE_EVENT_MESSAGE);
+    }
+    const headers = payload.etag ? { "If-Match": payload.version } : undefined;
+    if (payload.op === "delete") {
+      await g.request("calendar", "DELETE", path, { query: { sendUpdates: "all" }, ...(headers ? { headers } : {}) });
+      return null;
+    }
+    const updated = await g.request<{ htmlLink?: string }>("calendar", "PATCH", path, {
+      query: { sendUpdates: "all" },
+      body: patchBody(payload),
+      ...(headers ? { headers } : {}),
+    });
+    return calendarPage(updated?.htmlLink);
+  } catch (error) {
+    if (error instanceof GoogleError && error.code === "stale") throw new GoogleActionFailed(STALE_EVENT_MESSAGE);
+    if (error instanceof GoogleError && error.code === "not_found") throw new GoogleActionFailed(gone);
+    throw error;
+  }
+}
+
 /** Sends exactly what was approved; returns a link to the result (the event, or the Sent folder). */
 export async function executeGoogleAction(g: GoogleAccess, payload: GooglePayload, id: string): Promise<string | null> {
   const account = await g.account();
-  const expected = payload.kind === "email" ? payload.email.from : payload.event.account;
+  const op = payload.kind === "event" ? payload.op : undefined;
+  const expected = payload.kind === "email" ? payload.email.from : payload.op ? payload.before.account : payload.event.account;
   // Reconnected with another Google account since this was prepared: it would go from / into the wrong account.
   if (account.email.toLowerCase() !== expected.toLowerCase()) {
     throw new GoogleActionFailed(`Google is now connected as ${account.email}, not ${expected}. Nothing was sent; ask VESPER to prepare it again.`);
@@ -897,7 +1296,10 @@ export async function executeGoogleAction(g: GoogleAccess, payload: GooglePayloa
       await g.request("gmail", "POST", "/users/me/messages/send", { body: { raw: base64Url(mimeMessage(payload.email)) } });
       return `https://mail.google.com/mail/?authuser=${encodeURIComponent(account.email)}#sent`;
     }
-    if (!account.calendar) throw new GoogleActionFailed("Calendar is no longer allowed for this Google account. Reconnect Google and tick Calendar. Nothing was added.");
+    if (!account.calendar) {
+      throw new GoogleActionFailed(`Calendar is no longer allowed for this Google account. Reconnect Google and tick Calendar. ${nothingDone("event", op)}`);
+    }
+    if (payload.op) return await changeEvent(g, payload);
     const created = await g.request<{ htmlLink?: string }>("calendar", "POST", "/calendars/primary/events", {
       // Invitations go out only when there are guests.
       query: { sendUpdates: payload.event.attendees.length ? "all" : "none", ...(payload.event.meet ? { conferenceDataVersion: 1 } : {}) },
@@ -906,14 +1308,17 @@ export async function executeGoogleAction(g: GoogleAccess, payload: GooglePayloa
     return calendarPage(created?.htmlLink);
   } catch (error) {
     if (error instanceof GoogleActionFailed) throw error;
-    if (error instanceof GoogleError) throw new GoogleActionFailed(cardMessage(error, payload.kind));
+    if (error instanceof GoogleError) throw new GoogleActionFailed(cardMessage(error, payload.kind, op));
     throw error;
   }
 }
 
+const nothingDone = (kind: "email" | "event", op?: GoogleEventOp) =>
+  kind === "email" ? "Nothing was sent." : op === "update" || op === "delete" ? "Nothing was changed." : "Nothing was added.";
+
 /** Why sending failed, in words for the card (Google's errors are written for the model). */
-export function cardMessage(error: GoogleError, kind: "email" | "event"): string {
-  const nothing = kind === "email" ? "Nothing was sent." : "Nothing was added.";
+export function cardMessage(error: GoogleError, kind: "email" | "event", op?: GoogleEventOp): string {
+  const nothing = nothingDone(kind, op);
   const service = kind === "email" ? "Gmail" : "Google Calendar";
   switch (error.code) {
     case "reconnect":

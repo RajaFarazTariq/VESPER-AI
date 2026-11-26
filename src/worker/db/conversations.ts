@@ -17,7 +17,11 @@ interface ConversationRow {
   model: string | null;
   created_at: number;
   updated_at: number;
+  /** When the user archived it (v0.19.0); null = not archived. */
+  archived_at: number | null;
 }
+
+const CONVERSATION_COLUMNS = "id, title, model, created_at, updated_at, archived_at";
 
 interface MessageRow {
   id: string;
@@ -102,6 +106,7 @@ const toConversation = (r: ConversationRow): ConversationDto => ({
   model: r.model,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
+  archivedAt: r.archived_at ?? null,
 });
 
 const toMessage = (r: MessageRow): MessageDto => ({
@@ -136,30 +141,40 @@ export function deriveTitle(text: string): string {
   return `${(lastSpace > 30 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
 }
 
+/**
+ * The chat list: chats that aren't archived, newest first (`before` = an updatedAt). With `archived` (v0.19.0): only
+ * the archived ones, the most recently archived first (`before` = an archivedAt).
+ */
 export async function listConversations(
   db: D1Database,
   userId: string,
   limit: number,
   before?: number,
+  archived = false,
 ): Promise<ConversationDto[]> {
   const { results } = await db
     .prepare(
-      `SELECT id, title, model, created_at, updated_at FROM conversations
-       WHERE user_id = ?1 AND updated_at < ?2
-       ORDER BY updated_at DESC LIMIT ?3`,
+      archived
+        ? `SELECT ${CONVERSATION_COLUMNS} FROM conversations
+           WHERE user_id = ?1 AND archived_at IS NOT NULL AND archived_at < ?2
+           ORDER BY archived_at DESC LIMIT ?3`
+        : `SELECT ${CONVERSATION_COLUMNS} FROM conversations
+           WHERE user_id = ?1 AND archived_at IS NULL AND updated_at < ?2
+           ORDER BY updated_at DESC LIMIT ?3`,
     )
     .bind(userId, before ?? Number.MAX_SAFE_INTEGER, limit)
     .all<ConversationRow>();
   return results.map(toConversation);
 }
 
+/** One of the user's chats, archived or not. */
 export async function getConversation(
   db: D1Database,
   userId: string,
   id: string,
 ): Promise<ConversationDto | null> {
   const row = await db
-    .prepare("SELECT id, title, model, created_at, updated_at FROM conversations WHERE id = ?1 AND user_id = ?2")
+    .prepare(`SELECT ${CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1 AND user_id = ?2`)
     .bind(id, userId)
     .first<ConversationRow>();
   return row ? toConversation(row) : null;
@@ -172,7 +187,7 @@ export async function createConversation(
   model: string | null,
 ): Promise<ConversationDto> {
   const now = Date.now();
-  const conversation: ConversationDto = { id: newId(), title, model, createdAt: now, updatedAt: now };
+  const conversation: ConversationDto = { id: newId(), title, model, createdAt: now, updatedAt: now, archivedAt: null };
   await db
     .prepare(
       "INSERT INTO conversations (id, user_id, title, model, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
@@ -186,13 +201,18 @@ export async function updateConversation(
   db: D1Database,
   userId: string,
   id: string,
-  patch: { title?: string; model?: string | null; touch?: boolean },
+  patch: { title?: string; model?: string | null; touch?: boolean; archived?: boolean },
 ): Promise<boolean> {
   const sets: string[] = [];
   const values: unknown[] = [];
   if (patch.title !== undefined) {
     values.push(patch.title);
     sets.push(`title = ?${values.length}`);
+  }
+  // Archiving (v0.19.0) keeps the time it was first archived; un-archiving clears it.
+  if (patch.archived !== undefined) {
+    values.push(patch.archived ? Date.now() : null);
+    sets.push(patch.archived ? `archived_at = COALESCE(archived_at, ?${values.length})` : `archived_at = ?${values.length}`);
   }
   if (patch.model !== undefined) {
     values.push(patch.model);

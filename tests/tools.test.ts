@@ -366,7 +366,7 @@ describe("tool settings", () => {
     // GitHub connection (v0.12.0), the GitHub tools aren't; outside a chat with a spreadsheet (v0.14.0), Table analysis
     // isn't; without Google (v0.15.0), the calendar and email tools aren't; outside a chat with a document (v0.16.0),
     // the document tools aren't; with all of them, every tool is.
-    const googleTools = ["calendar_events", "calendar_free_time", "calendar_create_event", "gmail_send"];
+    const googleTools = ["calendar_events", "calendar_free_time", "calendar_create_event", "calendar_update_event", "calendar_delete_event", "gmail_send"];
     const documentTools = ["search_documents", "read_document"];
     const all = ALL_TOOLS.map((t) => t.name).filter((n) => n !== "query_table" && !googleTools.includes(n) && !documentTools.includes(n));
     const noGithub = all.filter((n) => !n.startsWith("github_"));
@@ -388,7 +388,7 @@ describe("tool settings", () => {
     expect(enabledTools({ ...DEFAULT_SETTINGS, disabledTools: ["read_document"] }, [], { documents: true }).map((t) => t.name)).toContain("search_documents");
     // Google: the calendar tools need Calendar allowed, the email tool needs sending allowed.
     const offered = (server: { googleCalendar?: boolean; gmailSend?: boolean }) => enabledTools({ ...DEFAULT_SETTINGS }, [], server).map((t) => t.name).filter((n) => googleTools.includes(n));
-    expect(offered({ googleCalendar: true })).toEqual(["calendar_events", "calendar_free_time", "calendar_create_event"]);
+    expect(offered({ googleCalendar: true })).toEqual(["calendar_events", "calendar_free_time", "calendar_create_event", "calendar_update_event", "calendar_delete_event"]);
     expect(offered({ gmailSend: true })).toEqual(["gmail_send"]);
     expect(offered({})).toEqual([]);
     expect(all.filter((n) => n.startsWith("github_"))).toEqual(["github_repo", "github_file", "github_search", "github_issues", "github_pr_changes", ...changes]);
@@ -397,7 +397,8 @@ describe("tool settings", () => {
     expect(enabledTools({ ...DEFAULT_SETTINGS, disabledTools: ["calculator"] }).map((t) => t.name)).not.toContain("calculator");
     const noMemory = enabledTools({ ...DEFAULT_SETTINGS, memoryEnabled: false }).map((t) => t.name);
     // Reminders (v0.18.0) are the user's own VESPER data but don't need memory switched on.
-    expect(noMemory).toEqual(["calculator", "current_datetime", "set_reminder", "list_reminders", "cancel_reminder", "read_page", "weather", "wikipedia", "currency"]);
+    // Lists, notes and open_website (v0.19.0) too.
+    expect(noMemory).toEqual(["calculator", "current_datetime", "set_reminder", "list_reminders", "cancel_reminder", "lists", "notes", "open_website", "read_page", "weather", "wikipedia", "currency"]);
   });
 
   it("puts memories and tool guidance into the system prompt", () => {

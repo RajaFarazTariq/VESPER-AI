@@ -25,7 +25,18 @@ export const GOOGLE_SCOPES = ["openid", "email", CALENDAR_SCOPE, GMAIL_SEND_SCOP
 export const GOOGLE_CALLS = 12;
 const RENEW_MARGIN_MS = 60_000;
 
-export type GoogleErrorCode = "reconnect" | "scope" | "disabled" | "not_found" | "rate_limited" | "invalid" | "forbidden" | "call_limit" | "unavailable";
+/** stale (v0.19.0): the event changed since it was read (If-Match didn't match its etag). */
+export type GoogleErrorCode =
+  | "reconnect"
+  | "scope"
+  | "disabled"
+  | "not_found"
+  | "rate_limited"
+  | "invalid"
+  | "forbidden"
+  | "call_limit"
+  | "unavailable"
+  | "stale";
 
 export class GoogleError extends ToolInputError {
   constructor(
@@ -116,7 +127,9 @@ async function googleFailure(response: Response, api: "calendar" | "gmail"): Pro
   if (response.status === 429 || /rateLimitExceeded|userRateLimitExceeded|RESOURCE_EXHAUSTED/i.test(reasons + status)) {
     throw new GoogleError("rate_limited", `${service} is busy (too many requests). Try again in a minute.`);
   }
-  if (response.status === 404) throw new GoogleError("not_found", `${service} couldn't find that.`);
+  // 410: an event that was deleted (v0.19.0).
+  if (response.status === 404 || response.status === 410) throw new GoogleError("not_found", `${service} couldn't find that.`);
+  if (response.status === 412) throw new GoogleError("stale", `${service}: it changed since VESPER read it.`);
   if (response.status === 400) throw new GoogleError("invalid", `${service} refused the request${message ? `: ${message}` : "."}`);
   if (response.status === 403) throw new GoogleError("forbidden", `${service} refused the request${message ? `: ${message}` : "."}`);
   throw new GoogleError("unavailable", `${service} couldn't be reached right now. Try again in a minute.`);
@@ -142,9 +155,10 @@ export interface GoogleAccess {
   account(): Promise<GoogleAccount>;
   request<T = unknown>(
     api: "calendar" | "gmail",
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PATCH" | "DELETE",
     path: string,
-    options?: { query?: Record<string, string | number | boolean | undefined>; body?: unknown },
+    /** headers: e.g. If-Match with an event's etag, so a change applies only to the version shown (v0.19.0). */
+    options?: { query?: Record<string, string | number | boolean | undefined>; body?: unknown; headers?: Record<string, string> },
   ): Promise<T>;
 }
 
@@ -204,16 +218,16 @@ export function googleAccess(options: GoogleAccessOptions): GoogleAccess {
 
     async request<T>(
       api: "calendar" | "gmail",
-      method: "GET" | "POST",
+      method: "GET" | "POST" | "PATCH" | "DELETE",
       path: string,
-      opts: { query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {},
+      opts: { query?: Record<string, string | number | boolean | undefined>; body?: unknown; headers?: Record<string, string> } = {},
     ): Promise<T> {
       const url = new URL(`${api === "gmail" ? config.googleGmailApiUrl : config.googleCalendarApiUrl}${path}`);
       for (const [name, value] of Object.entries(opts.query ?? {})) if (value !== undefined) url.searchParams.set(name, String(value));
       const send = async (force: boolean) => {
         if (calls >= maxCalls) throw new GoogleError("call_limit", `This step already used its ${maxCalls} Google requests.`);
         calls++;
-        const headers: Record<string, string> = { Authorization: `Bearer ${await accessToken(force)}`, Accept: "application/json" };
+        const headers: Record<string, string> = { ...opts.headers, Authorization: `Bearer ${await accessToken(force)}`, Accept: "application/json" };
         if (opts.body !== undefined) headers["Content-Type"] = "application/json";
         try {
           return await fetch(url.toString(), {

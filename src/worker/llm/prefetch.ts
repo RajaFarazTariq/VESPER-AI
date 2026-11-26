@@ -13,6 +13,7 @@
  * searched first there: "the 2025 results" is about the file, not the news (the model can still search itself).
  */
 import { READ_DOCUMENT_TOOL, SEARCH_DOCUMENTS_TOOL } from "../../shared/documents";
+import { knownSite } from "../tools/open-website";
 import { isTimeSensitive } from "../tools/web";
 import type { ToolCall } from "./types";
 
@@ -28,6 +29,23 @@ const ARITHMETIC = /^\s*(?:what\s+is\s+|what's\s+|calculate\s+|compute\s+)?[\d\s
 const NOT_A_LOOKUP =
   /^\s*(?:please\s+)?(?:write|draft|compose|translate|summari[sz]e|rewrite|rephrase|paraphrase|correct|proofread|explain this|fix|debug|refactor|code|generate|create|make|remind|set a reminder)\b/i;
 const HAS_OWN_TOOL = /\b(?:weather|temperature|forecast|rain|humidity|convert|conversion|exchange rate)\b/i;
+/**
+ * The user's own lists and notes, and opening a website (v0.19.0): "what's on my to-do list today?" is about their
+ * list, not the news, and "open YouTube" needs no search.
+ */
+const OWN_DATA =
+  /\b(?:my|our)\s+(?:[\w'-]+\s+){0,2}list\b|\bto-?dos?\b|\btodos?\b|\bshopping list\b|\bnote (?:that|down|this)\b|\b(?:take|make) a note\b|\bmy notes?\b|\b(?:did|have) i (?:note|noted|written down)\b/i;
+/** "Open YouTube", "go to github.com/x": only a known site name or a web address ("Open source vs …" is a question). */
+const OPEN_SITE = /^\s*(?:please\s+)?(?:can you\s+)?(?:open|go to|take me to)\s+(.+?)[\s.!?]*$/i;
+function opensSite(text: string): boolean {
+  const site = OPEN_SITE.exec(text)?.[1];
+  if (!site) return false;
+  if (/^(?:https?:\/\/)?[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}(?:[/?#]\S*)?(?:\s|$)/i.test(site)) return true;
+  // "YouTube now", "the Daraz website please": a known name in the first few words.
+  const words = site.split(/\s+/);
+  for (let n = Math.min(4, words.length); n >= 1; n--) if (knownSite(words.slice(0, n).join(" "))) return true;
+  return false;
+}
 const MAX_QUESTION_CHARS = 600;
 
 /**
@@ -110,7 +128,9 @@ function planDocumentPrefetch(text: string, available: ReadonlySet<string>, docu
 export function planPrefetch(question: string, available: ReadonlySet<string>, documents?: PrefetchDocuments): ToolCall | null {
   const text = question.trim();
   if (documents) return planDocumentPrefetch(text, available, documents);
-  if (text.length < 8 || text.length > MAX_QUESTION_CHARS || NOT_A_LOOKUP.test(text) || ARITHMETIC.test(text)) return null;
+  if (text.length < 8 || text.length > MAX_QUESTION_CHARS || NOT_A_LOOKUP.test(text) || ARITHMETIC.test(text) || OWN_DATA.test(text) || opensSite(text)) {
+    return null;
+  }
   if (GITHUB_TOOLS.some((name) => available.has(name)) && namesRepo(text)) return null;
   if (ABOUT_DOCUMENTS.test(text)) {
     return available.has("search_knowledge") ? call("search_knowledge", { query: text.slice(0, 300) }) : null;

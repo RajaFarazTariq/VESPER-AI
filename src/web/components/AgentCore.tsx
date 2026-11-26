@@ -371,11 +371,14 @@ export function AgentCore({
 /** The floating launcher orb (a <button>). Positioned by its user through `className`. */
 export function AgentLauncher({
   onClick,
+  onPrepare,
   hidden = false,
   className = "",
   ref,
 }: {
   onClick: () => void;
+  /** Pointed at, focused or touched (v0.19.0): Agent mode's code starts downloading, so it opens at once on the click. */
+  onPrepare?: () => void;
   hidden?: boolean;
   className?: string;
   /** Optional, so Agent mode can give focus back to the orb when it closes. */
@@ -387,6 +390,9 @@ export function AgentLauncher({
       ref={ref}
       type="button"
       onClick={onClick}
+      onPointerEnter={onPrepare}
+      onPointerDown={onPrepare}
+      onFocus={onPrepare}
       className={`agent-launcher${hidden ? " agent-launcher--hidden" : ""} ${className}`}
       aria-label="Open VESPER Agent"
       title="VESPER Agent"

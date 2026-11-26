@@ -642,6 +642,28 @@ devices, even with no VESPER tab open (the browser must be running).
   local (22:00 Asia/Karachi for the owner); from 15:00 local the briefing is about tomorrow.
 - **Spoken progress** (VESPER Agent): on a turn's first tool step a short line ("Let me check your calendar.").
 
+## 5o. More tasks (v0.19.0)
+
+- **Lists and notes** (`tools/lists.ts`, `db/lists.ts`, `routes/lists.ts`): VESPER's own data (no approval card), like
+  memory and reminders. Two tools keep the prompt small: `lists` (`action` add / show / done / undo / remove /
+  clear_done / rename / delete_list; "To-do" by default) and `notes` (add / search / show_recent / delete; sensitive
+  text refused with `lib/sensitive.ts`, also when edited in Settings). Limits checked in the same statement as the
+  insert. Settings → Lists & notes uses `/api/lists` and `/api/notes` (own-only). The briefing notification counts open
+  To-do items.
+- **Changing and cancelling events** (`tools/google.ts`, `db/google.ts`, `routes/google-actions.ts`):
+  `calendar_events` now returns event ids; `calendar_update_event` / `calendar_delete_event` read the event and prepare
+  a card (`google_actions.kind = 'event'`, the new nullable `op` column = update / delete, because the table's CHECK
+  allows only email/event and migrations are add-only). The stored update payload uses `after` (not `event`), so v0.18
+  code fails such a card instead of creating a new event. Approve checks the event's etag (changed meanwhile →
+  refused), then PATCHes only the changed fields or DELETEs, with `sendUpdates=all`; events organised by someone else
+  are refused; a repeating event's single occurrence only; counted against the daily events limit.
+- **Open websites** (`tools/open-website.ts`): well-known names map to fixed https addresses; any other address must
+  appear in what the user typed (matched on word boundaries; no IPs or private hosts). The result rides on the tool
+  event as `link` and is shown as an "Open <domain>" button: browsers don't allow opening a page without a tap.
+- **Archive** (`conversations.archived_at`): hidden from `GET /api/conversations` (and the sidebar), listed with
+  `?archived=1`, set or cleared with `PATCH`; a new, regenerated or edited message clears it.
+- **Smaller main bundle**: the admin panel, VESPER Agent and heavy settings tabs are lazy-loaded.
+
 ## 6. Security model
 
 | Threat | Control |

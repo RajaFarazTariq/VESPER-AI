@@ -9,6 +9,8 @@ import { searchKnowledge } from "./knowledge";
 import { GITHUB_TOOLS } from "./github";
 import { GITHUB_ACTION_TOOLS } from "./github-actions";
 import { GOOGLE_TOOLS } from "./google";
+import { LIST_TOOLS } from "./lists";
+import { OPEN_WEBSITE_TOOLS } from "./open-website";
 import { REMINDER_TOOLS } from "./reminders";
 import { queryTable } from "./tables";
 import { define, ToolInputError, type AgentTool, type ToolServerState, type WebToolContext } from "./types";
@@ -142,6 +144,9 @@ export const ALL_TOOLS: AgentTool[] = [
   forget,
   // Reminders sent as notifications to the user's devices (v0.18.0).
   ...REMINDER_TOOLS,
+  // Lists and notes, the user's own VESPER data, and an Open button for a website (v0.19.0).
+  ...LIST_TOOLS,
+  ...OPEN_WEBSITE_TOOLS,
   ...WEB_TOOLS,
   searchKnowledge,
   // Exact figures from spreadsheets attached to the chat (v0.14.0).

@@ -3,7 +3,8 @@
  * 1. reminders that are due ("Reminder" · the text · the local time),
  * 2. meeting alerts N minutes before each Google Calendar event ("In 10 minutes: Team standup" · "10:00–10:30"),
  * 3. the daily briefing at the time each user picked ("Your briefing for tomorrow" · "3 events, first at 09:30 (Team
- *    standup) · 2 reminders. Tap to hear it."); tapping it opens VESPER Agent, which reads the spoken briefing.
+ *    standup) · 2 reminders · 4 open to-dos. Tap to hear it."); tapping it opens VESPER Agent, which reads the spoken
+ *    briefing.
  *
  * Nothing here asks a model: the texts are built from the data. A run must stay far under the free plan's 10 ms of CPU,
  * so it does a capped amount of work (at most 25 notifications and 10 calendar reads; the rest goes the next minute;
@@ -12,6 +13,7 @@
  */
 import type { AppSettingsDto, PushPayload } from "../../shared/types";
 import { getAppSettings } from "../db/app-settings";
+import { countOpenTodos } from "../db/lists";
 import {
   BRIEFING_TOMORROW_FROM,
   briefingCandidates,
@@ -90,10 +92,13 @@ export function meetingPayload(e: CalendarItem, timeZone: string, now: number): 
   };
 }
 
-/** "3 events, first at 09:30 (Team standup) · 2 reminders. Tap to hear it." (events only when the calendar was read). */
+/**
+ * "3 events, first at 09:30 (Team standup) · 2 reminders · 4 open to-dos. Tap to hear it." (events only when the
+ * calendar was read; to-dos are the open items on the user's To-do list, v0.19.0).
+ */
 export function briefingPayload(
   due: { day: "today" | "tomorrow"; about: string },
-  input: { events: CalendarItem[] | null; reminders: number; dayStart: number; timeZone: string },
+  input: { events: CalendarItem[] | null; reminders: number; todos?: number; dayStart: number; timeZone: string },
 ): PushPayload {
   const parts: string[] = [];
   if (input.events) {
@@ -105,6 +110,7 @@ export function briefingPayload(
     );
   }
   if (input.reminders > 0) parts.push(plural(input.reminders, "reminder"));
+  if (input.todos) parts.push(`${input.todos} open to-do${input.todos === 1 ? "" : "s"}`);
   return {
     title: `Your briefing for ${due.day}`,
     body: parts.length ? `${parts.join(" · ")}. Tap to hear it.` : "Tap to hear it.",
@@ -291,7 +297,7 @@ class Run {
       if (!(await claimBriefing(this.db, u.user_id, due.about))) continue;
       done++;
       const range = { from: zonedInstant(due.about, "00:00", timeZone), to: zonedInstant(addDays(due.about, 1), "00:00", timeZone) };
-      const reminders = await countPendingReminders(this.db, u.user_id, range);
+      const [reminders, todos] = await Promise.all([countPendingReminders(this.db, u.user_id, range), countOpenTodos(this.db, u.user_id)]);
       let events: CalendarItem[] | null = null;
       if (calendar) {
         this.calendarsLeft--;
@@ -301,7 +307,7 @@ class Run {
         });
       }
       this.report.briefings++;
-      const { reached } = await this.push(targets, briefingPayload(due, { events, reminders, dayStart: range.from, timeZone }), BRIEFING_PUSH);
+      const { reached } = await this.push(targets, briefingPayload(due, { events, reminders, todos, dayStart: range.from, timeZone }), BRIEFING_PUSH);
       // No device took it: the day isn't used up, so the next runs try again while it is only a few minutes late.
       if (!reached && due.late < BRIEFING_RETRY_MS) await releaseBriefing(this.db, u.user_id, due.about, u.last_briefing_day);
     }

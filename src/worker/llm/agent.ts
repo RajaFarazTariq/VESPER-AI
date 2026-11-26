@@ -168,6 +168,10 @@ async function runTool(
         ...(output.table ? { table: output.table } : {}),
         // A prepared email or calendar event: the card under the answer (v0.15.0).
         ...(output.google ? { google: output.google } : {}),
+        // A website to open: the "Open …" button under the answer (v0.19.0), only ever an http(s) address.
+        ...(output.link && /^https?:\/\//i.test(output.link.url)
+          ? { link: { url: output.link.url.slice(0, 2000), title: output.link.title.slice(0, 200) } }
+          : {}),
       },
       content: output.content.slice(0, MAX_TOOL_RESULT_CHARS),
       ...(output.evidence ? { evidence: output.evidence } : {}),

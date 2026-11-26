@@ -16,6 +16,7 @@ import { documentRoutes } from "./routes/documents";
 import { feedbackRoutes } from "./routes/feedback";
 import { fileRoutes } from "./routes/files";
 import { knowledgeRoutes } from "./routes/knowledge";
+import { listRoutes, noteRoutes } from "./routes/lists";
 import { mediaRoutes } from "./routes/media";
 import { memoryRoutes, toolRoutes } from "./routes/memories";
 import { modelRoutes } from "./routes/models";
@@ -56,6 +57,8 @@ app.route("/api/files", fileRoutes);
 app.route("/api/documents", documentRoutes);
 app.route("/api/notifications", notificationRoutes);
 app.route("/api/reminders", reminderRoutes);
+app.route("/api/lists", listRoutes);
+app.route("/api/notes", noteRoutes);
 app.route("/api/admin/knowledge", knowledgeRoutes);
 app.route("/api/admin", adminRoutes);
 

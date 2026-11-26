@@ -247,6 +247,8 @@ export interface GoogleActionRefDto {
   kind: GoogleActionKind;
   /** The email's subject or the event's title. */
   title: string;
+  /** Calendar events (v0.19.0): what the card does; absent = "create". */
+  op?: GoogleEventOp;
 }
 
 export interface GoogleEmailPreviewDto {
@@ -286,6 +288,9 @@ export interface GoogleEventPreviewDto {
   account: string;
 }
 
+/** What a calendar card does (v0.19.0). */
+export type GoogleEventOp = "create" | "update" | "delete";
+
 /**
  * pending: waiting for Approve/Reject. running: being sent. done: sent / added (resultUrl). failed: Google refused
  * (error). rejected: the user said no. expired: not decided within 24 hours.
@@ -301,6 +306,12 @@ export interface GoogleActionDto extends GoogleActionRefDto {
   /** Exactly what will be sent; null once decided. */
   email: GoogleEmailPreviewDto | null;
   event: GoogleEventPreviewDto | null;
+  /**
+   * Calendar events (v0.19.0): "create" (default, also for older cards), "update" (change an existing event: `event` is
+   * the new version, `before` the current one) or "delete" (cancel it: `before` is the event, `event` null).
+   */
+  op?: GoogleEventOp;
+  before?: GoogleEventPreviewDto | null;
   resultUrl: string | null;
   error: string | null;
   createdAt: number;
@@ -374,6 +385,8 @@ export interface ToolEventDto {
   table?: TableResultDto;
   /** An email or calendar event this step prepared, waiting for the user's approval (v0.15.0). */
   google?: GoogleActionRefDto;
+  /** A website the user asked to open (v0.19.0): shown as an "Open …" button (browsers block opening it by itself). */
+  link?: { url: string; title: string };
 }
 
 // ------------------------------------------------------------------ GitHub changes with approval (v0.13.0)
@@ -522,6 +535,32 @@ export interface MessageFileDto {
   sheets: number;
   /** Data rows in all its tables. */
   rows: number;
+}
+
+// ------------------------------------------------------------------ Lists and notes (v0.19.0)
+
+/** A list VESPER keeps for the user ("To-do", "Shopping"…). */
+export interface ListDto {
+  id: string;
+  name: string;
+  items: ListItemDto[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ListItemDto {
+  id: string;
+  text: string;
+  done: boolean;
+  createdAt: number;
+}
+
+/** A note the user asked VESPER to keep. */
+export interface NoteDto {
+  id: string;
+  text: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 // ------------------------------------------------------------------ Proactive VESPER: notifications, reminders, briefing (v0.18.0)
@@ -742,6 +781,8 @@ export interface ConversationDto {
   model: string | null;
   createdAt: number;
   updatedAt: number;
+  /** Archived chats (v0.19.0) are hidden from the sidebar but kept; null/absent = not archived. */
+  archivedAt?: number | null;
 }
 
 export interface MessageDto {
