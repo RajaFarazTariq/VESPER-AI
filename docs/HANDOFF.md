@@ -2,7 +2,10 @@
 
 Read this first when resuming work. Last updated: **2026-11-25**. No secrets are stored here.
 
-## ⏩ Quick resume (2026-11-25)
+## ⏩ Quick resume (2026-11-27)
+- **v0.19.0 built 2026-11-27, handed to the owner to push** (branch `release/v0.19.0-more-tasks`; section 0). Owner
+  said "Proceed" to the recommended "More tasks" release, then asked mid-way: "Also add function to archive chats".
+  His v0.18.0 live test (notifications, 2-minute reminder, 22:00 briefing) is still to do.
 - **Live:** v0.15.0 Google Calendar + Gmail send (PR #19, merge `c204b7f`; /api/health 0.15.0 on 2026-11-24). Owner's
   setup done 2026-11-24/25 (APIs on, redirect URI, both scopes shown as **sensitive**, `GOOGLE_TOKEN_KEY`). Live test
   passed: connected as the owner's Gmail, an all-day event added on Approve, an email sent with the subject edited on
@@ -22,7 +25,9 @@ Read this first when resuming work. Last updated: **2026-11-25**. No secrets are
   for v0.14.1 (charts + CSV download). He asks for work to be "perfect and accurate".
 - **GitHub set-up (unchanged):** "VESPER AI Reader" (read-only) and "VESPER AI Actions" (public since 2026-11-21);
   GitHub for users ON, GitHub changes for users ON (10/day). Test PR #15 and issue #14 are closed (owner, 2026-11-24).
-- **v0.18.0 built 2026-11-25, handed to the owner to push** (branch `release/v0.18.0-proactive`; section 0). Owner:
+- **v0.18.0 live** (PR #24, merge `565401d`; /api/health 0.18.0 on 2026-11-25; section 0). **Next session: start with
+  the owner's live tests** (v0.18.0 item 7 in section 0; also v0.17.x and v0.16.0 tests still pending), then the next
+  roadmap step (natural conversation: voice interrupt; or more tasks) and the bundle-size split. Owner:
   "Also update Readme accordingly and creatively" + "add Vesper AI Agent image in readme" → README now opens with the
   core image (`docs/images/vesper-core.png`), a "Meet VESPER Agent" section with the agent screenshot
   (`docs/images/vesper-agent.png`, greeting without a name) and a "You say / VESPER does" table. Owner packed up after
@@ -64,9 +69,38 @@ Read this first when resuming work. Last updated: **2026-11-25**. No secrets are
   changes** (small fixes wait unless he asks); every release on its own branch + PR; no assistant/AI mentions in
   commits or PRs; personal project: nothing saved in the assistant's memory, no EOD logging, this file is the memory.
 
-## 0. ▶ Resume here (where we stopped on 2026-11-25)
+## 0. ▶ Resume here (where we stopped on 2026-11-27)
 
-**v0.18.0 built 2026-11-25, handed to the owner to push** (branch `release/v0.18.0-proactive`): VESPER acts on its own.
+**v0.19.0 built 2026-11-27, handed to the owner to push** (branch `release/v0.19.0-more-tasks`): "More tasks".
+1. **Lists and notes** (VESPER's own data, no approval): tools `lists` (add/show/done/undo/remove/clear_done/rename/
+   delete_list; "To-do" default; 20 lists × 200 items) and `notes` (add/search/show_recent/delete; 500 notes; sensitive
+   text refused in notes AND list items), Settings → Lists & notes (lazy), briefing counts open To-do items.
+2. **Change / cancel calendar events** with approval cards (before → after / cancel; `google_actions.op` column, the
+   update payload stores `after` so v0.18 can't run it as a new event; `If-Match` etag stale check; series masters
+   refused, single occurrences only; events organised by others refused; `sendUpdates=all`; daily events limit).
+   `calendar_events` returns ids. Card buttons "Change event"/"Cancel event", reject = "Keep event".
+3. **open_website**: well-known names → fixed https URLs, or an address the user typed (no IPs/private hosts) →
+   "Open <domain>" button in chat and the Agent HUD (never opened automatically).
+4. **Archive chats** (owner's extra): `conversations.archived_at`; Sidebar archive button + Undo toast; Settings →
+   Archived chats (open / restore / delete); a new, regenerated or edited message un-archives.
+5. **Bundle split**: main chunk 899.99 kB → ~420 kB (127.8 kB gzip); React in its own cached chunk; AgentMode,
+   AdminDialog, code highlighting (CodeMarkdown), heavy settings tabs lazy; LoadBoundary with retry; warning limit
+   700 kB. AgentMode is preloaded on launcher hover/focus/press and mounts inside the click when loaded (Safari audio
+   unlock).
+6. **Reviews** (server + browser, independent): fixed — series masters, If-Match, list item matching ("2", reverse
+   match, empty), empty list name, sensitive list items, item order, empty location/description clearing, "open
+   source…" prefetch, ~900 chars trimmed from tool descriptions; first Agent open mounting after the gesture, restore
+   breaking "Load older chats", failed lazy loads remembered, out-of-order list responses, errors off-screen, Undo
+   aborting a new reply, Undo toast pausing on hover/focus.
+7. **412 tests** (new `tests/lists.test.ts`, `tests/lists-web.test.ts`, more in `tests/google.test.ts`), typecheck,
+   build. Prompt: the new tools add roughly 1,500–2,800 characters per request (more with Google connected).
+8. **Owner's live test after deploy**: (a) /api/health 0.19.0; (b) "add milk and eggs to my shopping list", "what's on
+   my shopping list?", Settings → Lists & notes; (c) "note that the spare key is with Sara" → "what did I note about
+   the key?"; (d) "move <a test event> to 4 PM" → card → Approve → check Google Calendar; then cancel it the same way;
+   (e) "open YouTube" → button; (f) archive a chat → Undo → archive again → Settings → Archived chats → Restore;
+   (g) the app should feel faster to load.
+
+**Previous: v0.18.0 live 2026-11-25** (PR #24, merge `565401d`; branch `release/v0.18.0-proactive`): VESPER acts on its own.
 1. **Web Push** (`worker/push/`: RFC 8291 encryption tested byte for byte against the RFC example, RFC 8292 VAPID
    ES256; keys made on first use and kept in D1), devices per user (≤ 10, known push-service hosts only), service
    worker `public/sw.js`, icon `public/notification-icon.png`.
@@ -1069,7 +1103,8 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 | **Documents in chat + storage meter (v0.16.0)**: PDF/Word/text/Markdown on 📎, read in the browser, passages per chat with FTS5 (migration 0015), `search_documents` + `read_document`, page citations, excerpt on source chips, prefetch for messages about the documents, limits (20 MB / 300 pages, 3 per message, 5 per chat, 30 + 5 M chars per user, 10/day), admin switch + daily limit; admin storage meter (D1 size vs 500 MB); spreadsheet cap 1,000 M → 120 M characters | ✅ live (v0.16.0, PR #21, merge `2c81069`, deployed 2026-11-25; 330 tests); owner's live test pending |
 | **VESPER Agent (v0.17.0)**: the owner's "Jarvis-style" mode next to the unchanged chat: glowing orb → dimmed screen with an animated core (rings, HUD, boot-up, spoken greeting), text or voice (silence detection → Whisper), Hands-free, spoken sentence-by-sentence replies, floating text, tool steps, approval cards in the HUD, Open in chat, Esc/✕/Back; `agent` flag → short spoken-reply rules; no new settings or migration | ✅ live (v0.17.0, PR #22, merge `74c680b`, 2026-11-25; 348 tests); owner's live test pending |
 | **Agent voice (v0.17.1)**: studio voice from Workers AI (Deepgram Aura, female speakers, default Luna) via `POST /api/media/speech` with an app-wide daily character cap (3,000) and refunds; Web Audio playback with prefetch; best female device voice as fallback; voice menu with Test; admin switch, cap, speaker and "Used today" | ✅ live (v0.17.1, PR #23, merge `fc12fe6`, 2026-11-25; 358 tests); owner's live test pending |
-| **Proactive VESPER (v0.18.0)**: Web Push (RFC 8291/8292, WebCrypto, auto VAPID keys), per-minute cron (reminders, daily briefing at a local time, meeting alerts), reminder tools, Settings → Notifications, briefing in VESPER Agent, spoken progress lines; migration 0016; README with VESPER Agent images | 🔨 built 2026-11-25 (385 tests, typecheck, build, headless Edge); to push |
+| **Proactive VESPER (v0.18.0)**: Web Push (RFC 8291/8292, WebCrypto, auto VAPID keys), per-minute cron (reminders, daily briefing at a local time, meeting alerts), reminder tools, Settings → Notifications, briefing in VESPER Agent, spoken progress lines; migration 0016; README with VESPER Agent images | ✅ live (v0.18.0, PR #24, merge `565401d`, 2026-11-25; 385 tests); owner's live test pending |
+| **More tasks (v0.19.0)**: lists and notes (Settings → Lists & notes), change/cancel calendar events with approval cards, open websites (buttons), archive chats (Sidebar + Settings → Archived chats), bundle split (main chunk ~420 kB); migration 0017 | 🔨 built 2026-11-27 (412 tests, typecheck, build, headless Edge); to push |
 | **Next: owner's "Jarvis" plan** (Talk mode → "Hey Vesper" → only my voice → reminders/briefing → Windows tray app → Android app); other options: second D1 database for files, Excel in the knowledge base, change/cancel events | ⏳ |
 | Knowledge base Part 2 (daily web-page refresh) | ⏸ postponed (2026-11-19: the web is the main source) |
 
@@ -1110,7 +1145,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 385 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 412 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

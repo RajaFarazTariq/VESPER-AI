@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { ConnectionsDto, GithubActionDto, GithubConnectionDto, GoogleActionDto, GoogleConnectionDto } from "../../shared/types";
 import { api, ApiError } from "../api/client";
 import { ACTION_KIND_LABEL, ACTION_STATUS_LABEL, actionStatusTone } from "./GithubActionCard";
-import { GOOGLE_KIND_LABEL, GOOGLE_STATUS_LABEL, googleStatusTone } from "./GoogleActionCard";
+import { googleKindLabel, googleStatusLabel, googleStatusTone } from "./GoogleActionCard";
 
 type Kind = "reader" | "actions";
 
@@ -362,8 +362,8 @@ function RecentGoogle({ actions }: { actions: GoogleActionDto[] }) {
       <ul className="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)]">
         {actions.map((a) => (
           <li key={a.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-2 text-xs">
-            <span className={`font-medium ${googleStatusTone(a.status)}`}>{GOOGLE_STATUS_LABEL[a.kind][a.status]}</span>
-            <span className="text-[var(--text-soft)]">{GOOGLE_KIND_LABEL[a.kind]}</span>
+            <span className={`font-medium ${googleStatusTone(a.status)}`}>{googleStatusLabel(a.kind, a.status, a.op)}</span>
+            <span className="text-[var(--text-soft)]">{googleKindLabel(a.kind, a.op)}</span>
             <span className="min-w-0 flex-1 truncate" title={a.title}>
               {a.title}
             </span>

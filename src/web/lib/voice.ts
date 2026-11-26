@@ -207,3 +207,35 @@ export function useSpeakingId(): string | null {
     () => null,
   );
 }
+
+// ------------------------------------------------------------------ VESPER Agent's audio output (v0.19.0)
+
+let agentOutput: AudioContext | null = null;
+
+/**
+ * VESPER Agent's one audio output for its studio voice, kept here in the main bundle. Browsers (Safari, phones) let
+ * audio start only during a tap, and Agent mode may still be downloading when its launcher is tapped, so the launcher's
+ * tap creates and starts it (`start`), and Agent mode then uses the same one. Null where the browser has no Web Audio.
+ */
+export function agentAudio(start = false): AudioContext | null {
+  if (!agentOutput || agentOutput.state === "closed") {
+    const Context =
+      typeof window === "undefined"
+        ? undefined
+        : (window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
+    if (!Context) return null;
+    try {
+      agentOutput = new Context();
+    } catch {
+      return null;
+    }
+  }
+  if (start && agentOutput.state === "suspended") void agentOutput.resume().catch(() => {});
+  return agentOutput;
+}
+
+/** Agent mode closed: its audio output is let go (a new one is made on the next tap). */
+export function closeAgentAudio(): void {
+  void agentOutput?.close().catch(() => {});
+  agentOutput = null;
+}

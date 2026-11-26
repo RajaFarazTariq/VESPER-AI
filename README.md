@@ -20,7 +20,7 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.18.0**.
+Current version: **0.19.0**.
 
 - [Meet VESPER Agent](#meet-vesper-agent)
 - [What VESPER does](#what-vesper-does)
@@ -54,6 +54,9 @@ Things you can say:
 | "Summarise this PDF." | Reads the document you attached and cites the pages |
 | "What were total sales by region?" | Calculates it exactly from your spreadsheet and shows a chart |
 | "What's the weather in Lahore this weekend?" | Checks the forecast and answers in a sentence |
+| "Add milk and eggs to my shopping list." | Keeps the list for you; "what's on my shopping list?" reads it back |
+| "Move tomorrow's review to 4 PM." | Shows the change on a before → after card; nothing changes until **Approve** |
+| "Open YouTube." | Gives you an **Open youtube.com** button |
 
 And it doesn't wait to be asked: every evening (or morning, you choose) a **briefing** notification sums up the day
 ahead, and a **meeting alert** arrives a few minutes before each event. Tap the briefing, tap the core, and VESPER
@@ -78,6 +81,9 @@ question needs a look-up, fetches what it needs and cites it:
   type, it answers out loud, does tasks with the same tools, and confirms what it did.
 - **It acts on its own**: reminders ("remind me at 5 PM…"), a daily briefing and meeting alerts arrive as
   notifications on your laptop and phone, even when VESPER isn't open.
+- **Lists and notes**: to-do and shopping lists and short notes that VESPER keeps for you; see and edit them in
+  Settings → Lists & notes.
+- **Tidy history**: archive chats you want to keep but not see; they wait in Settings → Archived chats.
 - **Your spreadsheets**: attach a CSV or Excel file and ask questions about it; totals, averages, counts and trends are
   calculated exactly over every row, the answer says what was calculated, and each result comes with a chart or table
   you can download as CSV.
@@ -210,6 +216,24 @@ choices:
   when you press Approve.
 - Each session is saved as a normal chat in the sidebar; **Open in chat** shows the full answer there. Esc, ✕ or the
   phone's Back button closes it back into the orb (and turns the microphone off).
+
+**More tasks** (v0.19.0)
+- **Lists**: "add milk and eggs to my shopping list", "what's on my to-do list?", "mark call Ali done", "remove milk",
+  "clear the done items". "To-do" is the default list; others are made when you name them (up to 20 lists of 200
+  items). The evening briefing counts your open to-dos.
+- **Notes**: "note that the spare key is with Sara", "what did I note about the key?". Passwords, card or bank numbers,
+  ID numbers and phone numbers are refused, as with memory. Settings → **Lists & notes** shows everything: tick, edit,
+  rename and delete.
+- **Change or cancel calendar events**: "move the review to 4 PM", "cancel tomorrow's call with Sam". The card shows the
+  event before and after (or the event to cancel); nothing changes until you press **Approve**. Guests get Google's
+  update or cancellation email. Only events you organised in your own calendar; for a repeating event, only that one
+  day. If the event was changed meanwhile, the card refuses and asks you to ask again.
+- **Open websites**: "open YouTube", "open my Gmail" or an address you type gives an **Open …** button with the full
+  site name (browsers don't let a page open others by itself). VESPER never opens an address it found in a web page or
+  document.
+- **Archive chats**: the archive button next to rename and delete hides a chat from the sidebar without deleting it.
+  Settings → **Archived chats** lists them (open, restore, delete); a new message in an archived chat brings it back.
+- The app loads faster: the admin panel, VESPER Agent and the heavier settings parts load only when opened.
 
 **Proactive VESPER: reminders, briefing, meeting alerts** (v0.18.0)
 - Settings → **Notifications** → switch notifications on for this device (do it once on each laptop and phone you
@@ -572,6 +596,8 @@ losing data; a test applies every migration over existing data to check nothing 
   approval card, exactly as shown (or as you edited it), once, by its owner only, within the daily limits. The prepared
   text is kept only until you decide (at most 24 hours); afterwards a log line (subject or title, who or when, outcome)
   stays 90 days. Calendar text is passed to the model as data, never as instructions.
+- **Lists and notes**: kept in your Cloudflare database with your account (deleted with it), visible only to you;
+  sensitive data is refused in notes. Website buttons only ever point to well-known sites or an address you typed.
 - **Notifications**: they go to your devices through your browser's own push service (Google for Chrome and Opera,
   Microsoft for Edge, Mozilla for Firefox), end-to-end encrypted (the standard Web Push encryption), so the push service
   can't read them. Only the devices you switched on get them; removing a device in Settings stops them at once.

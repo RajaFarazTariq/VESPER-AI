@@ -1,4 +1,5 @@
 import {
+  Archive,
   Check,
   LogOut,
   Monitor,
@@ -14,7 +15,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ConversationDto, UserDto } from "../../shared/types";
 import { groupConversations } from "../lib/format";
 import { getThemePreference, setThemePreference, type ThemePreference } from "../lib/theme";
@@ -36,6 +37,8 @@ interface Props {
   onSelect: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  /** Out of the sidebar, kept in Settings → Archived chats (v0.19.0). */
+  onArchive: (id: string) => void;
   onLoadMore: () => void;
   onOpenSettings: () => void;
   /** Shown only for administrators. */
@@ -65,6 +68,10 @@ export function Sidebar(props: Props) {
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+  const newChatRef = useRef<HTMLButtonElement>(null);
+  const historyRef = useRef<HTMLElement>(null);
+  /** After archiving with the keyboard or mouse, the focus goes to the next chat (or the one before, or New chat). */
+  const focusAfter = useRef<string | null>(null);
 
   const commitRename = (id: string) => {
     const title = draft.trim();
@@ -74,6 +81,20 @@ export function Sidebar(props: Props) {
 
   const q = query.trim().toLowerCase();
   const visible = useMemo(() => (q ? conversations.filter((c) => c.title.toLowerCase().includes(q)) : conversations), [conversations, q]);
+
+  useLayoutEffect(() => {
+    const target = focusAfter.current;
+    if (!target) return;
+    focusAfter.current = null;
+    const row = historyRef.current?.querySelector<HTMLButtonElement>(`[data-chat-id="${CSS.escape(target)}"]`);
+    (row ?? newChatRef.current)?.focus();
+  }, [visible]);
+
+  const archive = (id: string) => {
+    const at = visible.findIndex((c) => c.id === id);
+    focusAfter.current = visible[at + 1]?.id ?? visible[at - 1]?.id ?? "new-chat";
+    props.onArchive(id);
+  };
 
   // Desktop rail: icons only.
   const rail = (
@@ -127,6 +148,7 @@ export function Sidebar(props: Props) {
 
         <div className="space-y-2 px-3 pt-1">
           <button
+            ref={newChatRef}
             type="button"
             onClick={props.onNewChat}
             className="flex w-full items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2.5 text-sm font-medium shadow-[var(--shadow-sm)] transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)]"
@@ -152,7 +174,7 @@ export function Sidebar(props: Props) {
           </label>
         </div>
 
-        <nav className="mt-2 flex-1 overflow-y-auto px-2 pb-2 thin-scroll" aria-label="Chat history">
+        <nav ref={historyRef} className="mt-2 flex-1 overflow-y-auto px-2 pb-2 thin-scroll" aria-label="Chat history">
           {visible.length === 0 ? (
             <p className="px-3 py-8 text-center text-sm text-[var(--text-soft)]">
               {q ? (props.hasMore ? "No loaded chats match. Try loading older chats below." : "No chats match your search.") : "No conversations yet."}
@@ -190,6 +212,7 @@ export function Sidebar(props: Props) {
                       {c.id === activeId ? <span className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-[var(--accent)]" aria-hidden /> : null}
                       <button
                         type="button"
+                        data-chat-id={c.id}
                         onClick={() => props.onSelect(c.id)}
                         className={`flex min-w-0 flex-1 items-center px-3 py-2 text-left text-sm ${c.id === activeId ? "font-medium" : ""}`}
                         title={c.title}
@@ -209,6 +232,15 @@ export function Sidebar(props: Props) {
                           title="Rename"
                         >
                           <Pencil size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => archive(c.id)}
+                          className="rounded-md p-1.5 text-[var(--text-soft)] hover:bg-[var(--bg)] hover:text-[var(--text)]"
+                          aria-label="Archive chat"
+                          title="Archive"
+                        >
+                          <Archive size={13} />
                         </button>
                         <button
                           type="button"

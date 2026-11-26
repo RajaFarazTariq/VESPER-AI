@@ -31,7 +31,9 @@ export const conversationRoutes = new Hono<AppEnv>()
     const beforeRaw = c.req.query("before");
     const before = beforeRaw ? Number(beforeRaw) : undefined;
     if (before !== undefined && !Number.isFinite(before)) throw badRequest("Invalid 'before' cursor.");
-    const conversations = await listConversations(c.env.DB, c.get("user").id, limit + 1, before);
+    // ?archived=1 (v0.19.0): only the archived chats, most recently archived first (`before` is then an archivedAt).
+    const archived = c.req.query("archived") === "1" || c.req.query("archived") === "true";
+    const conversations = await listConversations(c.env.DB, c.get("user").id, limit + 1, before, archived);
     const hasMore = conversations.length > limit;
     return c.json({ conversations: conversations.slice(0, limit), hasMore });
   })
@@ -51,8 +53,17 @@ export const conversationRoutes = new Hono<AppEnv>()
 
   .patch("/:id", async (c) => {
     const id = parseId(c.req.param("id"));
-    const body = await parseJson(c, z.object({ title: z.string().trim().min(1).max(120) }));
-    const updated = await updateConversation(c.env.DB, c.get("user").id, id, { title: body.title });
+    // Rename and/or archive (v0.19.0: an archived chat leaves the chat list but is kept).
+    const body = await parseJson(
+      c,
+      z
+        .object({ title: z.string().trim().min(1).max(120).optional(), archived: z.boolean().optional() })
+        .refine((p) => p.title !== undefined || p.archived !== undefined, { message: "Nothing to update." }),
+    );
+    const updated = await updateConversation(c.env.DB, c.get("user").id, id, {
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(body.archived !== undefined ? { archived: body.archived } : {}),
+    });
     if (!updated) throw notFound("Conversation");
     const conversation = await getConversation(c.env.DB, c.get("user").id, id);
     return c.json({ conversation });

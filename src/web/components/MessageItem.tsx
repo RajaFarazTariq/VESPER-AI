@@ -42,7 +42,7 @@ import { CopyButton, Markdown } from "./Markdown";
 import { GithubActionCard } from "./GithubActionCard";
 import { GoogleActionCard } from "./GoogleActionCard";
 import { TableResults } from "./TableResultCard";
-import { SourceList, ToolActivity } from "./ToolActivity";
+import { SourceList, ToolActivity, WebsiteButtons } from "./ToolActivity";
 import { VesperMark } from "./VesperMark";
 
 interface Props {
@@ -63,6 +63,8 @@ interface Props {
 
 const actionButton =
   "inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-[var(--text-soft)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]";
+const websiteButton =
+  "inline-flex max-w-full items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3.5 py-2 text-sm font-medium text-[var(--text)] shadow-[var(--shadow-sm)] hover:bg-[var(--bg-hover)] [&>svg]:text-[var(--accent)]";
 
 export const MessageItem = memo(function MessageItem(props: Props) {
   const { message, canEdit = false, onEdit } = props;
@@ -117,6 +119,13 @@ function AssistantMessage({ message, isLast, canRetry, onRetry, isAdmin = false,
 
         {/* Emails and calendar events this answer prepared: sent or added only when the user approves the card (v0.15.0). */}
         {(message.tools ?? []).flatMap((t) => (t.google ? [<GoogleActionCard key={t.google.id} action={t.google} />] : []))}
+
+        {/* Websites the user asked to open (v0.19.0): never opened by themselves, a button the user taps. */}
+        {message.tools?.some((t) => t.link) ? (
+          <div className="flex flex-wrap gap-2">
+            <WebsiteButtons tools={message.tools} className={websiteButton} />
+          </div>
+        ) : null}
 
         <SourceList sources={sources.shown} more={sources.unused} />
 

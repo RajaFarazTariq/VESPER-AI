@@ -1,10 +1,8 @@
-import { ArrowDown, FileSpreadsheet, FileText, Menu, Mic, Paperclip, Sparkles, SquarePen, Telescope } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Archive, ArrowDown, FileSpreadsheet, FileText, Menu, Mic, Paperclip, Sparkles, SquarePen, Telescope } from "lucide-react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { ConversationDto, FeaturesDto, ModelsResponse, PublicConfigDto, ToolInfoDto, UserDto, UserSettings } from "../shared/types";
 import { api, ApiError } from "./api/client";
-import { AdminDialog } from "./components/AdminDialog";
 import { AgentLauncher } from "./components/AgentCore";
-import { AgentMode } from "./components/AgentMode";
 import { Composer, ResearchToggle, ToolsButton } from "./components/Composer";
 import { LoginPage } from "./components/LoginPage";
 import { MessageItem } from "./components/MessageItem";
@@ -22,8 +20,32 @@ import { ImageError, prepareImage, type PendingImage } from "./lib/images";
 import { messageFile, readInBackground, tableErrorMessage, uploadTables, type PendingTable } from "./lib/tables";
 import { explainOllamaError, listOllamaModels } from "./lib/ollama";
 import { agentLink, briefingDayOf } from "./lib/agent-voice";
-import { canSpeak, speak, stopSpeaking } from "./lib/voice";
+import { insertByUpdated } from "./lib/format";
+import { agentAudio, canSpeak, speak, stopSpeaking } from "./lib/voice";
 import { VesperMark } from "./components/VesperMark";
+import { lazyPart, LoadBoundary, LOAD_FAILED } from "./components/LoadBoundary";
+
+// Parts most visits never open are downloaded when first opened (v0.19.0), which keeps the first load small: the admin
+// panel and VESPER Agent. The agent's launcher stays here; pointing at it, focusing it or pressing it starts the
+// download. Once downloaded, the agent is drawn directly, within the tap (as before v0.19.0): Safari lets its voice
+// start only then, and there is no loading screen.
+type AgentModule = typeof import("./components/AgentMode");
+let agentModule: AgentModule | null = null;
+const loadAgentMode = () => import("./components/AgentMode").then((m) => (agentModule = m));
+const preloadAgentMode = () => void loadAgentMode().catch(() => {});
+/** Opened before the download finished (a tap without pointing first, or a notification's link): a loading screen. */
+const LazyAgentMode = lazyPart(() => loadAgentMode().then((m) => m.AgentMode));
+const AdminDialog = lazyPart(() => import("./components/AdminDialog").then((m) => m.AdminDialog));
+
+/** Shown over the page while a dialog's part downloads (the same spinner as everywhere else). */
+function DialogLoading({ label, agent = false }: { label: string; agent?: boolean }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" role="status" aria-label={label}>
+      <div className={agent ? "agent-dim" : "absolute inset-0 bg-black/45 backdrop-blur-[3px]"} aria-hidden="true" />
+      <div className="relative h-6 w-6 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--accent)]" aria-hidden="true" />
+    </div>
+  );
+}
 
 type Session = { user: UserDto; settings: UserSettings };
 
@@ -183,6 +205,10 @@ function ChatApp({
   const { user, settings } = session;
   const [conversations, setConversations] = useState<ConversationDto[]>([]);
   const [hasMore, setHasMore] = useState(false);
+  const hasMoreRef = useRef(false);
+  hasMoreRef.current = hasMore;
+  /** A restored (un-archived) chat back in the sidebar, unless it belongs among older chats not loaded yet. */
+  const restoreToSidebar = (conversation: ConversationDto) => setConversations((list) => insertByUpdated(list, conversation, hasMoreRef.current));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
   const settingsOpen = settingsTab !== null;
@@ -216,15 +242,25 @@ function ChatApp({
   /** The day that briefing is about ("YYYY-MM-DD", from the link), when it says. */
   const [agentBriefingDay, setAgentBriefingDay] = useState<string | null>(null);
   const [agentRun, setAgentRun] = useState(0);
+  /** Agent mode's code was there when it opened (drawn directly, within the tap). */
+  const [agentReady, setAgentReady] = useState(false);
   const agentOpenRef = useRef(false);
   agentOpenRef.current = agentOpen;
   const launcher = useRef<HTMLButtonElement>(null);
 
-  const toast = useCallback((message: string, kind: Toast["kind"] = "error") => {
+  const toast = useCallback((message: string, kind: Toast["kind"] = "error", action?: Toast["action"]) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t.slice(-2), { id, message, kind }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 7000);
+    setToasts((t) => [...t.slice(-2), { id, message, kind, ...(action ? { action } : {}) }]);
+    // A toast with a button (e.g. Undo) times itself (Toasts): longer, and not while pointed at or focused.
+    if (!action) setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 7000);
   }, []);
+  /**
+   * An archived chat open in the chat view (v0.19.0, opened from Settings → Archived chats or its address). It isn't
+   * in the sidebar; sending a message in it restores it on the server, and then it joins the sidebar again.
+   */
+  const [archivedChat, setArchivedChat] = useState<ConversationDto | null>(null);
+  const archivedChatRef = useRef<ConversationDto | null>(null);
+  archivedChatRef.current = archivedChat;
 
   const loadModels = useCallback(
     async (refresh = false) => {
@@ -253,8 +289,10 @@ function ChatApp({
       window.history.replaceState(null, "", `/c/${conversation.id}`);
     },
     onConversationActivity: (id) => {
+      const archived = archivedChatRef.current?.id === id ? archivedChatRef.current : null;
+      if (archived) setArchivedChat(null);
       setConversations((list) => {
-        const found = list.find((c) => c.id === id);
+        const found = list.find((c) => c.id === id) ?? (archived ? { ...archived, archivedAt: null } : null);
         return found ? [{ ...found, updatedAt: Date.now() }, ...list.filter((c) => c.id !== id)] : list;
       });
       void loadModels();
@@ -510,17 +548,25 @@ function ChatApp({
       stopSpeaking();
       const conversation = await chat.load(id);
       if (!conversation) {
+        setArchivedChat(null);
         window.history.replaceState(null, "", "/");
         return;
       }
+      setArchivedChat(conversation.archivedAt ? conversation : null);
       setSelection(conversation.model ?? settings.defaultModel);
     },
     [chat, settings.defaultModel],
   );
 
+  const chatRef = useRef(chat);
+  chatRef.current = chat;
+  const openConversationRef = useRef(openConversation);
+  openConversationRef.current = openConversation;
+
   const newChat = useCallback(
     (push = true) => {
       chat.reset();
+      setArchivedChat(null);
       stopSpeaking();
       setSelection(settings.defaultModel);
       setInput("");
@@ -555,6 +601,7 @@ function ChatApp({
     setAgentBriefing(briefing);
     setAgentBriefingDay(briefing ? briefingDay : null);
     setAgentRun((n) => n + 1);
+    setAgentReady(agentModule !== null);
     setAgentOpen(true);
   };
   /**
@@ -619,7 +666,21 @@ function ChatApp({
     launcher.current?.focus();
   }, [agentOpen]);
   /** VESPER Agent's launcher, placed by the screen it is on (welcome screen or conversation). */
-  const agentLauncher = (className = "") => <AgentLauncher ref={launcher} onClick={() => openAgent()} hidden={agentOpen} className={className} />;
+  // The studio voice's audio output is started by the tap itself (Safari and phones allow it only then), even while
+  // Agent mode is still downloading; Agent mode then uses that one.
+  const studioVoice = Boolean(features?.voice.enabled && features.voice.studio?.enabled);
+  const agentLauncher = (className = "") => (
+    <AgentLauncher
+      ref={launcher}
+      onClick={() => {
+        if (studioVoice) agentAudio(true);
+        openAgent();
+      }}
+      onPrepare={preloadAgentMode}
+      hidden={agentOpen}
+      className={className}
+    />
+  );
   const agentConversationCreated = useCallback(
     (conversation: ConversationDto) => setConversations((list) => [conversation, ...list.filter((c) => c.id !== conversation.id)]),
     [],
@@ -778,7 +839,8 @@ function ChatApp({
   const empty = chat.messages.length === 0 && !chat.loading;
   const heroBox = useRef<HTMLDivElement>(null);
   const launcherLift = useLauncherLift(heroBox, empty);
-  const activeTitle = conversations.find((c) => c.id === chat.conversationId)?.title ?? null;
+  const openArchived = archivedChat && archivedChat.id === chat.conversationId ? archivedChat : null;
+  const activeTitle = conversations.find((c) => c.id === chat.conversationId)?.title ?? openArchived?.title ?? null;
   const firstName = (user.name ?? "").trim().split(/\s+/)[0] || null;
   const capabilities = Object.keys(CAPABILITY_LABELS).filter((name) => activeNames.has(name));
   const mediaChips = [
@@ -872,6 +934,42 @@ function ChatApp({
             toast(e instanceof ApiError ? e.message : "Delete failed.");
           }
         }}
+        onArchive={async (id) => {
+          const target = conversations.find((c) => c.id === id);
+          if (!target) return;
+          // Out of the sidebar at once (an open chat goes to a new one); put back if the server says no.
+          const wasOpen = chat.conversationId === id;
+          setConversations((list) => list.filter((c) => c.id !== id));
+          if (wasOpen) newChat();
+          const archiving = api.archiveConversation(id, true);
+          toast("Chat archived", "info", {
+            label: "Undo",
+            // After the archiving has gone through (if it failed, the chat is back already).
+            run: () =>
+              void archiving.then(
+                () =>
+                  api.archiveConversation(id, false).then(
+                    ({ conversation }) => {
+                      restoreToSidebar(conversation);
+                      // Open again only if the view is still the empty new chat it went to (never over a new chat
+                      // the user started meanwhile).
+                      const now = chatRef.current;
+                      if (wasOpen && !now.conversationId && now.messages.length === 0 && !now.streaming && !now.loading) {
+                        void openConversationRef.current(id);
+                      }
+                    },
+                    (e: unknown) => toast(e instanceof ApiError ? e.message : "Couldn't restore the chat."),
+                  ),
+                () => {},
+              ),
+          });
+          try {
+            await archiving;
+          } catch (e) {
+            restoreToSidebar(target);
+            toast(e instanceof ApiError ? e.message : "Couldn't archive the chat.");
+          }
+        }}
         onLoadMore={async () => {
           const oldest = conversations[conversations.length - 1];
           try {
@@ -905,9 +1003,19 @@ function ChatApp({
           </button>
           <div className="flex min-w-0 flex-1 items-center gap-2 px-1">
             {!empty && activeTitle ? (
-              <h2 className="truncate text-[15px] font-medium text-[var(--text)]" title={activeTitle}>
-                {activeTitle}
-              </h2>
+              <>
+                <h2 className="truncate text-[15px] font-medium text-[var(--text)]" title={activeTitle}>
+                  {activeTitle}
+                </h2>
+                {openArchived ? (
+                  <span
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[11px] text-[var(--text-soft)]"
+                    title="This chat is archived. Sending a message moves it back to your chats."
+                  >
+                    <Archive size={11} aria-hidden="true" /> Archived
+                  </span>
+                ) : null}
+              </>
             ) : (
               <span className="flex items-center gap-2 md:hidden">
                 <VesperMark className="h-6 w-6" />
@@ -1043,6 +1151,18 @@ function ChatApp({
           ollamaModels={ollamaModels}
           features={features}
           onClose={() => setSettingsOpen(false)}
+          onOpenConversation={(conversation) => {
+            setSettingsOpen(false);
+            void openConversation(conversation.id);
+          }}
+          onConversationRestored={(conversation) => {
+            restoreToSidebar(conversation);
+            if (archivedChatRef.current?.id === conversation.id) setArchivedChat(null);
+          }}
+          onConversationDeleted={(id) => {
+            setConversations((list) => list.filter((c) => c.id !== id));
+            if (chat.conversationId === id) newChat();
+          }}
           onSaved={(saved) => {
             onSettings(saved);
             if (!chat.conversationId) setSelection(saved.defaultModel);
@@ -1052,29 +1172,58 @@ function ChatApp({
         />
       ) : null}
       {agentOpen ? (
-        <AgentMode
-          key={agentRun}
-          briefing={agentBriefing}
-          briefingDay={agentBriefingDay}
-          firstName={firstName}
-          settings={settings}
-          features={features}
-          origin={agentOrigin}
-          onClose={closeAgent}
-          onOpenInChat={openAgentChat}
-          onConversationCreated={agentConversationCreated}
-          onConversationActivity={agentConversationActivity}
-        />
+        <LoadBoundary
+          parts={[LazyAgentMode]}
+          onError={() => {
+            closeAgent();
+            toast(LOAD_FAILED);
+          }}
+        >
+          {() => {
+            const props = {
+              briefing: agentBriefing,
+              briefingDay: agentBriefingDay,
+              firstName,
+              settings,
+              features,
+              origin: agentOrigin,
+              onClose: closeAgent,
+              onOpenInChat: openAgentChat,
+              onConversationCreated: agentConversationCreated,
+              onConversationActivity: agentConversationActivity,
+            };
+            const Ready = agentReady ? agentModule?.AgentMode : undefined;
+            return Ready ? (
+              <Ready key={agentRun} {...props} />
+            ) : (
+              <Suspense fallback={<DialogLoading label="Opening VESPER Agent…" agent />}>
+                <LazyAgentMode.Component key={agentRun} {...props} />
+              </Suspense>
+            );
+          }}
+        </LoadBoundary>
       ) : null}
       {adminOpen && user.role === "admin" ? (
-        <AdminDialog
-          currentUserId={user.id}
-          models={models}
-          refreshingModels={refreshing}
-          onRefreshModels={() => void loadModels(true)}
-          onClose={() => setAdminOpen(false)}
-          onNotice={toast}
-        />
+        <LoadBoundary
+          parts={[AdminDialog]}
+          onError={() => {
+            setAdminOpen(false);
+            toast(LOAD_FAILED);
+          }}
+        >
+          {() => (
+            <Suspense fallback={<DialogLoading label="Opening the admin panel…" />}>
+              <AdminDialog.Component
+                currentUserId={user.id}
+                models={models}
+                refreshingModels={refreshing}
+                onRefreshModels={() => void loadModels(true)}
+                onClose={() => setAdminOpen(false)}
+                onNotice={toast}
+              />
+            </Suspense>
+          )}
+        </LoadBoundary>
       ) : null}
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
     </div>

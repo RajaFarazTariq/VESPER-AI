@@ -41,7 +41,7 @@ export interface ToolContext {
   google?: GoogleAccess;
   /**
    * What the user typed in this chat (their own messages), so a prepared email or invitation can point out addresses
-   * VESPER chose that the user never wrote (v0.15.0).
+   * VESPER chose that the user never wrote (v0.15.0), and open_website only offers addresses the user typed (v0.19.0).
    */
   userText?: string;
 }
@@ -111,6 +111,8 @@ export interface ToolOutput {
   table?: TableResultDto;
   /** An email or calendar event was prepared and waits for the user's approval (shown as a card, v0.15.0). */
   google?: GoogleActionRefDto;
+  /** A website the user asked to open: shown as an "Open …" button the user taps (v0.19.0). */
+  link?: { url: string; title: string };
 }
 
 /** A tool the model may call. Parameters are plain JSON Schema (portable across providers). */

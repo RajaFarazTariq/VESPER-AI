@@ -18,12 +18,12 @@ import {
   type ListenVerdict,
 } from "../lib/agent-voice";
 import { answerSources, chipLabels, githubLineLinks, plainDocumentLinks, tidyCitations } from "../lib/format";
-import { canRecord, canSpeak, RecordingError, speakableText, stopSpeaking, type Recording } from "../lib/voice";
+import { agentAudio, canRecord, canSpeak, closeAgentAudio, RecordingError, speakableText, stopSpeaking, type Recording } from "../lib/voice";
 import { AgentCore, type AgentCoreState } from "./AgentCore";
 import { GithubActionCard } from "./GithubActionCard";
 import { GoogleActionCard } from "./GoogleActionCard";
 import { Markdown } from "./Markdown";
-import { plainToolText } from "./ToolActivity";
+import { plainToolText, WebsiteButtons } from "./ToolActivity";
 
 // ------------------------------------------------------------------ Listening (the microphone, with a loudness meter)
 
@@ -559,13 +559,15 @@ class AgentVoice {
     }, 500);
   }
 
-  /** One audio output per session: the studio voice goes through a meter (the core follows its loudness). */
+  /**
+   * One audio output per session: the studio voice goes through a meter (the core follows its loudness). It is the
+   * one the launcher's tap already started (v0.19.0: Agent mode may have been downloading during that tap).
+   */
   private context(): AudioContext | null {
     if (this.audio && this.audio.state !== "closed") return this.audio;
-    const Context = audioContextClass();
-    if (!Context) return null;
+    const audio = agentAudio();
+    if (!audio) return null;
     try {
-      const audio = new Context();
       const analyser = audio.createAnalyser();
       analyser.fftSize = 1024;
       analyser.connect(audio.destination);
@@ -706,6 +708,9 @@ const hudIcon = `${hudBase} w-9 sm:w-10`;
 const hudTone = (on: boolean) => (on ? "bg-[var(--ag-cyan-soft)] text-[var(--ag-cyan)]" : "text-[var(--ag-text-soft)]");
 const chip =
   "inline-flex max-w-[12rem] items-center gap-1.5 rounded-md border border-[var(--ag-border)] px-2 py-0.5 text-[11px] text-[var(--ag-text-soft)] transition-colors hover:border-[var(--ag-cyan)] hover:text-[var(--ag-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ag-cyan)]";
+/** "Open youtube.com" (v0.19.0): a website the user asked for, the whole domain always shown. */
+const siteButton =
+  "inline-flex max-w-full items-center gap-2 rounded-md border border-[var(--ag-cyan)] bg-[var(--ag-cyan-soft)] px-3 py-1.5 text-[13px] font-medium text-[var(--ag-text)] transition-colors hover:bg-[var(--ag-border)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ag-cyan)] [&>svg]:text-[var(--ag-cyan)]";
 /** Links in a reply in the HUD's colour. */
 const replyAccent = { "--accent": "var(--ag-cyan)" } as CSSProperties;
 
@@ -1032,6 +1037,7 @@ export function AgentMode({
       listener.current?.cancel();
       listener.current = null;
       voice.dispose();
+      closeAgentAudio();
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
       if (closeTimer.current) clearTimeout(closeTimer.current);
     };
@@ -1168,7 +1174,9 @@ export function AgentMode({
     if (!firstStep || s.turn !== userCount || s.progress) return;
     s.progress = true;
     if (s.muted || s.upTo > 0 || replyContent.trim() || voice.speaking || !maySpeak()) return;
-    voice.say(progressLine(firstStep.name)!);
+    // Lists and notes (v0.19.0): "Checking your list." or "Updating your list." by what was asked.
+    const request = [...chat.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    voice.say(progressLine(firstStep.name, request, firstStep.args)!);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [firstStep?.id, userCount]);
 
@@ -1485,6 +1493,11 @@ export function AgentMode({
                     </div>
                   ) : null}
                   {currentReply?.error ? <p className="max-w-xl text-sm text-[var(--ag-warn)] [overflow-wrap:anywhere]">{currentReply.error}</p> : null}
+                  {currentReply?.tools?.some((t) => t.link) ? (
+                    <div className="flex max-w-full flex-wrap items-center justify-center gap-2">
+                      <WebsiteButtons tools={currentReply.tools} className={siteButton} />
+                    </div>
+                  ) : null}
 
                   {sources.length || (currentReply && chat.conversationId) ? (
                     <div className="flex max-w-full flex-wrap items-center justify-center gap-1.5">

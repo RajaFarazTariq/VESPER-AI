@@ -61,6 +61,19 @@ function pickTool(text, names, system = "") {
   if (names.includes("search_documents") && /\b(?:documents?|pdfs?|files?|reports?|pages?)\b/i.test(asked) && asked.length >= 2) {
     return { name: "search_documents", args: { query: asked.slice(0, 300) } };
   }
+  // Lists, notes and websites (v0.19.0): "add milk and eggs to my shopping list", "what's on my to-do list?",
+  // "note that the gate code is on the green card", "open YouTube".
+  const addTo = /\badd (.+?) to (?:my|the) (.+?) list\b/i.exec(text);
+  if (addTo && names.includes("lists")) {
+    const items = addTo[1].split(/\s*(?:,|\band\b)\s*/i).map((s) => s.trim()).filter(Boolean);
+    return { name: "lists", args: { action: "add", list: addTo[2], items } };
+  }
+  const showList = /\bwhat(?:'s| is| are) on (?:my|the) (.+?) list\b/i.exec(text);
+  if (showList && names.includes("lists")) return { name: "lists", args: { action: "show", list: showList[1] } };
+  const noteThat = /\bnote (?:that|down) (.+)$/i.exec(text);
+  if (noteThat && names.includes("notes")) return { name: "notes", args: { action: "add", text: noteThat[1].replace(/[.!]+$/, "").trim() } };
+  const openSite = /^\s*(?:please\s+)?open (.+?)[.!?]*$/i.exec(text);
+  if (openSite && names.includes("open_website")) return { name: "open_website", args: { site: openSite[1].trim() } };
   // Google (v0.15.0): free time, an event tomorrow at 14:30 (clashes with the fake "Client call"), an email.
   const address = /[\w.+-]+@[\w-]+\.[\w.]+/.exec(text)?.[0];
   if (names.includes("calendar_free_time") && /\bfree\b/i.test(text)) return { name: "calendar_free_time", args: { minutes: 60 } };
@@ -147,6 +160,25 @@ function zoneOffset(timeZone) {
 }
 const localDate = (timeZone, plusDays = 0) => new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date(Date.now() + plusDays * 86_400_000));
 
+/** The fake calendar: two events tomorrow (in `timeZone`), organised by the tester, the call with one guest. */
+function mockEvents(timeZone) {
+  const day = localDate(timeZone, 1);
+  const offset = zoneOffset(timeZone);
+  const organizer = { email: "tester@gmail.com", self: true };
+  return [
+    { id: "mockstandup", etag: '"1"', summary: "Team standup", organizer, start: { dateTime: `${day}T10:00:00${offset}` }, end: { dateTime: `${day}T10:30:00${offset}` } },
+    {
+      id: "mockclientcall",
+      etag: '"1"',
+      summary: "Client call",
+      organizer,
+      attendees: [{ email: "sara@example.com", responseStatus: "accepted" }],
+      start: { dateTime: `${day}T14:00:00${offset}` },
+      end: { dateTime: `${day}T15:00:00${offset}` },
+    },
+  ];
+}
+
 async function fakeGoogle(req, res, path, url) {
   const json = (body, status = 200) => {
     res.writeHead(status, { "content-type": "application/json" });
@@ -165,6 +197,23 @@ async function fakeGoogle(req, res, path, url) {
   }
   if (path === "/userinfo") return json({ sub: "mock-google-user", email: "tester@gmail.com", email_verified: true });
   if (path === "/revoke") return json({});
+  // One event (v0.19.0): read, changed (PATCH) or cancelled (DELETE); the two events tomorrow have ids.
+  const one = /^\/calendar\/v3\/calendars\/primary\/events\/([^/]+)$/.exec(path);
+  if (one) {
+    const event = mockEvents("UTC").find((e) => e.id === decodeURIComponent(one[1]));
+    if (!event) return json({ error: { message: "Not Found" } }, 404);
+    if (req.method === "DELETE") {
+      console.log(`[google] event cancelled: ${event.summary} sendUpdates=${url.searchParams.get("sendUpdates")}`);
+      res.writeHead(204);
+      return res.end();
+    }
+    if (req.method === "PATCH") {
+      const body = JSON.parse((await readBody(req)) || "{}");
+      console.log(`[google] event changed: ${event.summary} ${JSON.stringify(body)} sendUpdates=${url.searchParams.get("sendUpdates")}`);
+      return json({ ...event, ...body, htmlLink: `https://www.google.com/calendar/event?eid=${event.id}` });
+    }
+    return json(event);
+  }
   if (path === "/calendar/v3/calendars/primary/events") {
     const timeZone = url.searchParams.get("timeZone") || "UTC";
     if (req.method === "POST") {
@@ -172,12 +221,7 @@ async function fakeGoogle(req, res, path, url) {
       console.log(`[google] event added: ${body.summary} ${JSON.stringify(body.start)} guests=${(body.attendees ?? []).length} sendUpdates=${url.searchParams.get("sendUpdates")}`);
       return json({ id: "mock-event", htmlLink: "https://www.google.com/calendar/event?eid=mock", ...body });
     }
-    const day = localDate(timeZone, 1);
-    const offset = zoneOffset(timeZone);
-    const all = [
-      { summary: "Team standup", start: { dateTime: `${day}T10:00:00${offset}` }, end: { dateTime: `${day}T10:30:00${offset}` } },
-      { summary: "Client call", start: { dateTime: `${day}T14:00:00${offset}` }, end: { dateTime: `${day}T15:00:00${offset}` } },
-    ];
+    const all = mockEvents(timeZone);
     const from = Date.parse(url.searchParams.get("timeMin"));
     const to = Date.parse(url.searchParams.get("timeMax"));
     return json({ timeZone, items: all.filter((e) => Date.parse(e.end.dateTime) > from && Date.parse(e.start.dateTime) < to) });

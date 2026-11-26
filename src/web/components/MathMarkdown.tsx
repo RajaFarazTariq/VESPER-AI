@@ -3,7 +3,8 @@ import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { remarkLineBreakTags } from "../lib/markdown";
-import { components, highlightPlugin } from "./Markdown";
+import { highlightPlugin } from "./CodeMarkdown";
+import { components } from "./Markdown";
 
 /**
  * Markdown with LaTeX math (KaTeX). Loaded lazily by <Markdown> only when a reply contains math.

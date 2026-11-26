@@ -1,4 +1,4 @@
-import type { ConversationDto, FeedbackReason, ModelsResponse, ProviderId, SourceDto, ToolEventDto } from "../../shared/types";
+import type { ConversationDto, FeedbackReason, GoogleEventPreviewDto, ModelsResponse, ProviderId, SourceDto, ToolEventDto } from "../../shared/types";
 
 /** What a 👎 can say was wrong (same words for users and the admin). */
 export const FEEDBACK_LABELS: Record<FeedbackReason, string> = {
@@ -330,6 +330,107 @@ export function groupConversations(conversations: ConversationDto[], now = new D
     (groups[label] ??= []).push(c);
   }
   return order.filter((label) => groups[label]?.length).map((label) => [label, groups[label]!]);
+}
+
+// ------------------------------------------------------------------ v0.19.0: websites, event changes, lists, archive
+
+/** A website the user asked to open, ready for its button: "Open youtube.com". */
+export interface WebsiteLink {
+  url: string;
+  /** The full host name without a leading "www." (always shown whole, so the user sees where it goes). */
+  domain: string;
+  title: string;
+}
+
+/** A tool's `link` as a button, or null when it isn't a plain http(s) address (no user name or password in it). */
+export function websiteLink(link: { url?: unknown; title?: unknown } | null | undefined): WebsiteLink | null {
+  if (!link || typeof link.url !== "string") return null;
+  let url: URL;
+  try {
+    url = new URL(link.url);
+  } catch {
+    return null;
+  }
+  if ((url.protocol !== "https:" && url.protocol !== "http:") || !url.hostname || url.username || url.password) return null;
+  const domain = url.hostname.replace(/^www\./i, "");
+  const title = typeof link.title === "string" && link.title.trim() ? link.title.trim() : domain;
+  return { url: url.href, domain, title };
+}
+
+/** The websites a reply's steps prepared, each once, in order. */
+export function websiteLinks(tools: ToolEventDto[] | null | undefined): WebsiteLink[] {
+  const seen = new Set<string>();
+  const out: WebsiteLink[] = [];
+  for (const t of tools ?? []) {
+    const link = websiteLink(t.link);
+    if (link && !seen.has(link.url)) {
+      seen.add(link.url);
+      out.push(link);
+    }
+  }
+  return out;
+}
+
+/** What a calendar change card compares (v0.19.0). */
+export type EventField = "title" | "when" | "location" | "description" | "guests" | "reminders";
+type ComparableEvent = Pick<GoogleEventPreviewDto, "title" | "start" | "end" | "allDay" | "timeZone" | "location" | "description" | "attendees"> & {
+  reminders?: { minutes: number }[];
+};
+
+const addressSet = (list: readonly string[]) => [...new Set(list.map((a) => a.trim().toLowerCase()).filter(Boolean))].sort();
+const reminderKey = (r: ComparableEvent["reminders"]) => (r ? [...r.map((x) => x.minutes)].sort((a, b) => a - b).join(",") : "default");
+
+/** The fields an event change alters (before → after); the card highlights only these. */
+export function eventChanges(before: ComparableEvent, after: ComparableEvent): Set<EventField> {
+  const changed = new Set<EventField>();
+  if (before.title.trim() !== after.title.trim()) changed.add("title");
+  const sameTime =
+    before.allDay === after.allDay && before.start === after.start && before.end === after.end && (after.allDay || before.timeZone === after.timeZone);
+  if (!sameTime) changed.add("when");
+  if (before.location.trim() !== after.location.trim()) changed.add("location");
+  if (before.description.trim() !== after.description.trim()) changed.add("description");
+  if (addressSet(before.attendees).join(" ") !== addressSet(after.attendees).join(" ")) changed.add("guests");
+  if (reminderKey(before.reminders) !== reminderKey(after.reminders)) changed.add("reminders");
+  return changed;
+}
+
+/** Guests a change adds and removes (compared without case), in the order written. */
+export function guestChanges(before: readonly string[], after: readonly string[]): { added: string[]; removed: string[] } {
+  const had = new Set(before.map((a) => a.trim().toLowerCase()));
+  const has = new Set(after.map((a) => a.trim().toLowerCase()));
+  return {
+    added: after.filter((a) => !had.has(a.trim().toLowerCase())),
+    removed: before.filter((a) => !has.has(a.trim().toLowerCase())),
+  };
+}
+
+/** "3 to do · 2 done", "Empty" for a list's heading. */
+export function listCounts(items: readonly { done: boolean }[]): string {
+  if (items.length === 0) return "Empty";
+  const done = items.filter((i) => i.done).length;
+  const open = items.length - done;
+  if (done === 0) return `${open} to do`;
+  if (open === 0) return `All ${done} done`;
+  return `${open} to do · ${done} done`;
+}
+
+/** Items, notes or chats whose text includes every word of the search (any order, any case). */
+export function matchesSearch(text: string, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const haystack = text.toLowerCase();
+  return words.every((w) => haystack.includes(w));
+}
+
+/**
+ * Where an item goes back in a list sorted newest first (by `updatedAt`), e.g. a chat restored to the sidebar. When
+ * older ones are still to be loaded (`hasMore`) and it is older than the last one loaded, it isn't added: loading
+ * older ones brings it (added at the end, it would become the "load older" starting point and skip the ones between).
+ */
+export function insertByUpdated<T extends { id: string; updatedAt: number }>(list: readonly T[], item: T, hasMore = false): T[] {
+  const rest = list.filter((x) => x.id !== item.id);
+  const at = rest.findIndex((x) => x.updatedAt < item.updatedAt);
+  if (at < 0) return hasMore && rest.length > 0 ? rest : [...rest, item];
+  return [...rest.slice(0, at), item, ...rest.slice(at)];
 }
 
 export function formatRelative(until: number, now = Date.now()): string {

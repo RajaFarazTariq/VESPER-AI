@@ -11,7 +11,15 @@ export default defineConfig({
     outDir: "../../dist",
     emptyOutDir: true,
     sourcemap: false,
-    chunkSizeWarningLimit: 900,
+    // v0.19.0: the admin panel, VESPER Agent, code colours and the heavier settings tabs load when first used, so the
+    // first download stays small. The limit warns well before it grows back (the main chunk is about 420 kB).
+    chunkSizeWarningLimit: 700,
+    rolldownOptions: {
+      output: {
+        // React changes far less often than the app: in its own file, browsers keep it cached across releases.
+        codeSplitting: { groups: [{ name: "react", test: /node_modules[\\/](?:react|react-dom|scheduler)[\\/]/ }] },
+      },
+    },
   },
   // The spreadsheet reader runs in a module worker (v0.14.0).
   worker: { format: "es" },

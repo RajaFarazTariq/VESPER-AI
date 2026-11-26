@@ -1,13 +1,30 @@
-import { AlertTriangle, CalendarPlus, Check, ExternalLink, Loader2, Mail, RotateCcw, Video, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, CalendarCog, CalendarPlus, CalendarX, Check, ExternalLink, Loader2, Mail, RotateCcw, Video, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import type { GoogleActionDto, GoogleActionKind, GoogleActionRefDto, GoogleActionStatus, GoogleEventPreviewDto } from "../../shared/types";
+import type { GoogleActionDto, GoogleActionKind, GoogleActionRefDto, GoogleActionStatus, GoogleEventOp, GoogleEventPreviewDto } from "../../shared/types";
 import { api, ApiError } from "../api/client";
+import { eventChanges, guestChanges, type EventField } from "../lib/format";
 
 export const GOOGLE_KIND_LABEL: Record<GoogleActionKind, string> = { email: "Email", event: "Calendar event" };
 export const GOOGLE_STATUS_LABEL: Record<GoogleActionKind, Record<GoogleActionStatus, string>> = {
   email: { pending: "Waiting for your approval", running: "Sending…", done: "Sent", failed: "Couldn't be sent", rejected: "Rejected", expired: "Expired" },
   event: { pending: "Waiting for your approval", running: "Adding…", done: "Added", failed: "Couldn't be added", rejected: "Rejected", expired: "Expired" },
 };
+/** Changing or cancelling an event already in the calendar (v0.19.0). */
+const EVENT_OP_LABEL: Record<Exclude<GoogleEventOp, "create">, { kind: string; status: Record<GoogleActionStatus, string> }> = {
+  update: {
+    kind: "Change event",
+    status: { pending: "Waiting for your approval", running: "Changing…", done: "Changed", failed: "Couldn't be changed", rejected: "Rejected", expired: "Expired" },
+  },
+  delete: {
+    kind: "Cancel event",
+    status: { pending: "Waiting for your approval", running: "Cancelling…", done: "Cancelled", failed: "Couldn't be cancelled", rejected: "Rejected", expired: "Expired" },
+  },
+};
+/** "Email", "Calendar event", "Change event" or "Cancel event". */
+export const googleKindLabel = (kind: GoogleActionKind, op?: GoogleEventOp) =>
+  kind === "event" && op && op !== "create" ? EVENT_OP_LABEL[op].kind : GOOGLE_KIND_LABEL[kind];
+export const googleStatusLabel = (kind: GoogleActionKind, status: GoogleActionStatus, op?: GoogleEventOp) =>
+  kind === "event" && op && op !== "create" ? EVENT_OP_LABEL[op].status[status] : GOOGLE_STATUS_LABEL[kind][status];
 export const googleStatusTone = (status: GoogleActionStatus) =>
   status === "done"
     ? "text-emerald-700 dark:text-emerald-400"
@@ -64,7 +81,8 @@ const drafts = new Map<string, Draft>();
 /**
  * An email or calendar event VESPER prepared (v0.15.0): exactly what will happen, with Approve / Reject. Nothing is
  * sent or added before Approve; an email can still be edited here first. The card loads its current state, so it is
- * right after a reload or on another device too.
+ * right after a reload or on another device too. Since v0.19.0 it can also change an event (before → after, only the
+ * changed fields highlighted) or cancel one.
  */
 export function GoogleActionCard({ action: ref }: { action: GoogleActionRefDto }) {
   const [action, setAction] = useState<GoogleActionDto | null>(null);
@@ -117,25 +135,28 @@ export function GoogleActionCard({ action: ref }: { action: GoogleActionRefDto }
     }
   };
 
-  const Icon = ref.kind === "email" ? Mail : CalendarPlus;
+  // Calendar events: add (also older cards without an op), change or cancel one already in the calendar.
+  const op: GoogleEventOp = ref.kind === "event" ? (action?.op ?? ref.op ?? "create") : "create";
+  const Icon = ref.kind === "email" ? Mail : op === "update" ? CalendarCog : op === "delete" ? CalendarX : CalendarPlus;
   const status = action?.status ?? null;
   const pending = status === "pending" && action !== null;
-  const account = action?.email?.from ?? action?.event?.account ?? null;
+  const before = action?.before ?? null;
+  const account = action?.email?.from ?? action?.event?.account ?? before?.account ?? null;
+  const kindLabel = googleKindLabel(ref.kind, op);
+  /** What happens on Approve, in a word. */
+  const verb = ref.kind === "email" ? "sent" : op === "update" ? "changed" : op === "delete" ? "cancelled" : "added";
   return (
-    <section
-      className="rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] text-sm shadow-[var(--shadow-sm)]"
-      aria-label={`${GOOGLE_KIND_LABEL[ref.kind]}: ${ref.title}`}
-    >
+    <section className="rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] text-sm shadow-[var(--shadow-sm)]" aria-label={`${kindLabel}: ${ref.title}`}>
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--border)] px-3.5 py-2.5">
-        <Icon size={15} className="shrink-0 text-[var(--accent)]" />
-        <span className="font-medium">{GOOGLE_KIND_LABEL[ref.kind]}</span>
+        <Icon size={15} className={`shrink-0 ${op === "delete" ? "text-[var(--danger)]" : "text-[var(--accent)]"}`} />
+        <span className="font-medium">{kindLabel}</span>
         {account ? (
           <span className="min-w-0 truncate text-[var(--text-soft)]" title={account}>
             {ref.kind === "email" ? `from ${account}` : `in ${account}'s calendar`}
           </span>
         ) : null}
         <span className={`ml-auto text-xs font-medium ${status ? googleStatusTone(status) : "text-[var(--text-soft)]"}`} aria-live="polite">
-          {status ? GOOGLE_STATUS_LABEL[ref.kind][status] : "Loading…"}
+          {status ? googleStatusLabel(ref.kind, status, op) : "Loading…"}
         </span>
       </header>
 
@@ -173,9 +194,21 @@ export function GoogleActionCard({ action: ref }: { action: GoogleActionRefDto }
           )
         ) : null}
 
-        {action?.event ? <EventView event={action.event} /> : null}
+        {action?.event && op === "update" && before ? (
+          <ChangeView before={before} after={action.event} />
+        ) : action?.event ? (
+          <EventView event={action.event} />
+        ) : null}
+        {op === "delete" && before && !action?.event ? (
+          <div className="space-y-2.5">
+            <p className="flex items-center gap-1.5 font-medium text-[var(--danger)]">
+              <CalendarX size={14} className="shrink-0" aria-hidden="true" /> Cancel this event
+            </p>
+            <EventView event={before} cancelling />
+          </div>
+        ) : null}
 
-        {!action?.email && !action?.event ? (
+        {!action?.email && !action?.event && !before ? (
           <div>
             <p className="font-medium [overflow-wrap:anywhere]">{action?.title ?? ref.title}</p>
             {action?.target ? <p className="text-xs text-[var(--text-soft)]">{action.target}</p> : null}
@@ -187,11 +220,24 @@ export function GoogleActionCard({ action: ref }: { action: GoogleActionRefDto }
             {ref.kind === "email" ? "Open Sent mail in Gmail" : "Open in Google Calendar"} <ExternalLink size={13} />
           </a>
         ) : null}
+        {status === "done" && op === "delete" ? <p className="text-[var(--text-soft)]">The event was removed from your calendar.</p> : null}
         {status === "failed" && action?.error ? <p className="text-[var(--danger)]">{action.error}</p> : null}
-        {status === "rejected" ? <p className="text-[var(--text-soft)]">{ref.kind === "email" ? "Nothing was sent." : "Nothing was added to your calendar."}</p> : null}
+        {status === "rejected" ? (
+          <p className="text-[var(--text-soft)]">
+            {ref.kind === "email"
+              ? "Nothing was sent."
+              : op === "update"
+                ? "Nothing was changed in your calendar."
+                : op === "delete"
+                  ? "The event stays in your calendar."
+                  : "Nothing was added to your calendar."}
+          </p>
+        ) : null}
         {status === "expired" ? (
           <p className="text-[var(--text-soft)]">
-            Not approved in time, so {ref.kind === "email" ? "nothing was sent" : "nothing was added"}. Ask VESPER to prepare it again if you still want it.
+            Not approved in time, so{" "}
+            {ref.kind === "email" ? "nothing was sent" : op === "update" ? "nothing was changed" : op === "delete" ? "the event wasn't cancelled" : "nothing was added"}.
+            Ask VESPER to prepare it again if you still want it.
           </p>
         ) : null}
         {error ? <p className="text-[var(--danger)]">{error}</p> : null}
@@ -202,10 +248,23 @@ export function GoogleActionCard({ action: ref }: { action: GoogleActionRefDto }
               type="button"
               disabled={busy !== null}
               onClick={() => decide("approve")}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-3.5 py-2 font-medium text-[var(--accent-text)] hover:bg-[var(--accent-strong)] disabled:opacity-60"
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 font-medium disabled:opacity-60 ${
+                op === "delete"
+                  ? // Cancelling: red-toned but calm (not a solid red button).
+                    "border border-[var(--danger)]/40 bg-[var(--danger)]/10 text-[var(--danger)] hover:bg-[var(--danger)]/15"
+                  : "bg-[var(--accent)] text-[var(--accent-text)] hover:bg-[var(--accent-strong)]"
+              }`}
             >
-              {busy === "approve" ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}{" "}
-              {ref.kind === "email" ? (edited ? "Send my edited email" : "Approve and send") : "Approve and add"}
+              {busy === "approve" ? <Loader2 size={14} className="animate-spin" /> : op === "delete" ? <CalendarX size={14} /> : <Check size={14} />}{" "}
+              {ref.kind === "email"
+                ? edited
+                  ? "Send my edited email"
+                  : "Approve and send"
+                : op === "update"
+                  ? "Change event"
+                  : op === "delete"
+                    ? "Cancel event"
+                    : "Approve and add"}
             </button>
             <button
               type="button"
@@ -213,10 +272,10 @@ export function GoogleActionCard({ action: ref }: { action: GoogleActionRefDto }
               onClick={() => decide("reject")}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3.5 py-2 hover:bg-[var(--bg-hover)] disabled:opacity-60"
             >
-              {busy === "reject" ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />} Reject
+              {busy === "reject" ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />} {op === "delete" ? "Keep event" : "Reject"}
             </button>
             <span className="text-xs text-[var(--text-soft)]">
-              Nothing is {ref.kind === "email" ? "sent" : "added"} until you approve · expires in {timeLeft(action.expiresAt)}
+              Nothing is {verb} until you approve · expires in {timeLeft(action.expiresAt)}
             </span>
           </div>
         ) : null}
@@ -259,7 +318,8 @@ function EmailView({ email }: { email: NonNullable<GoogleActionDto["email"]> }) 
   );
 }
 
-function EventView({ event }: { event: GoogleEventPreviewDto }) {
+/** An event as it will be added, or (`cancelling`, v0.19.0) the event that will be cancelled. */
+function EventView({ event, cancelling = false }: { event: GoogleEventPreviewDto; cancelling?: boolean }) {
   const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
     <div className="space-y-2.5">
@@ -300,11 +360,13 @@ function EventView({ event }: { event: GoogleEventPreviewDto }) {
             <dt className="text-xs text-[var(--text-soft)] sm:pt-px">Guests</dt>
             <dd className="[overflow-wrap:anywhere]">
               {event.attendees.join(", ")}
-              <span className="block text-xs text-[var(--text-soft)]">Google emails each guest an invitation when you approve.</span>
+              <span className="block text-xs text-[var(--text-soft)]">
+                {cancelling ? "Google emails each guest that the event is cancelled when you approve." : "Google emails each guest an invitation when you approve."}
+              </span>
             </dd>
           </>
         ) : null}
-        {event.meet ? (
+        {event.meet && !cancelling ? (
           <>
             <dt className="text-xs text-[var(--text-soft)] sm:pt-px">Video</dt>
             <dd className="inline-flex items-center gap-1.5">
@@ -316,20 +378,105 @@ function EventView({ event }: { event: GoogleEventPreviewDto }) {
       {event.description ? (
         <pre className="thin-scroll max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-[var(--bg-soft)] px-3 py-2 font-sans text-[13px] [overflow-wrap:anywhere]">{event.description}</pre>
       ) : null}
-      {event.clashes.length ? (
-        <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-          <p className="flex items-center gap-1.5 font-medium">
-            <AlertTriangle size={13} /> Clashes with {event.clashes.length === 1 ? "an event" : `${event.clashes.length} events`} already in your calendar
-          </p>
-          <ul className="mt-1 space-y-0.5 pl-5">
-            {event.clashes.map((c, i) => (
-              <li key={i} className="list-disc [overflow-wrap:anywhere]">
-                {c.title} · {eventWhen(c)}
-              </li>
-            ))}
-          </ul>
-        </div>
+      {!cancelling ? <Clashes event={event} /> : null}
+    </div>
+  );
+}
+
+/** Events already in the calendar at that time. */
+function Clashes({ event }: { event: GoogleEventPreviewDto }) {
+  if (!event.clashes.length) return null;
+  return (
+    <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+      <p className="flex items-center gap-1.5 font-medium">
+        <AlertTriangle size={13} /> Clashes with {event.clashes.length === 1 ? "an event" : `${event.clashes.length} events`} already in your calendar
+      </p>
+      <ul className="mt-1 space-y-0.5 pl-5">
+        {event.clashes.map((c, i) => (
+          <li key={i} className="list-disc [overflow-wrap:anywhere]">
+            {c.title} · {eventWhen(c)}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** When an event is, with its time zone when it isn't this device's. */
+function whenWithZone(e: GoogleEventPreviewDto): string {
+  const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return `${eventWhen(e)}${!e.allDay && e.timeZone !== deviceZone ? ` (${e.timeZone})` : ""}`;
+}
+
+/** "1 hour before, at the start", "None", or the calendar's own default reminders. */
+const remindersText = (e: GoogleEventPreviewDto) =>
+  e.reminders === undefined ? "Your calendar's default" : e.reminders.length === 0 ? "None" : e.reminders.map((r) => beforeText(r.minutes)).join(", ");
+
+/**
+ * A change to an event already in the calendar (v0.19.0): each field that changes, from its current value to the
+ * new one, highlighted; fields that stay the same are shown plainly, for context.
+ */
+function ChangeView({ before, after }: { before: GoogleEventPreviewDto; after: GoogleEventPreviewDto }) {
+  const changed = eventChanges(before, after);
+  const guests = guestChanges(before.attendees, after.attendees);
+  const anyGuests = before.attendees.length > 0 || after.attendees.length > 0;
+  const rows: { field: EventField; label: string; was: string; now: string; long?: boolean }[] = [
+    { field: "title", label: "Title", was: before.title, now: after.title },
+    { field: "when", label: "When", was: whenWithZone(before), now: whenWithZone(after) },
+    { field: "location", label: "Where", was: before.location, now: after.location },
+    { field: "guests", label: "Guests", was: before.attendees.join(", "), now: after.attendees.join(", ") },
+    { field: "reminders", label: "Reminders", was: remindersText(before), now: remindersText(after) },
+    { field: "description", label: "Details", was: before.description, now: after.description, long: true },
+  ];
+  // The title is the heading unless it changes; a field that is empty before and after isn't shown.
+  const shown = rows.filter((r) => changed.has(r.field) || (r.field !== "title" && (r.was.trim() || r.now.trim())));
+  return (
+    <div className="space-y-2.5">
+      <p className="font-medium [overflow-wrap:anywhere]">{before.title}</p>
+      {changed.size === 0 ? <p className="text-[var(--text-soft)]">Nothing on this event changes.</p> : null}
+      <dl className="grid gap-x-3 gap-y-1.5 text-[13px] sm:grid-cols-[4.5rem_minmax(0,1fr)]">
+        {shown.map((r) =>
+          changed.has(r.field) ? (
+            <div key={r.field} className="contents">
+              <dt className="text-xs font-medium text-[var(--accent)] sm:pt-1.5">{r.label}</dt>
+              <dd className="rounded-lg bg-[var(--accent-soft)] px-2.5 py-1.5">
+                <span className={`block text-[var(--text-soft)] line-through decoration-[var(--text-faint)] [overflow-wrap:anywhere] ${r.long ? "line-clamp-3 whitespace-pre-wrap" : ""}`}>
+                  <span className="sr-only">Now: </span>
+                  {r.was.trim() || "(none)"}
+                </span>
+                <span className={`flex items-start gap-1.5 font-medium [overflow-wrap:anywhere] ${r.long ? "whitespace-pre-wrap" : ""}`}>
+                  <ArrowRight size={13} className="mt-0.5 shrink-0 text-[var(--accent)]" aria-hidden="true" />
+                  <span>
+                    <span className="sr-only">Changes to: </span>
+                    {r.now.trim() || "(none)"}
+                  </span>
+                </span>
+                {r.field === "guests" && (guests.added.length || guests.removed.length) ? (
+                  <span className="mt-0.5 block text-xs text-[var(--text-soft)]">
+                    {[guests.added.length ? `Adds ${guests.added.join(", ")}` : "", guests.removed.length ? `Removes ${guests.removed.join(", ")}` : ""]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                ) : null}
+              </dd>
+            </div>
+          ) : (
+            <div key={r.field} className="contents">
+              <dt className="text-xs text-[var(--text-soft)] sm:pt-px">{r.label}</dt>
+              <dd className={`[overflow-wrap:anywhere] ${r.long ? "line-clamp-4 whitespace-pre-wrap" : ""}`}>{r.now}</dd>
+            </div>
+          ),
+        )}
+      </dl>
+      {changed.has("when") && after.calendarTimeZone && !after.allDay ? (
+        <p className="text-xs text-[var(--text-soft)]">Your Google Calendar is set to {after.calendarTimeZone}, so it shows this at the same moment in that time zone.</p>
       ) : null}
+      {anyGuests ? (
+        <p className="text-xs text-[var(--text-soft)]">
+          Google emails the guests about this change when you approve{guests.removed.length ? " (removed guests are told it's cancelled for them)" : ""}.
+        </p>
+      ) : null}
+      {changed.has("when") ? <Clashes event={after} /> : null}
     </div>
   );
 }

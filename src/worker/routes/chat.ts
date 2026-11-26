@@ -270,9 +270,14 @@ async function prepareTurn(
     if (input.files?.length) await linkTableFiles(db, user.id, input.files.map((f) => f.id), conversation.id);
     if (input.documents?.length) await linkChatDocuments(db, user.id, input.documents.map((d) => d.id), conversation.id);
   }
-  if (conversation.model !== selection) {
-    await updateConversation(db, user.id, conversation.id, { model: selection });
-    conversation = { ...conversation, model: selection };
+  // A new message (also Regenerate or Edit) brings an archived chat back to the chat list (v0.19.0).
+  const unarchive = Boolean(conversation.archivedAt);
+  if (conversation.model !== selection || unarchive) {
+    await updateConversation(db, user.id, conversation.id, {
+      ...(conversation.model !== selection ? { model: selection } : {}),
+      ...(unarchive ? { archived: false } : {}),
+    });
+    conversation = { ...conversation, model: selection, archivedAt: null };
   }
 
   const [history, memories, earlier, githubChanges, tables, googleActions, documents] = await Promise.all([
@@ -590,7 +595,9 @@ export const chatRoutes = new Hono<AppEnv>()
             : {}),
           conversationId: turn.conversation.id,
           tables: { rowsPerDay: appSettings.tablesRowsPerDay },
-          ...(google ? { google: googleAccess({ env: c.env, db: c.env.DB, userId: user.id, signal: abort.signal }), userText: userTextOf(turn.context) } : {}),
+          // What the user typed: email/invitation cautions (v0.15.0) and the addresses open_website may offer (v0.19.0).
+          userText: userTextOf(turn.context),
+          ...(google ? { google: googleAccess({ env: c.env, db: c.env.DB, userId: user.id, signal: abort.signal }) } : {}),
         };
         const events = {
           attempt: (t: { provider: ProviderId; model: string }) => send({ type: "attempt", provider: t.provider, model: t.model }),

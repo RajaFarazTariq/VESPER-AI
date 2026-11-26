@@ -340,12 +340,39 @@ const PROGRESS: Record<string, string> = Object.fromEntries(
       ["Let me check your reminders.", "list_reminders"],
       ["Cancelling that reminder.", "cancel_reminder"],
       ["Preparing that for you.", "gmail_send calendar_create_event"],
+      // v0.19.0: lists and notes (VESPER's own), opening a website, changing or cancelling a calendar event.
+      ["Updating your list.", "lists"],
+      ["Here's the link.", "open_website"],
+      ["Preparing that change.", "calendar_update_event calendar_delete_event"],
     ] as const
   ).flatMap(([line, tools]) => tools.split(" ").map((tool) => [tool, line])),
 );
-/** The short line for a tool's step ("Let me check your calendar."), or null for a step that says nothing. */
-export function progressLine(toolName: string): string | null {
+
+/**
+ * A request that asks about something rather than asking for a change ("what's on my list?", "did I note…", "can
+ * you show me my notes"), by its first word after "please" / "can you" and the like.
+ */
+const QUESTION =
+  /^\s*(?:(?:hey\s+)?vesper[\s,]+)?(?:(?:please|can you|could you|would you|will you)[\s,]+)?(?:what|what's|whats|what’s|which|where|when|who|how|did|do|does|have|has|is|are|any|find|search|show|list|read|tell|check|look)\b/i;
+const REMOVAL = /\b(?:delete|remove|forget|erase)\b/i;
+
+/**
+ * The short line for a tool's step ("Let me check your calendar."), or null for a step that says nothing. Lists and
+ * notes read or change, so the line follows the tool's action when it is known (`args`), else the words of the
+ * request: "what's on my to-do list?" → "Checking your list.", "note that…" → "Saving that note.".
+ */
+export function progressLine(toolName: string, request = "", args: Record<string, unknown> = {}): string | null {
   // A long chat's older part kept as notes isn't the user's task: nothing is said for it.
   if (toolName === "context_summary") return null;
+  const action = typeof args.action === "string" ? args.action : null;
+  if (toolName === "lists") {
+    const reading = action ? action === "show" : QUESTION.test(request) && !REMOVAL.test(request);
+    return reading ? "Checking your list." : "Updating your list.";
+  }
+  if (toolName === "notes") {
+    if (action ? action === "delete" : REMOVAL.test(request)) return "Updating your notes.";
+    const reading = action ? action === "search" || action === "show_recent" : QUESTION.test(request);
+    return reading ? "Checking your notes." : "Saving that note.";
+  }
   return PROGRESS[toolName] ?? "One moment.";
 }

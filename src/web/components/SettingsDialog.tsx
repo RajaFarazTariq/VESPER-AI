@@ -1,18 +1,32 @@
 import { Check, Download, Monitor, Moon, Pencil, Pin, PinOff, Plus, Sun, Trash2, X } from "lucide-react";
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
-import type { FeaturesDto, MemoryDto, ModelsResponse, SpeechLanguage, ToolInfoDto, UserSettings } from "../../shared/types";
+import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import type { ConversationDto, FeaturesDto, MemoryDto, ModelsResponse, SpeechLanguage, ToolInfoDto, UserSettings } from "../../shared/types";
 import { api, ApiError } from "../api/client";
 import { selectionLabel } from "../lib/format";
 import { explainOllamaError, listOllamaModels } from "../lib/ollama";
 import { getThemePreference, setThemePreference, type ThemePreference } from "../lib/theme";
 import { canRecord, canSpeak } from "../lib/voice";
-import { ConnectionsTab } from "./ConnectionsTab";
+import { lazyPart, LoadBoundary, LOAD_FAILED, type LazyPart } from "./LoadBoundary";
 
-// Settings → Notifications (v0.18.0) is downloaded when the tab is opened.
-const NotificationsTab = lazy(() => import("./NotificationsTab").then((m) => ({ default: m.NotificationsTab })));
+// Settings → Notifications (v0.18.0), and since v0.19.0 Connections, Lists & notes and Archived chats, are downloaded
+// when the tab is opened.
+const NotificationsTab = lazyPart(() => import("./NotificationsTab").then((m) => m.NotificationsTab));
+const ConnectionsTab = lazyPart(() => import("./ConnectionsTab").then((m) => m.ConnectionsTab));
+const ListsNotesTab = lazyPart(() => import("./ListsNotesTab").then((m) => m.ListsNotesTab));
+const ArchivedChatsTab = lazyPart(() => import("./ArchivedChatsTab").then((m) => m.ArchivedChatsTab));
 
 // Provider status moved to the admin panel (AdminDialog), since only the administrator manages keys.
-export type SettingsTab = "general" | "tools" | "memory" | "voice" | "local" | "connections" | "notifications" | "appearance";
+export type SettingsTab =
+  | "general"
+  | "tools"
+  | "memory"
+  | "lists"
+  | "voice"
+  | "local"
+  | "connections"
+  | "notifications"
+  | "archived"
+  | "appearance";
 type Tab = SettingsTab;
 
 interface Props {
@@ -25,6 +39,11 @@ interface Props {
   features?: FeaturesDto | null;
   onClose: () => void;
   onSaved: (settings: UserSettings) => void;
+  /** Settings → Archived chats (v0.19.0): show one in the chat view (it stays archived until a message is sent). */
+  onOpenConversation?: (conversation: ConversationDto) => void;
+  /** Restored: it goes back to the sidebar. */
+  onConversationRestored?: (conversation: ConversationDto) => void;
+  onConversationDeleted?: (id: string) => void;
 }
 
 const MAX_INSTRUCTIONS = 4000;
@@ -35,7 +54,18 @@ const SPEECH_LANGUAGES: [SpeechLanguage, string][] = [
   ["ur", "Urdu (اردو)"],
 ];
 
-export function SettingsDialog({ initialTab = "general", settings, models, ollamaModels, features, onClose, onSaved }: Props) {
+export function SettingsDialog({
+  initialTab = "general",
+  settings,
+  models,
+  ollamaModels,
+  features,
+  onClose,
+  onSaved,
+  onOpenConversation,
+  onConversationRestored,
+  onConversationDeleted,
+}: Props) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [draft, setDraft] = useState<UserSettings>(settings);
   const [saving, setSaving] = useState(false);
@@ -62,13 +92,17 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
     }
   }, [tab, tools, memories]);
   const dialog = useRef<HTMLDivElement>(null);
+  // The latest onClose, so the dialog takes the focus only when it opens (not each time the page behind it updates,
+  // e.g. when a chat restored in Archived chats goes back to the sidebar).
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeRef.current();
     document.addEventListener("keydown", onKey);
     dialog.current?.focus();
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(settings);
 
@@ -106,6 +140,8 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
     ["general", "General"],
     ["tools", "Tools"],
     ["memory", "Memory"],
+    // VESPER's own lists and notes (v0.19.0).
+    ["lists", "Lists & notes"],
     ...(micAvailable || readAloudAvailable ? ([["voice", "Voice"]] as [Tab, string][]) : []),
     // Local models (Ollama on the user's own computer): admins always; users only when the admin allows it.
     ...(features?.localModels ? ([["local", "Local models"]] as [Tab, string][]) : []),
@@ -115,6 +151,8 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
       : []),
     // Reminders, the daily briefing and meeting alerts on the user's devices (v0.18.0): for everyone.
     ["notifications", "Notifications"],
+    // Chats archived from the sidebar (v0.19.0).
+    ["archived", "Archived chats"],
     ["appearance", "Appearance"],
   ];
 
@@ -406,12 +444,21 @@ export function SettingsDialog({ initialTab = "general", settings, models, ollam
             </div>
           ) : null}
 
-          {tab === "connections" ? <ConnectionsTab /> : null}
+          {tab === "connections" ? <LazyTab part={ConnectionsTab} props={{}} /> : null}
 
-          {tab === "notifications" ? (
-            <Suspense fallback={<p className="text-sm text-[var(--text-soft)]">Loading…</p>}>
-              <NotificationsTab />
-            </Suspense>
+          {tab === "notifications" ? <LazyTab part={NotificationsTab} props={{}} /> : null}
+
+          {tab === "lists" ? <LazyTab part={ListsNotesTab} props={{}} /> : null}
+
+          {tab === "archived" ? (
+            <LazyTab
+              part={ArchivedChatsTab}
+              props={{
+                onOpen: (conversation) => onOpenConversation?.(conversation),
+                onRestored: (conversation) => onConversationRestored?.(conversation),
+                onDeleted: (id) => onConversationDeleted?.(id),
+              }}
+            />
           ) : null}
 
           {tab === "appearance" ? (
@@ -590,6 +637,32 @@ function MemoryRow({ memory, onChanged, onDeleted }: { memory: MemoryDto; onChan
       )}
       {error ? <p className="mt-1 text-xs text-[var(--danger)]">{error}</p> : null}
     </li>
+  );
+}
+
+/**
+ * A tab whose code is downloaded when it is opened: "Loading…" meanwhile; if the download fails, a plain message and
+ * "Try again" (which downloads it again).
+ */
+function LazyTab<P extends object>({ part, props }: { part: LazyPart<P>; props: P }) {
+  return (
+    <LoadBoundary
+      parts={[part]}
+      fallback={(retry) => (
+        <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-[var(--danger)]">
+          <span>{LOAD_FAILED}</span>
+          <button type="button" onClick={retry} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-[var(--text)] hover:bg-[var(--bg-hover)]">
+            Try again
+          </button>
+        </div>
+      )}
+    >
+      {() => (
+        <Suspense fallback={<p className="text-sm text-[var(--text-soft)]">Loading…</p>}>
+          <part.Component {...props} />
+        </Suspense>
+      )}
+    </LoadBoundary>
   );
 }
 

@@ -3,7 +3,14 @@
  * events VESPER prepared, waiting for or given the user's approval. Same rules as GitHub changes (db/github.ts): what
  * will be sent is kept only until the user decides (at most 24 hours); afterwards a log line stays for 90 days.
  */
-import type { GoogleActionDto, GoogleActionKind, GoogleActionStatus, GoogleEmailPreviewDto, GoogleEventPreviewDto } from "../../shared/types";
+import type {
+  GoogleActionDto,
+  GoogleActionKind,
+  GoogleActionStatus,
+  GoogleEmailPreviewDto,
+  GoogleEventOp,
+  GoogleEventPreviewDto,
+} from "../../shared/types";
 
 export interface GoogleConnectionRow {
   user_id: string;
@@ -75,8 +82,51 @@ export const GOOGLE_ACTION_LOG_MS = 90 * 24 * 60 * 60_000;
 /** Still "running" after this long: the worker stopped half-way; it's marked failed. */
 const RUNNING_STALE_MS = 10 * 60_000;
 
-/** What is stored for sending: the email, or the event, exactly as it will go to Google. */
-export type GooglePayload = { kind: "email"; email: GoogleEmailPreviewDto } | { kind: "event"; event: GoogleEventPreviewDto };
+/** An event's guest as Google lists it, kept so a change doesn't reset the guests' replies (v0.19.0). */
+export interface GoogleGuest {
+  email: string;
+  self?: boolean;
+  optional?: boolean;
+  responseStatus?: string;
+  displayName?: string;
+}
+
+/** A change to an existing event (v0.19.0): what it is now (`before`, at Google's `version`) and what it becomes. */
+export interface EventUpdatePayload {
+  kind: "event";
+  op: "update";
+  eventId: string;
+  /**
+   * Google's etag (else `updated`) when the card was made: approving changes the event only while it is still exactly
+   * that (sent as If-Match when it is an etag, so nothing can slip in between).
+   */
+  version: string;
+  /** The version is Google's etag (not `updated`). */
+  etag?: boolean;
+  before: GoogleEventPreviewDto;
+  /** Not named `event`, so v0.18 code (after a revert) fails on it instead of adding it as a new event. */
+  after: GoogleEventPreviewDto;
+  guests: GoogleGuest[];
+}
+
+export interface EventDeletePayload {
+  kind: "event";
+  op: "delete";
+  eventId: string;
+  version: string;
+  etag?: boolean;
+  before: GoogleEventPreviewDto;
+}
+
+/**
+ * What is stored for sending: the email, or the event, exactly as it will go to Google; or (v0.19.0) the change to,
+ * or the cancellation of, an existing event. kind stays "event" for those (its CHECK can't change), with `op`.
+ */
+export type GooglePayload =
+  | { kind: "email"; email: GoogleEmailPreviewDto }
+  | { kind: "event"; op?: undefined; event: GoogleEventPreviewDto }
+  | EventUpdatePayload
+  | EventDeletePayload;
 
 interface GoogleActionRow {
   id: string;
@@ -93,6 +143,8 @@ interface GoogleActionRow {
   created_at: number;
   expires_at: number;
   decided_at: number | null;
+  /** v0.19.0: 'update' / 'delete' for a change to an existing event; NULL otherwise (and on older rows). */
+  op?: string | null;
 }
 
 export interface NewGoogleAction {
@@ -117,6 +169,9 @@ function toActionDto(row: GoogleActionRow, now: number): GoogleActionDto {
   // A pending one past its time shows as expired even before the daily clean-up marks it.
   const expired = row.status === "pending" && row.expires_at <= now;
   const payload = expired ? null : parseJson<GooglePayload | null>(row.payload, null);
+  const event = payload?.kind === "event" ? payload : null;
+  // Changing or cancelling an event (v0.19.0): the column keeps it once the payload is gone.
+  const op: GoogleEventOp | null = row.op === "update" || row.op === "delete" ? row.op : event?.op ?? null;
   return {
     id: row.id,
     kind: row.kind,
@@ -125,7 +180,8 @@ function toActionDto(row: GoogleActionRow, now: number): GoogleActionDto {
     status: expired ? "expired" : row.status,
     warnings: parseJson<string[]>(row.warnings, []),
     email: payload?.kind === "email" ? payload.email : null,
-    event: payload?.kind === "event" ? payload.event : null,
+    event: event ? (event.op === "update" ? event.after : event.op === "delete" ? null : event.event) : null,
+    ...(op ? { op, before: event?.op ? event.before : null } : {}),
     resultUrl: row.result_url,
     error: row.error,
     createdAt: row.created_at,
@@ -134,12 +190,15 @@ function toActionDto(row: GoogleActionRow, now: number): GoogleActionDto {
   };
 }
 
+/** A log line: what it was and how it went, without the email or event itself. */
+const withoutText = (a: GoogleActionDto): GoogleActionDto => ({ ...a, email: null, event: null, ...(a.op ? { before: null } : {}) });
+
 export async function createGoogleAction(db: D1Database, action: NewGoogleAction, now = Date.now()): Promise<GoogleActionDto> {
   const id = crypto.randomUUID();
   await db
     .prepare(
-      `INSERT INTO google_actions (id, user_id, conversation_id, kind, title, target, warnings, payload, status, created_at, expires_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9, ?10)`,
+      `INSERT INTO google_actions (id, user_id, conversation_id, kind, title, target, warnings, payload, status, created_at, expires_at, op)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9, ?10, ?11)`,
     )
     .bind(
       id,
@@ -152,6 +211,7 @@ export async function createGoogleAction(db: D1Database, action: NewGoogleAction
       JSON.stringify(action.payload),
       now,
       now + GOOGLE_ACTION_TTL_MS,
+      action.payload.kind === "event" ? action.payload.op ?? null : null,
     )
     .run();
   return (await getGoogleAction(db, action.userId, id, now))!;
@@ -235,7 +295,7 @@ export async function listGoogleActions(db: D1Database, userId: string, limit = 
     .prepare("SELECT * FROM google_actions WHERE user_id = ?1 ORDER BY created_at DESC LIMIT ?2")
     .bind(userId, limit)
     .all<GoogleActionRow>();
-  return results.map((r) => ({ ...toActionDto(r, now), email: null, event: null }));
+  return results.map((r) => withoutText(toActionDto(r, now)));
 }
 
 /** Those prepared in one chat (newest first), so the next answer knows what was approved, rejected or still waits. */
@@ -244,7 +304,7 @@ export async function conversationGoogleActions(db: D1Database, userId: string, 
     .prepare("SELECT * FROM google_actions WHERE user_id = ?1 AND conversation_id = ?2 ORDER BY created_at DESC LIMIT 10")
     .bind(userId, conversationId)
     .all<GoogleActionRow>();
-  return results.map((r) => ({ ...toActionDto(r, now), email: null, event: null }));
+  return results.map((r) => withoutText(toActionDto(r, now)));
 }
 
 /**
