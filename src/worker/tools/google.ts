@@ -281,8 +281,8 @@ interface GEvent {
   status?: string;
   htmlLink?: string;
   transparency?: string;
-  start?: { dateTime?: string; date?: string };
-  end?: { dateTime?: string; date?: string };
+  start?: { dateTime?: string; date?: string; timeZone?: string };
+  end?: { dateTime?: string; date?: string; timeZone?: string };
   attendees?: { email?: string; self?: boolean; responseStatus?: string; optional?: boolean; displayName?: string }[];
   organizer?: { email?: string; self?: boolean };
   /** The Google Meet link, when the event has one. */
@@ -303,11 +303,22 @@ const declinedByYou = (e: GEvent) => e.attendees?.some((a) => a.self && a.respon
 /** Takes time in the calendar: not cancelled, not shown as "free", not declined. */
 const isBusy = (e: GEvent) => e.status !== "cancelled" && e.transparency !== "transparent" && !declinedByYou(e);
 
+/**
+ * A `dateTime` from Google as an instant. Google normally adds the offset ("2026-12-15T15:00:00+05:00"); without one,
+ * the time is in the event's own `timeZone` (else `fallbackZone`), never the server's clock zone.
+ */
+export function eventInstant(dateTime: string, zone: string | undefined, fallbackZone: string): number {
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(dateTime)) return Date.parse(dateTime);
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(dateTime);
+  if (!m) return Number.NaN;
+  return zonedInstant(m[1]!, m[2]!, zone && validTimeZone(zone) ? zone : fallbackZone);
+}
+
 /** An event's start and end as instants (all-day events: from midnight to midnight in the time zone). */
 function eventSpan(e: GEvent, timeZone: string): { start: number; end: number } | null {
   if (e.start?.dateTime && e.end?.dateTime) {
-    const start = Date.parse(e.start.dateTime);
-    const end = Date.parse(e.end.dateTime);
+    const start = eventInstant(e.start.dateTime, e.start.timeZone, timeZone);
+    const end = eventInstant(e.end.dateTime, e.end.timeZone, timeZone);
     return Number.isFinite(start) && Number.isFinite(end) ? { start, end } : null;
   }
   if (e.start?.date && e.end?.date && isValidDate(e.start.date) && isValidDate(e.end.date)) {
@@ -893,7 +904,9 @@ async function currentEvent(g: GoogleAccess, eventId: string, account: GoogleAcc
 function previewOf(e: GEvent, timeZone: string, calendarTimeZone: string | null, account: string): GoogleEventPreviewDto {
   const times = eventTimes(e, timeZone);
   if (!times) throw new ToolInputError("VESPER can't read this event's start and end.");
-  const startsAt = times.allDay ? zonedInstant(times.start, "00:00", calendarTimeZone ?? timeZone) : Date.parse(e.start!.dateTime!);
+  const startsAt = times.allDay
+    ? zonedInstant(times.start, "00:00", calendarTimeZone ?? timeZone)
+    : eventInstant(e.start!.dateTime!, e.start!.timeZone, calendarTimeZone ?? timeZone);
   // Google's own reminders when the event has them set (useDefault false: possibly none at all).
   const reminders =
     e.reminders?.useDefault === false

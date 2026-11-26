@@ -3,6 +3,10 @@
 Read this first when resuming work. Last updated: **2026-11-25**. No secrets are stored here.
 
 ## ⏩ Quick resume (2026-11-27)
+- **v0.19.0 merged (PR #25, merge `de590f9`) but CI and the deploy FAILED** (live stayed 0.18.0): one test passed on
+  the office PC (UTC+5) and failed on GitHub (UTC). Cause: Google event times without an offset were read with
+  `Date.parse`, i.e. in the machine's zone. Fixed in `tools/google.ts` (`eventInstant`: no offset → the event's own
+  time zone); handed to the owner as branch `release/v0.19.0-ci-fix` (version stays 0.19.0: it never went live).
 - **v0.19.0 built 2026-11-27, handed to the owner to push** (branch `release/v0.19.0-more-tasks`; section 0). Owner
   said "Proceed" to the recommended "More tasks" release, then asked mid-way: "Also add function to archive chats".
   His v0.18.0 live test (notifications, 2-minute reminder, 22:00 briefing) is still to do.
@@ -1206,6 +1210,9 @@ Apply new migrations locally first: `npx wrangler d1 migrations apply DB --local
 - Shell heredocs/Python one-liners turned `\n` escapes into real newlines; write multi-line code with a file editor instead.
   The same happens to any doubled backslash (2026-11-24: `\\b` in a regex became an invisible backspace character in
   `scripts/mock-llm.mjs`, found and fixed). Put scripts with backslashes in a file (editor), never inline.
+- **Local tests run in the PC's time zone (UTC+5), GitHub CI in UTC** (2026-11-27, v0.19.0 CI failure): never parse a
+  date-time without an offset with `Date.parse` / `new Date(string)` in app code (it uses the machine's zone); use
+  `zonedInstant` with the right zone. A test that passes locally can still fail in CI for this reason.
 - **SheetJS turns JavaScript dates into Excel day numbers using the machine's time zone**, and the Workers test
   runtime uses the PC's zone (UTC+5): build test workbooks from Excel day numbers (46037 = 2026-01-15), not `Date`s.
   Real Excel files are unaffected (VESPER converts day numbers itself, without time zones).
