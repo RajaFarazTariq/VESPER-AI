@@ -664,6 +664,16 @@ devices, even with no VESPER tab open (the browser must be running).
   `?archived=1`, set or cleared with `PATCH`; a new, regenerated or edited message clears it.
 - **Smaller main bundle**: the admin panel, VESPER Agent and heavy settings tabs are lazy-loaded.
 
+### Agent HUD (v0.19.1)
+`components/AgentHud.tsx` (in the lazy AgentMode chunk): SYSTEM (a clock that re-renders only itself; link, voice,
+hands-free, Google, alerts, messages left), ACTIVITY (this session's tool steps and system lines, newest 6) and BRIEF
+(from `GET /api/agent/overview`, `routes/agent.ts`: up to 3 events within 36 h via the shared `calendarItems`, the next
+3 reminders, open To-do items, devices, messages left; refreshed after each turn and every 5 minutes, last data kept
+on errors). Background: hex texture + vignette, range rings with a conic sweep, a canvas of ≤ 60 linked particles at
+~30 fps (paused when hidden, stopped on close); the waveform reads the existing level store directly (no React
+re-render per frame). Side panels from 1024 px; phones get the background and waveform only; nothing animates under
+reduced motion. While an approval card waits, it takes BRIEF's column.
+
 ## 6. Security model
 
 | Threat | Control |

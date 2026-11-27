@@ -20,7 +20,7 @@ free plan (Workers + D1 database) and switches automatically between free AI pro
 OpenRouter `:free` models, Mistral and Cloudflare Workers AI), so it costs nothing to run and can't run up a bill.
 An administrator manages users, limits, tools and models from a built-in admin panel.
 
-Current version: **0.19.0**.
+Current version: **0.19.1**.
 
 - [Meet VESPER Agent](#meet-vesper-agent)
 - [What VESPER does](#what-vesper-does)
@@ -37,10 +37,12 @@ Current version: **0.19.0**.
 
 ## Meet VESPER Agent
 
-![VESPER Agent: the animated core, a greeting and the voice bar](docs/images/vesper-agent.png)
+![VESPER Agent: the animated core with the SYSTEM, ACTIVITY and BRIEF panels, a greeting and the voice bar](docs/images/vesper-agent.png)
 
 Next to the normal chat sits **VESPER Agent**: tap the glowing orb in the corner, the screen dims, the core boots up
-and VESPER greets you. Then just talk (or type). It listens until you stop, thinks, says what it's doing ("Let me
+and VESPER greets you. Around the core, live panels show what matters: the time and VESPER's status (voice,
+Google, alerts, messages left today) on the left with a log of what it did this session, and your next events,
+reminders and to-dos on the right. Then just talk (or type). It listens until you stop, thinks, says what it's doing ("Let me
 check your calendar."), answers in a natural voice, and confirms what it did. Turn on **Hands-free** and it listens
 again after every answer, for a real back-and-forth.
 

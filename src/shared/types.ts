@@ -537,6 +537,25 @@ export interface MessageFileDto {
   rows: number;
 }
 
+// ------------------------------------------------------------------ VESPER Agent's HUD (v0.19.1)
+
+/** `GET /api/agent/overview`: what the agent screen's side panels show (all real data of the signed-in user). */
+export interface AgentOverviewDto {
+  timeZone: string;
+  /** Google Calendar: connected (with calendar access), needs reconnecting, or not connected / no calendar access. */
+  google: "connected" | "reconnect" | "off";
+  /** Up to 3 upcoming events within 36 hours, `when` already in local words ("15:00", "Tomorrow 09:30", "All day"). */
+  events: { title: string; when: string; allDay: boolean }[];
+  /** The next 3 pending reminders. */
+  reminders: { text: string; dueAt: number }[];
+  /** Open items on the To-do list, and the first two of them. */
+  todos: { open: number; first: string[] };
+  /** The user has at least one device with notifications on. */
+  notifications: boolean;
+  /** Messages left today; null when unlimited (admins). */
+  messagesLeft: number | null;
+}
+
 // ------------------------------------------------------------------ Lists and notes (v0.19.0)
 
 /** A list VESPER keeps for the user ("To-do", "Shopping"…). */

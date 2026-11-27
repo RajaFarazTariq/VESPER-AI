@@ -3,6 +3,14 @@
 Read this first when resuming work. Last updated: **2026-11-25**. No secrets are stored here.
 
 ## ⏩ Quick resume (2026-11-27)
+- **v0.19.0 live** after the CI fix (PR #26, merge `a8e53ac`; CI + deploy green; /api/health 0.19.0 on 2026-11-27).
+  Owner's v0.19.0 live test pending. **v0.19.1 "Agent HUD" built 2026-11-27, handed to the owner to push** (branch
+  `release/v0.19.1-agent-hud`; 414 tests, typecheck, build, headless Edge at 1366×640, 1280×720, 1024×700, 1920×1000
+  and 390×844; README image `docs/images/vesper-agent.png` replaced with the HUD view) (owner, with a screenshot of the agent
+  screen at 1366×640: "there is empty space around it, can we add some AI based structure … that looks realistic and
+  ai type?") → real-data side panels (SYSTEM: clock/date/zone, link/voice/hands-free/Google/alerts/messages left;
+  ACTIVITY log; BRIEF: next events, reminders, to-dos via `GET /api/agent/overview`), background grid/radar/neural
+  particles, waveform; panels hidden on phones; greeting 00:00–04:59 "Hello" (was "Good evening" at 4:32 AM).
 - **v0.19.0 merged (PR #25, merge `de590f9`) but CI and the deploy FAILED** (live stayed 0.18.0): one test passed on
   the office PC (UTC+5) and failed on GitHub (UTC). Cause: Google event times without an offset were read with
   `Date.parse`, i.e. in the machine's zone. Fixed in `tools/google.ts` (`eventInstant`: no offset → the event's own
@@ -1149,7 +1157,7 @@ GitHub repo has Actions secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` 
 ## 6. Developing & testing locally
 ```bash
 npm install
-npm run check            # typecheck + 412 tests (Vitest inside workerd, real local D1) + build
+npm run check            # typecheck + 414 tests (Vitest inside workerd, real local D1) + build
 npm run mock:llm         # offline mock of OpenAI-compatible APIs on :8790 (MOCK_FAIL=groq → 429s)
 npm run dev              # wrangler dev (:8787, --local) + vite (:5173)
 ```

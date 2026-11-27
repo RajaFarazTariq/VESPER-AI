@@ -1037,3 +1037,37 @@ describe("studio voice for VESPER Agent (v0.17.1)", () => {
     expect((await call("/api/media/features", { cookie: user, env: withAi })).json.voice.studio.enabled).toBe(false);
   });
 });
+
+describe("VESPER Agent's HUD overview (v0.19.1)", () => {
+  it("gives the side panels the user's own reminders, open to-dos, devices and messages left", async () => {
+    const { addItems, ensureList, listName } = await import("../src/worker/db/lists");
+    const { createReminder } = await import("../src/worker/db/notifications");
+    const cookie = await login("ann");
+    const me = (await call("/api/auth/me", { cookie })).json.user;
+    const list = await ensureList(env.DB, me.id, listName("To-do")!);
+    if (list === "full") throw new Error("unexpected");
+    await addItems(env.DB, me.id, list.id, ["Call Ali", "Pay rent", "Buy eggs"]);
+    const soon = Date.now() + 3_600_000;
+    await createReminder(env.DB, { userId: me.id, conversationId: null, text: "Stretch", dueAt: soon, timeZone: "Asia/Karachi" });
+    // Someone else's data never shows.
+    const other = await login("bob");
+    const bob = (await call("/api/auth/me", { cookie: other })).json.user;
+    await createReminder(env.DB, { userId: bob.id, conversationId: null, text: "Bob's secret", dueAt: soon, timeZone: "UTC" });
+
+    const { response, json } = await call("/api/agent/overview?tz=Asia/Karachi", { cookie });
+    expect(response.status).toBe(200);
+    expect(json).toMatchObject({
+      timeZone: "Asia/Karachi",
+      google: "off",
+      events: [],
+      reminders: [{ text: "Stretch", dueAt: soon }],
+      todos: { open: 3, first: ["Call Ali", "Pay rent"] },
+      notifications: false,
+    });
+    expect(typeof json.messagesLeft).toBe("number");
+    // An unknown zone falls back to UTC; admins have no daily limit.
+    const admin = await login();
+    const adminView = (await call("/api/agent/overview?tz=Mars/Base", { cookie: admin })).json;
+    expect(adminView).toMatchObject({ timeZone: "UTC", messagesLeft: null, reminders: [], todos: { open: 0, first: [] } });
+  });
+});

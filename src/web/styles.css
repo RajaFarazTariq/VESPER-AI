@@ -1141,6 +1141,671 @@ body {
       transform: scale(1.8);
     }
   }
+
+  /* ---------- The HUD (v0.19.1, components/AgentHud.tsx) ----------
+   * The console around the core, made of real data only. Behind everything: a faint hex texture, drifting points joined
+   * by thin lines (a canvas), a vignette, range rings and a slow sweep centred on the core. On wide screens (≥ 1024 px):
+   * SYSTEM + ACTIVITY on the left, BRIEF (or the approval cards) on the right, vertically centred. The stage is padded by
+   * the columns' widths, so the conversation keeps the middle and never runs under them. Below 1024 px only the
+   * background and the waveform stay. */
+  .agent-mode {
+    --hud-col: 0px;
+    --hud-card: 0px;
+    --hud-gap: 0px;
+    /* Canvas colours (read once by the component; strength is set per line/bar). */
+    --hud-line: #38bdf8;
+    --hud-point: #67e8f9;
+    --hud-hub: #a5f3fc;
+    --hud-wave: var(--ag-cyan);
+    --hud-wave-live: #5eeaff;
+  }
+  @media (min-width: 1024px) {
+    .agent-mode {
+      --hud-col: 212px;
+      --hud-card: 300px;
+      --hud-gap: 20px;
+    }
+  }
+  @media (min-width: 1280px) {
+    .agent-mode {
+      --hud-col: 252px;
+      --hud-card: 340px;
+      --hud-gap: 32px;
+    }
+  }
+  @media (min-width: 1600px) {
+    .agent-mode {
+      --hud-col: 292px;
+      --hud-card: 380px;
+      --hud-gap: 56px;
+    }
+  }
+  .agent-stage {
+    padding-inline: calc(var(--hud-col) + var(--hud-gap) * 2);
+  }
+  .agent-stage--cards {
+    padding-right: calc(var(--hud-card) + var(--hud-gap) * 2);
+  }
+
+  /* Background layers (aria-hidden, never in the way of a click). */
+  .hud-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .hud-hex {
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='48' viewBox='0 0 27.713 48' preserveAspectRatio='none'%3E%3Cpath d='M13.856 0V8L27.713 16V32L13.856 40V48M13.856 8L0 16V32L13.856 40' fill='none' stroke='%2322d3ee' stroke-width='0.7'/%3E%3C/svg%3E");
+    background-size: 28px 48px;
+    background-position: center top;
+    opacity: 0.055;
+    -webkit-mask-image: radial-gradient(ellipse 80% 75% at 50% 46%, #000 0%, rgb(0 0 0 / 0.6) 50%, transparent 88%);
+    mask-image: radial-gradient(ellipse 80% 75% at 50% 46%, #000 0%, rgb(0 0 0 / 0.6) 50%, transparent 88%);
+    animation: hud-fade 1200ms ease-out 150ms backwards;
+  }
+  .hud-neural {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0.6;
+    /* Clear around the core, strongest towards the sides. */
+    -webkit-mask-image: radial-gradient(ellipse 30% 40% at 50% 46%, transparent 30%, #000 100%);
+    mask-image: radial-gradient(ellipse 30% 40% at 50% 46%, transparent 30%, #000 100%);
+    animation: hud-fade 1600ms ease-out 400ms backwards;
+  }
+  .hud-vignette {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 95% 90% at 50% 45%, transparent 58%, rgb(0 0 0 / 0.42) 100%);
+  }
+  /* Thin brackets in the screen's corners. */
+  .hud-corner {
+    position: absolute;
+    display: none;
+    width: 16px;
+    height: 16px;
+    border: 0 solid rgb(34 211 238 / 0.32);
+  }
+  @media (min-width: 640px) {
+    .hud-corner {
+      display: block;
+    }
+  }
+  .hud-corner--tl {
+    top: 8px;
+    left: 8px;
+    border-top-width: 1px;
+    border-left-width: 1px;
+  }
+  .hud-corner--tr {
+    top: 8px;
+    right: 8px;
+    border-top-width: 1px;
+    border-right-width: 1px;
+  }
+  .hud-corner--bl {
+    bottom: 8px;
+    left: 8px;
+    border-bottom-width: 1px;
+    border-left-width: 1px;
+  }
+  .hud-corner--br {
+    bottom: 8px;
+    right: 8px;
+    border-bottom-width: 1px;
+    border-right-width: 1px;
+  }
+
+  /* Range rings and sweep, centred on the core from the component (transform). */
+  .hud-radar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    -webkit-mask-image: radial-gradient(closest-side, #000 80%, transparent 100%);
+    mask-image: radial-gradient(closest-side, #000 80%, transparent 100%);
+    animation: hud-fade 1400ms ease-out 650ms backwards;
+  }
+  .hud-radar:not([data-placed]) {
+    visibility: hidden;
+  }
+  .hud-radar[data-placed] {
+    transition: transform 450ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  .hud-radar__svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .hud-radar__ring,
+  .hud-radar__tick,
+  .hud-radar__bracket {
+    fill: none;
+    stroke: var(--ag-cyan);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+  .hud-radar__ring {
+    stroke-opacity: 0.1;
+  }
+  .hud-radar__ring--dash {
+    stroke-opacity: 0.16;
+    stroke-dasharray: 1 3;
+  }
+  .hud-radar__ring--outer {
+    stroke-opacity: 0.13;
+  }
+  .hud-radar__tick {
+    stroke-opacity: 0.14;
+  }
+  .hud-radar__tick--major {
+    stroke-opacity: 0.3;
+  }
+  .hud-radar__bracket {
+    stroke-opacity: 0.26;
+    stroke-width: 1.5;
+  }
+  .hud-radar__sweep {
+    position: absolute;
+    inset: 4%;
+    border-radius: 50%;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg 285deg,
+      rgb(34 211 238 / 0.05) 330deg,
+      rgb(103 232 249 / 0.17) 359.4deg,
+      transparent 360deg
+    );
+    -webkit-mask-image: radial-gradient(closest-side, transparent 50%, #000 64%);
+    mask-image: radial-gradient(closest-side, transparent 50%, #000 64%);
+    opacity: 0.85;
+    transition: opacity 600ms ease;
+    animation: ag-spin 14s linear infinite;
+  }
+  .hud-radar--thinking .hud-radar__sweep,
+  .hud-radar--listening .hud-radar__sweep {
+    opacity: 1;
+  }
+  .hud-radar--error .hud-radar__sweep {
+    opacity: 0.35;
+  }
+
+  /* Side columns. */
+  .hud-column {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: safe center;
+    gap: 12px;
+    width: var(--hud-col);
+    padding-block: 12px;
+    overflow: hidden;
+    pointer-events: none;
+    animation: hud-rise 700ms cubic-bezier(0.2, 0.7, 0.2, 1) 450ms backwards;
+  }
+  .hud-column > * {
+    pointer-events: auto;
+  }
+  .hud-column--left {
+    left: var(--hud-gap);
+  }
+  .hud-column--right {
+    right: var(--hud-gap);
+  }
+  .hud-column--cards {
+    width: var(--hud-card);
+    animation: none;
+  }
+
+  /* A HUD panel: the agent panel, a little lighter, with a cyan header line. */
+  .hud-panel {
+    --ag-panel: rgb(5 13 22 / 0.7);
+    flex: none;
+    min-width: 0;
+    padding: 12px 14px 13px;
+    font-size: 12.5px;
+    line-height: 1.35;
+    text-align: left;
+  }
+  .hud-panel--log,
+  .hud-panel--brief {
+    display: flex;
+    flex: 0 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* A short screen cuts the log: the cut fades out instead of halving a line (the fade sits on the list's bottom
+     padding when nothing is cut). */
+  .hud-panel.hud-panel--log {
+    padding-bottom: 3px;
+  }
+  .hud-panel--log .hud-log {
+    min-height: 0;
+    overflow: hidden;
+    padding-bottom: 12px;
+    -webkit-mask-image: linear-gradient(#000 calc(100% - 15px), transparent);
+    mask-image: linear-gradient(#000 calc(100% - 15px), transparent);
+  }
+  .hud-panel--log .hud-log::before {
+    bottom: 16px;
+  }
+  .hud-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid transparent;
+    border-image: linear-gradient(90deg, rgb(34 211 238 / 0.42), rgb(34 211 238 / 0.08) 65%, transparent) 1;
+  }
+  .hud-head__label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--ag-cyan);
+  }
+  .hud-head__label::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    background: var(--ag-cyan);
+    box-shadow: 0 0 6px rgb(34 211 238 / 0.8);
+  }
+  .hud-head__meta {
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--ag-text-soft);
+    opacity: 0.8;
+    font-variant-numeric: tabular-nums;
+  }
+  .hud-empty {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--ag-text-soft);
+  }
+
+  /* SYSTEM: clock, zone, status rows. */
+  .hud-clock__time {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 30px;
+    font-weight: 300;
+    line-height: 1.05;
+    letter-spacing: 0.02em;
+    color: var(--ag-text);
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 18px rgb(34 211 238 / 0.28);
+  }
+  .hud-clock__sec {
+    margin-left: 1px;
+    font-size: 17px;
+    color: var(--ag-cyan);
+    opacity: 0.85;
+  }
+  .hud-clock__date {
+    margin-top: 6px;
+    font-size: 12.5px;
+    color: var(--ag-text);
+  }
+  .hud-zone {
+    overflow: hidden;
+    margin-top: 1px;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--ag-text-soft);
+  }
+  .hud-rows {
+    margin-top: 11px;
+  }
+  .hud-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 24px;
+    border-top: 1px dashed rgb(34 211 238 / 0.11);
+  }
+  .hud-row dt {
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--ag-text-soft);
+  }
+  .hud-row dd {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 7px;
+    font-size: 12.5px;
+    color: var(--ag-text);
+  }
+  .hud-dot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .hud-dot--ok {
+    background: var(--ag-cyan);
+    box-shadow: 0 0 6px rgb(34 211 238 / 0.75);
+  }
+  .hud-dot--warn {
+    background: var(--ag-warn);
+    box-shadow: 0 0 6px rgb(245 158 11 / 0.6);
+  }
+  .hud-dot--off {
+    border: 1px solid rgb(143 180 198 / 0.55);
+  }
+  .hud-dot--wait {
+    background: rgb(143 180 198 / 0.55);
+    animation: hud-blink 1.2s ease-in-out infinite;
+  }
+
+  /* ACTIVITY and BRIEF: a thin rail with a mark per line (the newest lit). */
+  .hud-log,
+  .hud-timeline {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding-left: 13px;
+  }
+  .hud-log {
+    gap: 7px;
+  }
+  .hud-timeline {
+    gap: 8px;
+  }
+  .hud-log::before,
+  .hud-timeline::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 5px;
+    bottom: 5px;
+    width: 1px;
+    background: linear-gradient(rgb(34 211 238 / 0.4), rgb(34 211 238 / 0.06));
+  }
+  .hud-log li,
+  .hud-timeline li {
+    position: relative;
+    min-width: 0;
+  }
+  .hud-log li::before,
+  .hud-timeline li::before {
+    content: "";
+    position: absolute;
+    left: -13px;
+    top: 4px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    border: 1px solid rgb(34 211 238 / 0.6);
+    background: var(--ag-bg);
+  }
+  .hud-log li:first-child::before,
+  .hud-timeline li:first-child::before {
+    border-color: var(--ag-cyan);
+    background: var(--ag-cyan);
+    box-shadow: 0 0 6px rgb(34 211 238 / 0.8);
+  }
+  .hud-log li {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 6px;
+    align-items: baseline;
+    animation: hud-log-in 420ms ease-out backwards;
+  }
+  .hud-log li:nth-child(2) {
+    opacity: 0.8;
+  }
+  .hud-log li:nth-child(3) {
+    opacity: 0.64;
+  }
+  .hud-log li:nth-child(4) {
+    opacity: 0.5;
+  }
+  .hud-log li:nth-child(5) {
+    opacity: 0.38;
+  }
+  .hud-log li:nth-child(n + 6) {
+    opacity: 0.28;
+  }
+  .hud-log__time {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ag-cyan);
+    font-variant-numeric: tabular-nums;
+  }
+  .hud-log__text {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    font-size: 12.5px;
+    color: var(--ag-text);
+    overflow-wrap: anywhere;
+  }
+  .hud-timeline li {
+    display: flex;
+    flex-direction: column;
+  }
+  .hud-timeline__when {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.03em;
+    color: var(--ag-cyan);
+    font-variant-numeric: tabular-nums;
+  }
+  .hud-timeline__text {
+    overflow: hidden;
+    font-size: 12.5px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--ag-text);
+  }
+  .hud-brief + .hud-brief {
+    margin-top: 11px;
+    padding-top: 10px;
+    border-top: 1px dashed rgb(34 211 238 / 0.11);
+  }
+  .hud-brief__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 7px;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ag-text-soft);
+  }
+  .hud-brief__meta {
+    letter-spacing: 0.1em;
+    color: var(--ag-cyan);
+  }
+  .hud-todos {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .hud-todos li {
+    display: flex;
+    min-width: 0;
+    min-height: 19px;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--ag-text);
+  }
+  .hud-todos__box {
+    flex: none;
+    width: 9px;
+    height: 9px;
+    border: 1px solid rgb(34 211 238 / 0.55);
+    border-radius: 2px;
+  }
+  .hud-todos li.hud-todos__more {
+    padding-left: 17px;
+    font-size: 11.5px;
+    color: var(--ag-text-soft);
+  }
+  .hud-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .hud-skeleton__group {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .hud-skeleton__bar {
+    display: block;
+    height: 9px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, rgb(34 211 238 / 0.05), rgb(34 211 238 / 0.13), rgb(34 211 238 / 0.05));
+    background-size: 200% 100%;
+    animation: hud-shimmer 1.8s linear infinite;
+  }
+  .hud-skeleton__bar--label {
+    width: 36%;
+    height: 7px;
+  }
+  .hud-skeleton__bar--short {
+    width: 62%;
+  }
+
+  /* 1024–1279 px: narrower columns, a smaller clock. */
+  @media (max-width: 1279.98px) {
+    .hud-panel {
+      padding: 11px 12px 12px;
+    }
+    .hud-clock__time {
+      font-size: 26px;
+    }
+    .hud-clock__sec {
+      font-size: 15px;
+    }
+  }
+  /* Large screens (≥ 1600 px): a little larger, so the columns keep their weight next to a bigger core. */
+  @media (min-width: 1600px) {
+    .hud-panel {
+      padding: 14px 16px 15px;
+    }
+    .hud-row {
+      min-height: 27px;
+    }
+    .hud-row dd,
+    .hud-log__text,
+    .hud-timeline__text,
+    .hud-todos li,
+    .hud-clock__date {
+      font-size: 13.5px;
+    }
+    .hud-log__time,
+    .hud-timeline__when {
+      font-size: 11px;
+    }
+    .hud-clock__time {
+      font-size: 36px;
+    }
+    .hud-clock__sec {
+      font-size: 20px;
+    }
+    .hud-log,
+    .hud-timeline {
+      gap: 9px;
+    }
+  }
+
+  /* The waveform above the message box. */
+  .hud-wave {
+    display: block;
+    width: 288px;
+    max-width: 100%;
+    height: 18px;
+    margin: 0 auto 6px;
+  }
+  @media (min-width: 640px) {
+    .hud-wave {
+      height: 22px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hud-hex,
+    .hud-neural,
+    .hud-radar,
+    .hud-radar__sweep,
+    .hud-column,
+    .hud-log li,
+    .hud-skeleton__bar,
+    .hud-dot--wait {
+      animation: none !important;
+    }
+    .hud-radar[data-placed] {
+      transition: none;
+    }
+  }
+}
+
+@keyframes hud-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes hud-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes hud-log-in {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+}
+@keyframes hud-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes hud-blink {
+  50% {
+    opacity: 0.35;
+  }
 }
 
 @keyframes ag-fade-in {

@@ -1,5 +1,5 @@
 import { ArrowUp, AudioLines, MessageSquareText, Mic, Square, Volume2, VolumeX, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from "react";
 import { AUTO_MODEL, type ConversationDto, type FeaturesDto, type UserSettings } from "../../shared/types";
 import { speakerLabel, STUDIO_VOICE_MAX_CHARS } from "../../shared/voice";
 import { api, ApiError } from "../api/client";
@@ -20,6 +20,20 @@ import {
 import { answerSources, chipLabels, githubLineLinks, plainDocumentLinks, tidyCitations } from "../lib/format";
 import { agentAudio, canRecord, canSpeak, closeAgentAudio, RecordingError, speakableText, stopSpeaking, type Recording } from "../lib/voice";
 import { AgentCore, type AgentCoreState } from "./AgentCore";
+import {
+  ACTIVITY_MAX,
+  ActivityLog,
+  BriefPanel,
+  HudRadar,
+  HudTexture,
+  SystemPanel,
+  useAgentOverview,
+  useMedia,
+  useOnline,
+  Waveform,
+  type ActivityEntry,
+  type WaveMode,
+} from "./AgentHud";
 import { GithubActionCard } from "./GithubActionCard";
 import { GoogleActionCard } from "./GoogleActionCard";
 import { Markdown } from "./Markdown";
@@ -733,6 +747,9 @@ function shownText(m: UiMessage): string {
 
 const plainOf = (e: Exchange) => e.text ?? (e.reply ? speakableText(tidyCitations(e.reply.content)) || e.reply.error || "" : "");
 
+/** A device voice's name without the vendor and language ("Microsoft Ava Online (Natural) - English (United States)" → "Ava Online (Natural)"). */
+const shortVoiceName = (name: string) => name.replace(/\s+-\s+.*$/, "").replace(/^(?:Microsoft|Google|Apple)\s+/, "").trim() || name;
+
 /** One voice in the voice menu. */
 function VoiceOption({ value, checked, title, note, onChoose }: { value: string; checked: boolean; title: string; note: string; onChoose: (value: string) => void }) {
   return (
@@ -845,6 +862,21 @@ export function AgentMode({
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const testRun = useRef(0);
 
+  // The HUD (v0.19.1): side panels on wide screens, the activity log, the overview (refreshed after each turn).
+  const coreButton = useRef<HTMLButtonElement>(null);
+  const stage = useRef<HTMLElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const wide = useMedia("(min-width: 1024px)");
+  const online = useOnline();
+  const [turnsDone, setTurnsDone] = useState(0);
+  const overview = useAgentOverview(wide, turnsDone);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const activitySeq = useRef(0);
+  const log = useCallback((text: string) => {
+    const entry = { id: ++activitySeq.current, at: Date.now(), text };
+    setActivity((list) => [entry, ...list].slice(0, ACTIVITY_MAX));
+  }, []);
+
   const sttOn = Boolean(features?.voice.speechToText) && canRecord();
   // The studio voice (v0.17.1): switched on by the admin, with Web Audio to play it.
   const studio = features?.voice.enabled && features.voice.studio?.enabled && audioContextClass() ? features.voice.studio : null;
@@ -856,6 +888,12 @@ export function AgentMode({
   voice.setChoice({ studio: useStudio, deviceName: voiceChoice && voiceChoice !== "studio" ? voiceChoice : null });
   const selectedVoice = useStudio ? "studio" : (chosenDevice ?? rankedVoices[0]?.name ?? null);
   const voiceLabel = useStudio && studio ? `Studio voice (${speakerLabel(studio.speaker)})` : (selectedVoice ?? "the device's voice");
+  // The HUD's voice line: who speaks now (after today's studio limit, the device voice does).
+  const deviceSpeaker = chosenDevice ?? rankedVoices[0]?.name ?? null;
+  const studioSpeaker = useStudio && studio && studioIssue !== "limit" ? speakerLabel(studio.speaker) : null;
+  const speakerName = studioSpeaker ?? (deviceSpeaker ? shortVoiceName(deviceSpeaker) : null);
+  const hudVoice = !ttsOn ? "Unavailable" : !voiceOut ? "Off" : studioSpeaker ? `${studioSpeaker} · studio` : (speakerName ?? "Device voice");
+  const voiceLine = !ttsOn ? null : !voiceOut ? "Voice off" : `Voice: ${speakerName ?? "device"}`;
   const maxSeconds = Math.max(5, Math.min(30, features?.voice.maxRecordingSeconds ?? 30));
   // The agent's tasks run on the server's tools, which a model on this computer can't use.
   const localDefault = settings.defaultModel.startsWith("ollama:");
@@ -1047,6 +1085,7 @@ export function AgentMode({
   useEffect(() => {
     const greet = () => {
       setBooting(false);
+      log("Agent online");
       setReplyNote(greeting);
       // The briefing's note isn't spoken: no tap yet, so the browser wouldn't play it.
       if (phaseRef.current === "idle" && live.current.chat.messages.length === 0 && !briefingWaitingRef.current) say(greeting);
@@ -1219,6 +1258,71 @@ export function AgentMode({
     if (handsFree && sttOn) void startListening();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booting, chat.streaming, speaking, phase, handsFree, closing, userCount, reply?.streaming]);
+
+  // ---------------------------------------------------------------- the HUD's activity log and overview (v0.19.1)
+
+  // A turn finished: the overview is loaded again (a reminder set, an item added); a failed reply is logged.
+  const turnRunning = useRef(false);
+  useEffect(() => {
+    if (chat.streaming) {
+      turnRunning.current = true;
+      return;
+    }
+    if (!turnRunning.current) return;
+    turnRunning.current = false;
+    setTurnsDone((n) => n + 1);
+    const lastMessage = live.current.chat.messages[live.current.chat.messages.length - 1];
+    if (lastMessage?.role === "assistant" && lastMessage.error) log("Reply didn't finish");
+  }, [chat.streaming, log]);
+
+  // Each finished step of a turn, once ("Read your calendar"), by its turn and place (ids change when a reply is saved).
+  const loggedSteps = useRef(new Set<string>());
+  useEffect(() => {
+    let turn = 0;
+    for (const m of chat.messages) {
+      if (m.role === "user") {
+        turn++;
+        continue;
+      }
+      (m.tools ?? []).forEach((t, i) => {
+        if (t.status === "running" || t.name === "context_summary") return;
+        const key = `${turn}:${i}`;
+        if (loggedSteps.current.has(key)) return;
+        loggedSteps.current.add(key);
+        log(plainToolText(t));
+      });
+    }
+  }, [chat.messages, log]);
+
+  // The voice in use: logged once it has settled after the boot (device voices arrive a moment after the page), then
+  // on each change.
+  const loggedVoice = useRef<string | null>(null);
+  useEffect(() => {
+    if (booting || voiceLine === null) return;
+    const timer = setTimeout(
+      () => {
+        if (loggedVoice.current === voiceLine) return;
+        loggedVoice.current = voiceLine;
+        log(voiceLine);
+      },
+      loggedVoice.current === null ? 700 : 250,
+    );
+    return () => clearTimeout(timer);
+  }, [booting, voiceLine, log]);
+
+  const seenHandsFree = useRef(handsFree);
+  useEffect(() => {
+    if (seenHandsFree.current === handsFree) return;
+    seenHandsFree.current = handsFree;
+    log(handsFree ? "Hands-free on" : "Hands-free off");
+  }, [handsFree, log]);
+
+  const seenOnline = useRef(online);
+  useEffect(() => {
+    if (seenOnline.current === online) return;
+    seenOnline.current = online;
+    log(online ? "Back online" : "Connection lost");
+  }, [online, log]);
 
   const micLabel =
     phase === "listening"
@@ -1408,6 +1512,25 @@ export function AgentMode({
   const wrapStyle: CSSProperties | undefined =
     closing && !calm ? { opacity: 0, transition: `opacity ${CLOSE_MS - 30}ms ease-in`, pointerEvents: "none" } : undefined;
 
+  const waveMode: WaveMode =
+    coreState === "listening" ? "listening" : coreState === "speaking" ? "speaking" : coreState === "thinking" ? "thinking" : "idle";
+  // Approval cards: beside the core on wide screens (in the BRIEF column's place), under the conversation otherwise.
+  const cardsWide = wide && cards.length > 0;
+  const cardsPanelView = cards.length ? (
+    <aside
+      ref={cardsPanel}
+      tabIndex={-1}
+      className={`agent-panel dark flex flex-col gap-3 p-3 text-left focus-visible:outline-2 focus-visible:outline-[var(--ag-cyan)] thin-scroll ${
+        wide ? "max-h-full w-full overflow-y-auto" : "w-full max-w-md shrink-0"
+      }`}
+      aria-label="For your approval"
+    >
+      <p className="agent-hud-label">For your approval</p>
+      {cards}
+    </aside>
+  ) : null;
+  const google = features?.google.available ?? false;
+
   return (
     <div className="fixed inset-0 z-50" style={wrapStyle}>
       <div className="agent-dim absolute inset-0" aria-hidden="true" />
@@ -1420,6 +1543,11 @@ export function AgentMode({
         className="agent-mode dark absolute inset-0 flex flex-col overflow-hidden outline-none"
         style={viewStyle}
       >
+        <div className="hud-backdrop" aria-hidden="true">
+          <HudTexture calm={calm} />
+          <HudRadar target={coreButton} content={stage} scroller={scroller} size={size} state={coreState} />
+        </div>
+
         <header className="relative z-10 flex shrink-0 items-center gap-3 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-6 sm:pt-4">
           <span className="agent-hud-label">VESPER Agent</span>
           <span className="h-px min-w-0 flex-1 bg-[var(--ag-border)]" aria-hidden="true" />
@@ -1428,121 +1556,136 @@ export function AgentMode({
           </button>
         </header>
 
-        <div className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden thin-scroll">
-          <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col items-center justify-center gap-6 px-4 py-4 sm:px-6 lg:flex-row lg:gap-10">
-            <section className="flex w-full min-w-0 max-w-2xl flex-col items-center text-center" aria-label="Conversation with VESPER">
-              {previous ? (
-                <div key={previous.key} className="mb-3 w-full max-w-xl space-y-0.5 text-[13px] leading-snug text-[var(--ag-text-soft)] opacity-45" aria-hidden="true">
-                  {previous.user ? <p className="line-clamp-1 [overflow-wrap:anywhere]">{previous.user}</p> : null}
-                  <p className="line-clamp-2 [overflow-wrap:anywhere]">{plainOf(previous)}</p>
-                </div>
-              ) : null}
-
-              <div className="flex min-h-[1.75rem] w-full max-w-xl items-end justify-center">
-                {current?.user ? (
-                  <p key={current.key} className="agent-text-in line-clamp-3 text-[15px] leading-snug text-[var(--ag-text-soft)] [overflow-wrap:anywhere] sm:text-base">
-                    {current.user}
-                  </p>
+        <div className="relative min-h-0 flex-1">
+          <div ref={scroller} className={`agent-stage${cardsWide ? " agent-stage--cards" : ""} absolute inset-0 overflow-y-auto overflow-x-hidden thin-scroll`}>
+            <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col items-center justify-center gap-6 px-4 py-4 sm:px-6">
+              <section ref={stage} className="flex w-full min-w-0 max-w-2xl flex-col items-center text-center" aria-label="Conversation with VESPER">
+                {previous ? (
+                  <div key={previous.key} className="mb-3 w-full max-w-xl space-y-0.5 text-[13px] leading-snug text-[var(--ag-text-soft)] opacity-45" aria-hidden="true">
+                    {previous.user ? <p className="line-clamp-1 [overflow-wrap:anywhere]">{previous.user}</p> : null}
+                    <p className="line-clamp-2 [overflow-wrap:anywhere]">{plainOf(previous)}</p>
+                  </div>
                 ) : null}
-              </div>
 
-              {/* aria-disabled rather than disabled, so the keyboard focus stays here while the state changes. */}
-              <button
-                type="button"
-                onClick={onCore}
-                aria-disabled={!coreAction}
-                aria-label={coreAction ?? "VESPER Agent core"}
-                title={coreAction ?? undefined}
-                className="relative my-3 shrink-0 rounded-full focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--ag-cyan)] aria-disabled:cursor-default"
-                style={{ width: size, height: size }}
-              >
-                <LiveCore levels={levels} state={coreState} size={size} />
-              </button>
-
-              <p className="agent-hud-label min-h-[1.25rem]" aria-hidden="true">
-                {step}
-              </p>
-              {localDefault && chat.messages.length === 0 && !booting ? (
-                <p className="mt-1 max-w-md text-xs text-[var(--ag-text-soft)]">
-                  VESPER Agent uses the cloud models (Auto): your default model runs on this computer and can't carry out tasks.
-                </p>
-              ) : null}
-
-              {current && (current.text || currentReply?.content || currentReply?.error) ? (
-                <div key={current.key} className="agent-text-in mt-4 flex w-full flex-col items-center gap-3">
-                  {current.text ? (
-                    <p
-                      className={`max-w-xl text-lg leading-relaxed [overflow-wrap:anywhere] sm:text-xl ${
-                        current.tone === "error" ? "text-[var(--ag-warn)]" : current.tone === "info" ? "text-[var(--ag-text-soft)]" : "text-[var(--ag-text)]"
-                      }`}
-                    >
-                      {current.text}
+                <div className="flex min-h-[1.75rem] w-full max-w-xl items-end justify-center">
+                  {current?.user ? (
+                    <p key={current.key} className="agent-text-in line-clamp-3 text-[15px] leading-snug text-[var(--ag-text-soft)] [overflow-wrap:anywhere] sm:text-base">
+                      {current.user}
                     </p>
                   ) : null}
-                  {currentReply?.content ? (
-                    <div
-                      tabIndex={0}
-                      role="region"
-                      aria-label="VESPER's reply"
-                      className={`thin-scroll max-h-[32vh] w-full overflow-y-auto rounded-md px-1 text-[var(--ag-text)] focus-visible:outline-2 focus-visible:outline-[var(--ag-cyan)] [&_.md]:text-[17px]! sm:[&_.md]:text-[19px]! ${
-                        shortReply ? "text-center" : "text-left"
-                      }`}
-                      style={replyAccent}
-                    >
-                      <Markdown text={display} />
-                    </div>
-                  ) : null}
-                  {currentReply?.error ? <p className="max-w-xl text-sm text-[var(--ag-warn)] [overflow-wrap:anywhere]">{currentReply.error}</p> : null}
-                  {currentReply?.tools?.some((t) => t.link) ? (
-                    <div className="flex max-w-full flex-wrap items-center justify-center gap-2">
-                      <WebsiteButtons tools={currentReply.tools} className={siteButton} />
-                    </div>
-                  ) : null}
-
-                  {sources.length || (currentReply && chat.conversationId) ? (
-                    <div className="flex max-w-full flex-wrap items-center justify-center gap-1.5">
-                      {sources.length ? (
-                        <span className="flex max-w-full flex-wrap items-center justify-center gap-1.5" aria-label="Sources">
-                          {sources.slice(0, MAX_CHIPS).map((s, i) =>
-                            s.url ? (
-                              <a key={`${s.url}|${s.location ?? ""}`} href={s.url} target="_blank" rel="noopener noreferrer nofollow" title={`${s.title}\n${s.url}`} className={chip}>
-                                <span className="truncate">{labels[i]}</span>
-                              </a>
-                            ) : (
-                              <span key={`doc:${s.title}|${s.location ?? ""}`} title={s.location ? `${s.title}, ${s.location}` : s.title} className={chip}>
-                                <span className="truncate">{labels[i]}</span>
-                              </span>
-                            ),
-                          )}
-                          {sources.length > MAX_CHIPS ? <span className="text-[11px] text-[var(--ag-text-soft)]">+{sources.length - MAX_CHIPS} more in the chat</span> : null}
-                        </span>
-                      ) : null}
-                      {currentReply && chat.conversationId ? (
-                        <button type="button" onClick={openInChat} className={chip}>
-                          <MessageSquareText size={12} aria-hidden="true" /> Open in chat
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
                 </div>
-              ) : null}
-            </section>
 
-            {cards.length ? (
-              <aside
-                ref={cardsPanel}
-                tabIndex={-1}
-                className="agent-panel dark flex w-full max-w-md shrink-0 flex-col gap-3 p-3 text-left focus-visible:outline-2 focus-visible:outline-[var(--ag-cyan)] lg:max-h-full lg:w-[400px] lg:overflow-y-auto thin-scroll"
-                aria-label="For your approval"
-              >
-                <p className="agent-hud-label">For your approval</p>
-                {cards}
-              </aside>
-            ) : null}
+                {/* aria-disabled rather than disabled, so the keyboard focus stays here while the state changes. */}
+                <button
+                  ref={coreButton}
+                  type="button"
+                  onClick={onCore}
+                  aria-disabled={!coreAction}
+                  aria-label={coreAction ?? "VESPER Agent core"}
+                  title={coreAction ?? undefined}
+                  className="relative my-3 shrink-0 rounded-full focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--ag-cyan)] aria-disabled:cursor-default"
+                  style={{ width: size, height: size }}
+                >
+                  <LiveCore levels={levels} state={coreState} size={size} />
+                </button>
+
+                <p className="agent-hud-label min-h-[1.25rem]" aria-hidden="true">
+                  {step}
+                </p>
+                {localDefault && chat.messages.length === 0 && !booting ? (
+                  <p className="mt-1 max-w-md text-xs text-[var(--ag-text-soft)]">
+                    VESPER Agent uses the cloud models (Auto): your default model runs on this computer and can't carry out tasks.
+                  </p>
+                ) : null}
+
+                {current && (current.text || currentReply?.content || currentReply?.error) ? (
+                  <div key={current.key} className="agent-text-in mt-4 flex w-full flex-col items-center gap-3">
+                    {current.text ? (
+                      <p
+                        className={`max-w-xl text-lg leading-relaxed [overflow-wrap:anywhere] sm:text-xl ${
+                          current.tone === "error" ? "text-[var(--ag-warn)]" : current.tone === "info" ? "text-[var(--ag-text-soft)]" : "text-[var(--ag-text)]"
+                        }`}
+                      >
+                        {current.text}
+                      </p>
+                    ) : null}
+                    {currentReply?.content ? (
+                      <div
+                        tabIndex={0}
+                        role="region"
+                        aria-label="VESPER's reply"
+                        className={`thin-scroll max-h-[32vh] w-full overflow-y-auto rounded-md px-1 text-[var(--ag-text)] focus-visible:outline-2 focus-visible:outline-[var(--ag-cyan)] [&_.md]:text-[17px]! sm:[&_.md]:text-[19px]! ${
+                          shortReply ? "text-center" : "text-left"
+                        }`}
+                        style={replyAccent}
+                      >
+                        <Markdown text={display} />
+                      </div>
+                    ) : null}
+                    {currentReply?.error ? <p className="max-w-xl text-sm text-[var(--ag-warn)] [overflow-wrap:anywhere]">{currentReply.error}</p> : null}
+                    {currentReply?.tools?.some((t) => t.link) ? (
+                      <div className="flex max-w-full flex-wrap items-center justify-center gap-2">
+                        <WebsiteButtons tools={currentReply.tools} className={siteButton} />
+                      </div>
+                    ) : null}
+
+                    {sources.length || (currentReply && chat.conversationId) ? (
+                      <div className="flex max-w-full flex-wrap items-center justify-center gap-1.5">
+                        {sources.length ? (
+                          <span className="flex max-w-full flex-wrap items-center justify-center gap-1.5" aria-label="Sources">
+                            {sources.slice(0, MAX_CHIPS).map((s, i) =>
+                              s.url ? (
+                                <a key={`${s.url}|${s.location ?? ""}`} href={s.url} target="_blank" rel="noopener noreferrer nofollow" title={`${s.title}\n${s.url}`} className={chip}>
+                                  <span className="truncate">{labels[i]}</span>
+                                </a>
+                              ) : (
+                                <span key={`doc:${s.title}|${s.location ?? ""}`} title={s.location ? `${s.title}, ${s.location}` : s.title} className={chip}>
+                                  <span className="truncate">{labels[i]}</span>
+                                </span>
+                              ),
+                            )}
+                            {sources.length > MAX_CHIPS ? <span className="text-[11px] text-[var(--ag-text-soft)]">+{sources.length - MAX_CHIPS} more in the chat</span> : null}
+                          </span>
+                        ) : null}
+                        {currentReply && chat.conversationId ? (
+                          <button type="button" onClick={openInChat} className={chip}>
+                            <MessageSquareText size={12} aria-hidden="true" /> Open in chat
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </section>
+
+              {wide ? null : cardsPanelView}
+            </div>
           </div>
+
+          {wide ? (
+            <>
+              <div className="hud-column hud-column--left">
+                <SystemPanel
+                  online={online}
+                  voice={hudVoice}
+                  voiceOn={ttsOn && voiceOut}
+                  handsFree={!sttOn ? "unavailable" : handsFree ? "on" : "off"}
+                  googleAvailable={google}
+                  google={overview.data?.google ?? (overview.loading ? null : "off")}
+                  notifications={overview.data?.notifications ?? (overview.loading ? null : false)}
+                  messagesLeft={overview.data ? overview.data.messagesLeft : undefined}
+                />
+                <ActivityLog entries={activity} />
+              </div>
+              <div className={`hud-column hud-column--right${cardsWide ? " hud-column--cards" : ""}`}>
+                {cardsWide ? cardsPanelView : overview.data || overview.loading ? <BriefPanel overview={overview} googleAvailable={google} /> : null}
+              </div>
+            </>
+          ) : null}
         </div>
 
-        <form onSubmit={onSubmit} className="relative z-10 shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-6 sm:pb-5">
+        <form onSubmit={onSubmit} className="relative z-10 shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1 sm:px-6 sm:pb-5">
+          <Waveform levels={levels} mode={waveMode} calm={calm} />
           <div className="agent-panel mx-auto flex w-full max-w-3xl items-center gap-1 px-1.5 py-1.5 has-[.agent-field:focus]:outline-1 has-[.agent-field:focus]:outline-[var(--ag-cyan)]">
             {sttOn ? (
               <>
