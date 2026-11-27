@@ -25,7 +25,14 @@ describe("greeting", () => {
     expect(agentGreeting("Sara Khan", at(9))).toBe("Good morning, Sara. VESPER is online. How can I help?");
     expect(agentGreeting("Sara", at(13))).toBe("Good afternoon, Sara. VESPER is online. How can I help?");
     expect(agentGreeting("Sara", at(19))).toBe("Good evening, Sara. VESPER is online. How can I help?");
-    expect(agentGreeting("Sara", at(2))).toBe("Good evening, Sara. VESPER is online. How can I help?");
+    expect(agentGreeting("Sara", at(23))).toBe("Good evening, Sara. VESPER is online. How can I help?");
+  });
+
+  it('says "Hello" from midnight to 04:59, then good morning from 05:00', () => {
+    expect(agentGreeting("Sara", new Date(2026, 10, 25, 0, 0))).toBe("Hello, Sara. VESPER is online. How can I help?");
+    expect(agentGreeting("Sara", at(2))).toBe("Hello, Sara. VESPER is online. How can I help?");
+    expect(agentGreeting(null, new Date(2026, 10, 25, 4, 59))).toBe("Hello. VESPER is online. How can I help?");
+    expect(agentGreeting("Sara", new Date(2026, 10, 25, 5, 0))).toBe("Good morning, Sara. VESPER is online. How can I help?");
   });
 
   it("greets without a name when there is none", () => {

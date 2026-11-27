@@ -6,10 +6,13 @@
 
 // ------------------------------------------------------------------ Greeting
 
-/** "Good evening, Sara. VESPER is online. How can I help?" (morning / afternoon / evening by the local time). */
+/**
+ * "Good evening, Sara. VESPER is online. How can I help?" (morning / afternoon / evening by the local time; "Hello"
+ * from midnight to 04:59, when "Good evening" sounds wrong and "Good morning" too early).
+ */
 export function agentGreeting(firstName: string | null | undefined, now = new Date()): string {
   const h = now.getHours();
-  const part = h >= 5 && h < 12 ? "Good morning" : h >= 12 && h < 17 ? "Good afternoon" : "Good evening";
+  const part = h < 5 ? "Hello" : h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
   const name = (firstName ?? "").trim().split(/\s+/)[0];
   return `${part}${name ? `, ${name}` : ""}. VESPER is online. How can I help?`;
 }

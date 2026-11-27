@@ -1,6 +1,7 @@
 import { SseParser } from "../../shared/sse";
 import type {
   AdminUserDto,
+  AgentOverviewDto,
   ApiErrorBody,
   AppSettingsDto,
   ChatDocumentDto,
@@ -283,6 +284,14 @@ export const api = {
   },
   /** Cancels a pending reminder (it won't be sent). */
   cancelReminder: (id: string) => request<{ ok: true }>(`/api/reminders/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /**
+   * VESPER Agent's side panels (v0.19.1): the next events, reminders and to-dos, whether notifications and Google are
+   * on, and the messages left today. Times are worked out in this browser's time zone.
+   */
+  agentOverview: (signal?: AbortSignal) => {
+    const { timeZone } = browserTimeZone();
+    return request<AgentOverviewDto>(`/api/agent/overview${timeZone ? `?tz=${encodeURIComponent(timeZone)}` : ""}`, signal ? { signal } : {});
+  },
   listMemories: () => request<{ memories: MemoryDto[] }>("/api/memories"),
   addMemory: (content: string) => request<{ memory: MemoryDto }>("/api/memories", { method: "POST", body: JSON.stringify({ content }) }),
   /** Edit the text and/or pin ("always use") a memory. */
